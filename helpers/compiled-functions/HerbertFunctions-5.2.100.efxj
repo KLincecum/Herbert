@@ -1,0 +1,120 @@
+﻿{
+  "Mode": "Backup",
+  "Version": "5.2.100",
+  "SystemCode": "ERP",
+  "LibraryId": "HerbertFunctions",
+  "Library": {
+    "OriginalID": "HerbertFunctions",
+    "Description": "Read exact associated Function compiled-store snapshots",
+    "GlobalID": "53e0e49d-30d8-49d9-a01c-7224c8354488",
+    "EpicorVersion": "5.2.100",
+    "Revision": 1,
+    "Published": false,
+    "Private": false,
+    "Disabled": false,
+    "Mode": 0,
+    "AllowCustomCodeWidgets": false,
+    "AllowCustomCodeFunctions": true,
+    "DirectDBAccess": 1,
+    "Notes": "Read-only Function binaries; scope is checked through native caller-visible library definitions.",
+    "OwnedByCompany": "",
+    "Owner": "",
+    "SharedWithGroup": "",
+    "Functions": [
+      {
+        "FunctionID": "ReadCompiled",
+        "Description": "Read selected libraries exact persisted rows and original DLL/PDB pairs",
+        "Kind": 2,
+        "RequireTransaction": false,
+        "SingleRowMode": false,
+        "Private": false,
+        "Disabled": false,
+        "Invalid": false,
+        "Thumbnail": null,
+        "Notes": "",
+        "Body": "{\"Code\":\"// Read-only Function snapshots. Caller visibility precedes every exact-key read.\\n// Metadata probes permit same-run retained-byte reuse without another DLL/PDB read.\\noSuccess=false;oMessage=\\\"\\\";oDS=new System.Data.DataSet(\\\"FunctionCompiledCapture\\\");\\ntry{\\n if(String.IsNullOrEmpty(iCaller)||!String.Equals(iCaller,Session.UserID,StringComparison.Ordinal)||!String.Equals(iCompany,Session.CompanyID,StringComparison.Ordinal))throw new Exception(\\\"CALLER_COMPANY_MISMATCH\\\");\\n var requested=Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(iLibraryIDs);\\n if(requested==null||requested.Any(id=>String.IsNullOrWhiteSpace(id)))throw new Exception(\\\"Explicit nonempty library identities are required.\\\");\\n var ids=requested.Distinct(StringComparer.Ordinal).ToArray();\\n var known=Newtonsoft.Json.Linq.JArray.Parse(iKnownCaptures);\\n var allowed=new System.Collections.Generic.Dictionary<string,int>(StringComparer.Ordinal);\\n this.CallService<Ice.Contracts.EfxLibraryDesignerSvcContract>(svc=>{foreach(var library in svc.GetLibraries(ids).EfxLibrary){if(!ids.Contains(library.LibraryID))throw new Exception(\\\"Native owner scope differs.\\\");allowed.Add(library.LibraryID,library.Revision);}});\\n if(allowed.Count!=ids.Length)throw new Exception(\\\"Selected owners are unavailable to this caller.\\\");\\n var ownerByAssembly=new System.Collections.Generic.Dictionary<string,string>(StringComparer.Ordinal);\\n foreach(var id in ids){var assembly=\\\"efx.\\\"+id.ToLowerInvariant();if(ownerByAssembly.ContainsKey(assembly))throw new Exception(\\\"Ambiguous native assembly owner.\\\");ownerByAssembly.Add(assembly,id);}\\n var names=ownerByAssembly.Keys.ToList();\\n var before=Db.CustomizationStore.Where(row=>row.Folder==\\\":Efx\\\"&&names.Contains(row.Assembly)).Select(row=>new{row.Folder,row.Assembly,row.Version,row.Info,row.ModifiedOn,row.ForcePdbLoad,row.SysRowID,row.SysRevID}).ToList();\\n var reusable=new System.Collections.Generic.Dictionary<Guid,string>();\\n foreach(var row in before){\\n  if(!String.Equals(row.Folder,\\\":Efx\\\",StringComparison.Ordinal)||!ownerByAssembly.ContainsKey(row.Assembly))continue;\\n  var owner=ownerByAssembly[row.Assembly];var revision=Convert.ToBase64String(row.SysRevID);\\n  var match=known.FirstOrDefault(k=>(string)k[\\\"libraryId\\\"]==owner&&(string)k[\\\"folder\\\"]==row.Folder&&(string)k[\\\"assembly\\\"]==row.Assembly&&(string)k[\\\"version\\\"]==row.Version&&(string)k[\\\"sysRevID\\\"]==revision&&(int?)k[\\\"definitionRevision\\\"]==allowed[owner]);\\n  if(match!=null)reusable.Add(row.SysRowID,(string)match[\\\"captureId\\\"]);\\n }\\n var needed=before.Where(row=>!reusable.ContainsKey(row.SysRowID)).Select(row=>row.SysRowID).ToList();\\n var bytes=Db.CustomizationStore.Where(row=>row.Folder==\\\":Efx\\\"&&names.Contains(row.Assembly)&&needed.Contains(row.SysRowID)).Select(row=>new{row.Folder,row.Assembly,row.Version,row.SysRowID,row.SysRevID,row.Data,row.Symbols}).ToList();\\n var after=Db.CustomizationStore.Where(row=>row.Folder==\\\":Efx\\\"&&names.Contains(row.Assembly)).Select(row=>new{row.Folder,row.Assembly,row.Version,row.SysRevID}).ToList();\\n var revisionsAfter=new System.Collections.Generic.Dictionary<string,int>(StringComparer.Ordinal);\\n this.CallService<Ice.Contracts.EfxLibraryDesignerSvcContract>(svc=>{foreach(var library in svc.GetLibraries(ids).EfxLibrary)revisionsAfter.Add(library.LibraryID,library.Revision);});\\n var table=new System.Data.DataTable(\\\"Assemblies\\\");\\n foreach(var name in new[]{\\\"LibraryID\\\",\\\"Folder\\\",\\\"Assembly\\\",\\\"Version\\\",\\\"Info\\\",\\\"ModifiedOn\\\",\\\"SysRowID\\\",\\\"SysRevID\\\",\\\"BinarySysRevID\\\",\\\"AfterSysRevID\\\",\\\"SymbolDisposition\\\",\\\"ModuleVersionId\\\",\\\"AssemblyFullName\\\",\\\"ReusedCaptureId\\\"})table.Columns.Add(name,typeof(string));\\n table.Columns.Add(\\\"DefinitionRevision\\\",typeof(int));table.Columns.Add(\\\"DefinitionRevisionAfter\\\",typeof(int));table.Columns.Add(\\\"ForcePdbLoad\\\",typeof(bool));table.Columns.Add(\\\"Data\\\",typeof(byte[]));table.Columns.Add(\\\"Symbols\\\",typeof(byte[]));\\n foreach(var row in before.OrderBy(r=>r.Assembly).ThenBy(r=>r.Version)){\\n  if(!String.Equals(row.Folder,\\\":Efx\\\",StringComparison.Ordinal)||!ownerByAssembly.ContainsKey(row.Assembly))continue;\\n  var owner=ownerByAssembly[row.Assembly];var reused=reusable.ContainsKey(row.SysRowID);\\n  var payload=bytes.SingleOrDefault(r=>r.SysRowID==row.SysRowID&&String.Equals(r.Folder,row.Folder,StringComparison.Ordinal)&&String.Equals(r.Assembly,row.Assembly,StringComparison.Ordinal)&&String.Equals(r.Version,row.Version,StringComparison.Ordinal));\\n  var current=after.SingleOrDefault(r=>String.Equals(r.Folder,row.Folder,StringComparison.Ordinal)&&String.Equals(r.Assembly,row.Assembly,StringComparison.Ordinal)&&String.Equals(r.Version,row.Version,StringComparison.Ordinal));\\n  byte[] dll=payload==null?null:payload.Data,pdb=payload==null?null:payload.Symbols;\\n  string disposition=pdb==null?\\\"absent\\\":\\\"unsupported-unused\\\",mvid=\\\"\\\",fullName=\\\"\\\";\\n  if(dll!=null){try{\\n   using(var stream=new System.IO.MemoryStream(dll))using(var pe=new System.Reflection.PortableExecutable.PEReader(stream)){\\n    var metadata=System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);mvid=metadata.GetGuid(metadata.GetModuleDefinition().Mvid).ToString();var assembly=metadata.GetAssemblyDefinition();fullName=metadata.GetString(assembly.Name)+\\\", Version=\\\"+assembly.Version.ToString();\\n    if(pdb!=null){try{using(var symbolStream=new System.IO.MemoryStream(pdb))using(var provider=System.Reflection.Metadata.MetadataReaderProvider.FromPortablePdbStream(symbolStream)){\\n     var symbolMetadata=provider.GetMetadataReader();if(symbolMetadata.DebugMetadataHeader==null)throw new System.BadImageFormatException(\\\"The symbol metadata has no portable PDB header.\\\");\\n     var identity=new System.Reflection.Metadata.BlobContentId(symbolMetadata.DebugMetadataHeader.Id);\\n     disposition=pe.ReadDebugDirectory().Any(entry=>entry.Type==System.Reflection.PortableExecutable.DebugDirectoryEntryType.CodeView&&entry.Stamp==identity.Stamp&&pe.ReadCodeViewDebugDirectoryData(entry).Guid==identity.Guid&&pe.ReadCodeViewDebugDirectoryData(entry).Age==1)?\\\"matched-portable\\\":\\\"mismatched-unused\\\";\\n    }}catch(System.BadImageFormatException){disposition=\\\"unsupported-unused\\\";}}\\n    if(disposition!=\\\"matched-portable\\\"&&pe.ReadDebugDirectory().Any(entry=>entry.Type==System.Reflection.PortableExecutable.DebugDirectoryEntryType.EmbeddedPortablePdb))disposition+=\\\";embedded-candidate\\\";\\n   }\\n  }catch(System.BadImageFormatException){disposition=\\\"binary-invalid;\\\"+disposition;}}\\n  table.Rows.Add(owner,row.Folder,row.Assembly,row.Version,row.Info,row.ModifiedOn.ToString(\\\"o\\\",System.Globalization.CultureInfo.InvariantCulture),row.SysRowID.ToString(),Convert.ToBase64String(row.SysRevID),reused?Convert.ToBase64String(row.SysRevID):payload==null?\\\"\\\":Convert.ToBase64String(payload.SysRevID),current==null?\\\"\\\":Convert.ToBase64String(current.SysRevID),disposition,mvid,fullName,reused?reusable[row.SysRowID]:\\\"\\\",allowed[owner],revisionsAfter.ContainsKey(owner)?revisionsAfter[owner]:-1,row.ForcePdbLoad,(object)dll??DBNull.Value,(object)pdb??DBNull.Value);\\n }\\n oDS.Tables.Add(table);\\n var owners=new System.Data.DataTable(\\\"Owners\\\");owners.Columns.Add(\\\"LibraryID\\\",typeof(string));owners.Columns.Add(\\\"DefinitionRevision\\\",typeof(int));owners.Columns.Add(\\\"DefinitionRevisionAfter\\\",typeof(int));owners.Columns.Add(\\\"BeforeRows\\\",typeof(int));owners.Columns.Add(\\\"AfterRows\\\",typeof(int));\\n foreach(var item in allowed.OrderBy(x=>x.Key)){var assembly=\\\"efx.\\\"+item.Key.ToLowerInvariant();owners.Rows.Add(item.Key,item.Value,revisionsAfter.ContainsKey(item.Key)?revisionsAfter[item.Key]:-1,before.Count(row=>row.Folder==\\\":Efx\\\"&&row.Assembly==assembly),after.Count(row=>row.Folder==\\\":Efx\\\"&&row.Assembly==assembly));}oDS.Tables.Add(owners);\\n var scope=new System.Data.DataTable(\\\"Scope\\\");scope.Columns.Add(\\\"Caller\\\",typeof(string));scope.Columns.Add(\\\"Company\\\",typeof(string));scope.Columns.Add(\\\"DownloadedRows\\\",typeof(int));scope.Columns.Add(\\\"ReusedRows\\\",typeof(int));scope.Rows.Add(Session.UserID,Session.CompanyID,bytes.Count,reusable.Count);oDS.Tables.Add(scope);\\n oSuccess=true;\\n}catch(Exception error){oMessage=error.Message;}\\n\",\"Usings\":\"\"}",
+        "FunctionSignature": [
+          {
+            "ArgumentName": "iLibraryIDs",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 1,
+            "ParameterID": 1,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "Response": true,
+            "ParameterID": 1,
+            "ArgumentName": "oSuccess",
+            "Order": 1,
+            "DataType": "System.Boolean",
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "Response": true,
+            "ParameterID": 2,
+            "ArgumentName": "oMessage",
+            "Order": 2,
+            "DataType": "System.String",
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "Response": true,
+            "ParameterID": 3,
+            "ArgumentName": "oDS",
+            "Order": 3,
+            "DataType": "System.Data.DataSet",
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iCaller",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 2,
+            "ParameterID": 2,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iCompany",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 3,
+            "ParameterID": 3,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iKnownCaptures",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 4,
+            "ParameterID": 4,
+            "Optional": false,
+            "Description": ""
+          }
+        ]
+      }
+    ],
+    "LibraryReferences": [
+      {
+        "ReferenceType": 0,
+        "ReferenceID": "Newtonsoft.Json.dll"
+      },
+      {
+        "ReferenceType": 2,
+        "ReferenceID": "ICE:Lib:EfxLibraryDesigner"
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.CustomizationStore",
+        "Updatable": false
+      }
+    ],
+    "LibraryMappings": []
+  }
+}

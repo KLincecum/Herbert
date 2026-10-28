@@ -1,0 +1,22 @@
+[workspace]
+members = ["crates/herbert", "crates/herbert-contract", "crates/herbert-plugins"]
+default-members = ["crates/herbert"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+license-file = "LICENSE.md"
+rust-version = "1.99"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+# Preserve native decimal digits across host and plugin JSON boundaries.
+serde_json = { version = "1", features = ["arbitrary_precision", "unbounded_depth"] }
+schemars = "1"
+herbert-contract = { path = "crates/herbert-contract" }
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
+

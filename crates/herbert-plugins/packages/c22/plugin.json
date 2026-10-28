@@ -1,0 +1,48 @@
+{
+  "artifacts": [
+    {
+      "alias": "programs",
+      "purpose": "requiredContent",
+      "coverage": "someContent",
+      "type": "functionLibrary",
+      "file": "artifacts/HerbertPrograms-5.1.100.efxj",
+      "versionFiles": [
+        {
+          "epicorVersion": "12.1.100.29",
+          "file": "artifacts/HerbertPrograms-5.1.100.efxj"
+        },
+        {
+          "epicorVersion": "12.2.100.9",
+          "file": "artifacts/HerbertPrograms-5.2.100.efxj"
+        }
+      ],
+      "lifetime": "temporary",
+      "policy": "createInstance",
+      "requiredFunctions": [
+        {
+          "function": "ReadInternalMetadata",
+          "parameters": [
+            {
+              "name": "oSuccess",
+              "dataType": "System.Boolean",
+              "direction": "output"
+            },
+            {
+              "name": "oMessage",
+              "dataType": "System.String",
+              "direction": "output"
+            },
+            {
+              "name": "oJson",
+              "dataType": "System.String",
+              "direction": "output"
+            }
+          ]
+        }
+      ],
+      "effects": {
+        "description": "Temporarily installs one read-only helper for hidden registrations, dataset-table membership, namespaces and stored SDK fields omitted by native services, then removes its owned library. Direct definitions and binary bytes remain independently collectible."
+      }
+    }
+  ]
+}

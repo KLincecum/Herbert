@@ -1,0 +1,121 @@
+﻿{
+  "Mode": "Backup",
+  "Version": "5.2.100",
+  "SystemCode": "ERP",
+  "LibraryId": "HerbertBpmCompiled",
+  "Library": {
+    "OriginalID": "HerbertBpmCompiled",
+    "Description": "Read exact associated ordinary BPM compiled snapshots",
+    "GlobalID": "940dcb17-020d-564e-a0d5-0cbefbdb9f07",
+    "EpicorVersion": "5.2.100",
+    "Revision": 1,
+    "Published": false,
+    "Private": false,
+    "Disabled": false,
+    "Mode": 0,
+    "AllowCustomCodeWidgets": false,
+    "AllowCustomCodeFunctions": true,
+    "DirectDBAccess": 1,
+    "Notes": "Read-only selected ordinary BO/DB owner snapshots with native visibility, registration and revision witnesses.",
+    "OwnedByCompany": "",
+    "Owner": "",
+    "SharedWithGroup": "",
+    "Functions": [
+      {
+        "FunctionID": "ReadCompiled",
+        "Description": "Read selected ordinary BPM owners and original associated DLL/PDB pairs",
+        "Kind": 2,
+        "RequireTransaction": false,
+        "SingleRowMode": false,
+        "Private": false,
+        "Disabled": false,
+        "Invalid": false,
+        "Thumbnail": null,
+        "Notes": "",
+        "Body": "{\"Code\":\"// Caller-owned ordinary BPM policy. Read only; never compiles or executes a directive.\\noSuccess=false;oMessage=\\\"\\\";oDS=new System.Data.DataSet(\\\"BpmCompiledCapture\\\");\\ntry {\\n if(String.IsNullOrEmpty(iCaller)||!String.Equals(iCaller,Session.UserID,StringComparison.Ordinal)||!String.Equals(iCompany,Session.CompanyID,StringComparison.Ordinal))throw new Exception(\\\"CALLER_COMPANY_MISMATCH\\\");\\n var selected=Newtonsoft.Json.Linq.JArray.Parse(iOwners);\\n var owners=new System.Collections.Generic.Dictionary<string,Newtonsoft.Json.Linq.JObject>(StringComparer.Ordinal);\\n foreach(var item in selected){\\n  string source=(string)item[\\\"source\\\"],code=(string)item[\\\"method\\\"];\\n  if((source!=\\\"BO\\\"&&source!=\\\"DB\\\")||String.IsNullOrWhiteSpace(code))throw new Exception(\\\"Explicit ordinary BPM owners are required.\\\");\\n  string key=source+\\\":\\\"+code;if(owners.ContainsKey(key))throw new Exception(\\\"Repeated BPM owner.\\\");\\n  owners.Add(key,new Newtonsoft.Json.Linq.JObject{{\\\"Source\\\",source},{\\\"BpMethodCode\\\",code}});\\n }\\n if(owners.Count==0)throw new Exception(\\\"Explicit BPM owners are required.\\\");\\n Func<Newtonsoft.Json.Linq.JObject,string,string,Newtonsoft.Json.Linq.JArray> witness=(ds,source,code)=>{\\n  var result=new Newtonsoft.Json.Linq.JArray();\\n  foreach(var table in new[]{\\\"BpMethod\\\",\\\"BpArgument\\\",\\\"BpDirective\\\"}){\\n   var rows=ds[table] as Newtonsoft.Json.Linq.JArray;if(rows==null)throw new Exception(\\\"Native definition table missing.\\\");\\n   foreach(var row in rows.Where(r=>(string)r[\\\"Source\\\"]==source&&(string)r[\\\"BpMethodCode\\\"]==code).OrderBy(r=>(string)r[\\\"SysRowID\\\"],StringComparer.Ordinal)){\\n    if(row[\\\"SysRowID\\\"]==null||row[\\\"SysRevID\\\"]==null)throw new Exception(\\\"Native revision witness missing.\\\");\\n    result.Add(new Newtonsoft.Json.Linq.JObject{{\\\"Table\\\",table},{\\\"SysRowID\\\",row[\\\"SysRowID\\\"].DeepClone()},{\\\"SysRevID\\\",row[\\\"SysRevID\\\"].DeepClone()}});\\n   }\\n  }\\n  return result;\\n };\\n Action<bool> readDefinitions=after=>this.CallService<Ice.Contracts.BpMethodSvcContract>(svc=>{\\n  foreach(var source in new[]{\\\"BO\\\",\\\"DB\\\"}){\\n   var codes=owners.Values.Where(o=>(string)o[\\\"Source\\\"]==source).Select(o=>(string)o[\\\"BpMethodCode\\\"]).ToArray();if(codes.Length==0)continue;\\n   var filter=\\\"SystemFlag = 0 AND (\\\"+String.Join(\\\" OR \\\",codes.Select(code=>\\\"BpMethodCode = '\\\"+code.Replace(\\\"'\\\",\\\"''\\\")+\\\"'\\\"))+\\\")\\\";\\n   bool more;var ds=Newtonsoft.Json.Linq.JObject.FromObject(svc.GetRowsEx(source,filter,\\\"\\\",0,1,out more));if(more)throw new Exception(\\\"Native owner read is incomplete.\\\");\\n   foreach(var code in codes){\\n    var owner=owners[source+\\\":\\\"+code];var rows=((Newtonsoft.Json.Linq.JArray)ds[\\\"BpMethod\\\"]).Where(r=>(string)r[\\\"Source\\\"]==source&&(string)r[\\\"BpMethodCode\\\"]==code).ToArray();\\n    if(rows.Length!=1||(bool?)rows[0][\\\"SystemFlag\\\"]!=false)throw new Exception(\\\"Selected BPM owner is not visible.\\\");\\n    var method=rows[0];var parts=code.Split('.');string assembly,folder;\\n    if(source==\\\"BO\\\"){\\n     if(parts.Length!=4||(string)method[\\\"ObjectNS\\\"]!=parts[1]||(string)method[\\\"BusinessObject\\\"]!=parts[2]||(string)method[\\\"Name\\\"]!=parts[3])throw new Exception(\\\"Native BO identity differs.\\\");\\n     folder=\\\"BO\\\";assembly=parts[0]+\\\".Bpm.\\\"+String.Join(\\\".\\\",parts.Skip(1));\\n    }else{\\n     if(parts.Length!=3||parts[2]!=\\\"Update\\\"||(string)method[\\\"BusinessObject\\\"]!=parts[1]||(string)method[\\\"Name\\\"]!=\\\"Update\\\")throw new Exception(\\\"Native DB identity differs.\\\");\\n     folder=\\\"DT\\\";assembly=parts[0]+\\\".\\\"+parts[1]+\\\".Bpm.Triggers\\\";\\n    }\\n    owner[\\\"Folder\\\"]=folder;owner[\\\"Assembly\\\"]=assembly;owner[\\\"DefinitionWitness\\\"+(after?\\\"After\\\":\\\"\\\")]=witness(ds,source,code).ToString(Newtonsoft.Json.Formatting.None);\\n    var visible=((Newtonsoft.Json.Linq.JArray)ds[\\\"BpDirective\\\"]).Where(r=>(string)r[\\\"Source\\\"]==source&&(string)r[\\\"BpMethodCode\\\"]==code).Select(r=>(Guid)r[\\\"DirectiveID\\\"]).ToList();\\n    // A compiled assembly can contain more than the caller-visible projection.\\n    // Refuse its bytes if any stored directive owner is hidden from this caller.\\n    var stored=Db.BpDirective.Where(r=>r.Source==source&&r.BpMethodCode==code).Select(r=>r.DirectiveID).ToList();\\n    owner[\\\"ScopeComplete\\\"+(after?\\\"After\\\":\\\"\\\")]=stored.Count==visible.Count&&stored.All(id=>visible.Contains(id));\\n   }\\n  }\\n });\\n readDefinitions(false);\\n var folderNames=owners.Values.Select(o=>(string)o[\\\"Folder\\\"]).Distinct().ToList();var names=owners.Values.Select(o=>(string)o[\\\"Assembly\\\"]).Distinct().ToList();\\n if(names.Count!=owners.Count)throw new Exception(\\\"Ambiguous ordinary BPM assembly owners.\\\");\\n var before=Db.CustomizationStore.Where(r=>folderNames.Contains(r.Folder)&&names.Contains(r.Assembly)).Select(r=>new{r.Folder,r.Assembly,r.Version,r.Info,r.ModifiedOn,r.ForcePdbLoad,r.SysRowID,r.SysRevID}).ToList();\\n if(before.Any(r=>!owners.Values.Any(o=>String.Equals(r.Folder,(string)o[\\\"Folder\\\"],StringComparison.Ordinal)&&String.Equals(r.Assembly,(string)o[\\\"Assembly\\\"],StringComparison.Ordinal))))throw new Exception(\\\"UNEXPECTED_NATIVE_STORE_SELECTOR\\\");\\n var targets=owners.Values.Where(o=>(string)o[\\\"Source\\\"]==\\\"BO\\\").Select(o=>(string)o[\\\"BpMethodCode\\\"]).ToList();\\n var dbNames=owners.Values.Where(o=>(string)o[\\\"Source\\\"]==\\\"DB\\\").Select(o=>(string)o[\\\"Assembly\\\"]).ToList();\\n var regs=Db.Customization.Where(r=>(r.Type==\\\"BPM.BO\\\"&&targets.Contains(r.Target))||(r.Type==\\\"BPM.DT\\\"&&dbNames.Contains(r.Assembly))).Select(r=>new{r.Type,r.Target,r.Scope,r.Project,r.Disabled,r.Revision,r.SysRevID,r.SysRowID,r.Assembly,r.Version,r.TypeName,r.SystemFlag}).ToList();\\n Func<Newtonsoft.Json.Linq.JObject,Newtonsoft.Json.Linq.JArray> registration=owner=>new Newtonsoft.Json.Linq.JArray(regs.Where(r=>(string)owner[\\\"Source\\\"]==\\\"BO\\\"?r.Type==\\\"BPM.BO\\\"&&String.Equals(r.Target,(string)owner[\\\"BpMethodCode\\\"],StringComparison.Ordinal):r.Type==\\\"BPM.DT\\\"&&String.Equals(r.Assembly,(string)owner[\\\"Assembly\\\"],StringComparison.Ordinal)).OrderBy(r=>r.Scope,StringComparer.Ordinal).ThenBy(r=>r.Target,StringComparer.Ordinal).Select(r=>Newtonsoft.Json.Linq.JObject.FromObject(r)));\\n foreach(var owner in owners.Values){\\n  var rows=registration(owner);owner[\\\"Registration\\\"]=rows.ToString(Newtonsoft.Json.Formatting.None);\\n  bool valid=true;\\n  foreach(var r in rows){\\n   if((string)r[\\\"Assembly\\\"]!=(string)owner[\\\"Assembly\\\"])valid=false;\\n   if((string)owner[\\\"Source\\\"]==\\\"BO\\\"){\\n    var parts=((string)owner[\\\"BpMethodCode\\\"]).Split('.');if((string)r[\\\"Scope\\\"]!=String.Join(\\\":\\\",parts.Take(3))||(string)r[\\\"Project\\\"]!=(string)owner[\\\"BpMethodCode\\\"])valid=false;\\n   }else{\\n    var table=((string)owner[\\\"BpMethodCode\\\"]).Split('.')[1];string scope=(string)r[\\\"Scope\\\"],suffix=scope==\\\"##DT##\\\"?\\\".Bpm.InTranTrigger\\\":scope==\\\"##CT##\\\"?\\\".Bpm.PostTranTrigger\\\":\\\"\\\";\\n    if(suffix==\\\"\\\"||!((string)r[\\\"Target\\\"]).EndsWith(\\\".\\\"+table+suffix,StringComparison.Ordinal))valid=false;\\n   }\\n  }\\n  owner[\\\"AssociationValid\\\"]=valid;\\n }\\n var permitted=owners.Values.Where(o=>(bool)o[\\\"ScopeComplete\\\"]&&(bool)o[\\\"AssociationValid\\\"]).Select(o=>(string)o[\\\"Folder\\\"]+\\\"|\\\"+(string)o[\\\"Assembly\\\"]).ToList();\\n var selectedRows=before.Where(r=>permitted.Contains(r.Folder+\\\"|\\\"+r.Assembly)).Select(r=>r.SysRowID).ToList();\\n var bytes=Db.CustomizationStore.Where(r=>selectedRows.Contains(r.SysRowID)).Select(r=>new{r.Folder,r.Assembly,r.Version,r.SysRowID,r.SysRevID,r.Data,r.Symbols}).ToList();\\n var afterRows=Db.CustomizationStore.Where(r=>folderNames.Contains(r.Folder)&&names.Contains(r.Assembly)).Select(r=>new{r.Folder,r.Assembly,r.Version,r.SysRevID}).ToList();\\n var afterRegs=Db.Customization.Where(r=>(r.Type==\\\"BPM.BO\\\"&&targets.Contains(r.Target))||(r.Type==\\\"BPM.DT\\\"&&dbNames.Contains(r.Assembly))).Select(r=>new{r.Type,r.Target,r.Scope,r.Project,r.Disabled,r.Revision,r.SysRevID,r.SysRowID,r.Assembly,r.Version,r.TypeName,r.SystemFlag}).ToList();\\n readDefinitions(true);\\n var tableResult=new System.Data.DataTable(\\\"Assemblies\\\");\\n foreach(var name in new[]{\\\"Source\\\",\\\"BpMethodCode\\\",\\\"Folder\\\",\\\"Assembly\\\",\\\"Version\\\",\\\"Info\\\",\\\"ModifiedOn\\\",\\\"SysRowID\\\",\\\"SysRevID\\\",\\\"BinarySysRevID\\\",\\\"AfterSysRevID\\\",\\\"SymbolDisposition\\\",\\\"ModuleVersionId\\\",\\\"AssemblyFullName\\\"})tableResult.Columns.Add(name,typeof(string));\\n tableResult.Columns.Add(\\\"ForcePdbLoad\\\",typeof(bool));tableResult.Columns.Add(\\\"Data\\\",typeof(byte[]));tableResult.Columns.Add(\\\"Symbols\\\",typeof(byte[]));\\n foreach(var owner in owners.Values){\\n  string folder=(string)owner[\\\"Folder\\\"],assembly=(string)owner[\\\"Assembly\\\"];\\n  owner[\\\"BeforeRows\\\"]=before.Count(r=>r.Folder==folder&&r.Assembly==assembly);owner[\\\"AfterRows\\\"]=afterRows.Count(r=>r.Folder==folder&&r.Assembly==assembly);\\n  owner[\\\"RegistrationAfter\\\"]=new Newtonsoft.Json.Linq.JArray(afterRegs.Where(r=>(string)owner[\\\"Source\\\"]==\\\"BO\\\"?r.Type==\\\"BPM.BO\\\"&&String.Equals(r.Target,(string)owner[\\\"BpMethodCode\\\"],StringComparison.Ordinal):r.Type==\\\"BPM.DT\\\"&&String.Equals(r.Assembly,assembly,StringComparison.Ordinal)).OrderBy(r=>r.Scope,StringComparer.Ordinal).ThenBy(r=>r.Target,StringComparer.Ordinal).Select(r=>Newtonsoft.Json.Linq.JObject.FromObject(r))).ToString(Newtonsoft.Json.Formatting.None);\\n  foreach(var row in before.Where(r=>String.Equals(r.Folder,folder,StringComparison.Ordinal)&&String.Equals(r.Assembly,assembly,StringComparison.Ordinal)).OrderBy(r=>r.Version,StringComparer.Ordinal)){\\n   var payload=bytes.SingleOrDefault(r=>r.SysRowID==row.SysRowID&&String.Equals(r.Folder,folder,StringComparison.Ordinal)&&String.Equals(r.Assembly,assembly,StringComparison.Ordinal)&&String.Equals(r.Version,row.Version,StringComparison.Ordinal));\\n   var current=afterRows.SingleOrDefault(r=>String.Equals(r.Folder,folder,StringComparison.Ordinal)&&String.Equals(r.Assembly,assembly,StringComparison.Ordinal)&&String.Equals(r.Version,row.Version,StringComparison.Ordinal));\\n   byte[] dll=payload==null?null:payload.Data,pdb=payload==null?null:payload.Symbols;string disposition=pdb==null?\\\"absent\\\":\\\"unsupported-unused\\\",mvid=\\\"\\\",fullName=\\\"\\\";\\n   if(dll!=null){try{using(var stream=new System.IO.MemoryStream(dll))using(var pe=new System.Reflection.PortableExecutable.PEReader(stream)){\\n    var metadata=System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);mvid=metadata.GetGuid(metadata.GetModuleDefinition().Mvid).ToString();var identity=metadata.GetAssemblyDefinition();fullName=metadata.GetString(identity.Name)+\\\", Version=\\\"+identity.Version.ToString();\\n    if(pdb!=null){try{using(var symbolStream=new System.IO.MemoryStream(pdb))using(var provider=System.Reflection.Metadata.MetadataReaderProvider.FromPortablePdbStream(symbolStream)){\\n     var sm=provider.GetMetadataReader();if(sm.DebugMetadataHeader==null)throw new System.BadImageFormatException();var symbolID=new System.Reflection.Metadata.BlobContentId(sm.DebugMetadataHeader.Id);\\n     disposition=pe.ReadDebugDirectory().Any(e=>e.Type==System.Reflection.PortableExecutable.DebugDirectoryEntryType.CodeView&&e.Stamp==symbolID.Stamp&&pe.ReadCodeViewDebugDirectoryData(e).Guid==symbolID.Guid&&pe.ReadCodeViewDebugDirectoryData(e).Age==1)?\\\"matched-portable\\\":\\\"mismatched-unused\\\";\\n    }}catch(System.BadImageFormatException){disposition=\\\"unsupported-unused\\\";}}\\n    if(disposition!=\\\"matched-portable\\\"&&pe.ReadDebugDirectory().Any(e=>e.Type==System.Reflection.PortableExecutable.DebugDirectoryEntryType.EmbeddedPortablePdb))disposition+=\\\";embedded-candidate\\\";\\n   }}catch(System.BadImageFormatException){disposition=\\\"binary-invalid;\\\"+disposition;}}\\n   tableResult.Rows.Add((string)owner[\\\"Source\\\"],(string)owner[\\\"BpMethodCode\\\"],folder,assembly,row.Version,row.Info,row.ModifiedOn.ToString(\\\"o\\\",System.Globalization.CultureInfo.InvariantCulture),row.SysRowID.ToString(),Convert.ToBase64String(row.SysRevID),payload==null?\\\"\\\":Convert.ToBase64String(payload.SysRevID),current==null?\\\"\\\":Convert.ToBase64String(current.SysRevID),disposition,mvid,fullName,row.ForcePdbLoad,(object)dll??DBNull.Value,(object)pdb??DBNull.Value);\\n  }\\n }\\n oDS.Tables.Add(tableResult);\\n var ownerTable=new System.Data.DataTable(\\\"Owners\\\");foreach(var name in new[]{\\\"Source\\\",\\\"BpMethodCode\\\",\\\"Folder\\\",\\\"Assembly\\\",\\\"DefinitionWitness\\\",\\\"DefinitionWitnessAfter\\\",\\\"Registration\\\",\\\"RegistrationAfter\\\"})ownerTable.Columns.Add(name,typeof(string));\\n foreach(var name in new[]{\\\"ScopeComplete\\\",\\\"ScopeCompleteAfter\\\",\\\"AssociationValid\\\"})ownerTable.Columns.Add(name,typeof(bool));foreach(var name in new[]{\\\"BeforeRows\\\",\\\"AfterRows\\\"})ownerTable.Columns.Add(name,typeof(int));\\n foreach(var owner in owners.Values)ownerTable.Rows.Add((string)owner[\\\"Source\\\"],(string)owner[\\\"BpMethodCode\\\"],(string)owner[\\\"Folder\\\"],(string)owner[\\\"Assembly\\\"],(string)owner[\\\"DefinitionWitness\\\"],(string)owner[\\\"DefinitionWitnessAfter\\\"],(string)owner[\\\"Registration\\\"],(string)owner[\\\"RegistrationAfter\\\"],(bool)owner[\\\"ScopeComplete\\\"],(bool)owner[\\\"ScopeCompleteAfter\\\"],(bool)owner[\\\"AssociationValid\\\"],(int)owner[\\\"BeforeRows\\\"],(int)owner[\\\"AfterRows\\\"]);\\n oDS.Tables.Add(ownerTable);\\n var scopeTable=new System.Data.DataTable(\\\"Scope\\\");scopeTable.Columns.Add(\\\"Caller\\\",typeof(string));scopeTable.Columns.Add(\\\"Company\\\",typeof(string));scopeTable.Rows.Add(Session.UserID,Session.CompanyID);oDS.Tables.Add(scopeTable);oSuccess=true;\\n}catch(Exception error){oMessage=error.Message;}\\n\",\"Usings\":\"\"}",
+        "FunctionSignature": [
+          {
+            "ArgumentName": "iOwners",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 1,
+            "ParameterID": 1,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "Response": true,
+            "ParameterID": 1,
+            "ArgumentName": "oSuccess",
+            "Order": 1,
+            "DataType": "System.Boolean",
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "Response": true,
+            "ParameterID": 2,
+            "ArgumentName": "oMessage",
+            "Order": 2,
+            "DataType": "System.String",
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "Response": true,
+            "ParameterID": 3,
+            "ArgumentName": "oDS",
+            "Order": 3,
+            "DataType": "System.Data.DataSet",
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iCaller",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 2,
+            "ParameterID": 2,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iCompany",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 3,
+            "ParameterID": 3,
+            "Optional": false,
+            "Description": ""
+          }
+        ]
+      }
+    ],
+    "LibraryReferences": [
+      {
+        "ReferenceType": 0,
+        "ReferenceID": "Newtonsoft.Json.dll"
+      },
+      {
+        "ReferenceType": 2,
+        "ReferenceID": "ICE:BO:BpMethod"
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.CustomizationStore",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.Customization",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.BpDirective",
+        "Updatable": false
+      }
+    ],
+    "LibraryMappings": []
+  }
+}

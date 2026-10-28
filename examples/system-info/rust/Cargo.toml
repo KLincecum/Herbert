@@ -1,0 +1,23 @@
+[package]
+name = "herbert-system-info-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../../LICENSE.md"
+description = "A small Herbert plugin that teaches configuration, state and host capabilities."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Keep the example independent. A plugin author does not need Herbert's source.
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = "debuginfo"

@@ -1,0 +1,63 @@
+{
+  "artifacts": [
+    {
+      "alias": "compiled_bpm",
+      "purpose": "requiredContent",
+      "coverage": "someContent",
+      "type": "functionLibrary",
+      "file": "artifacts/HerbertBpmCompiled-4.3.200.efxj",
+      "versionFiles": [
+        {
+          "epicorVersion": "12.1.100.29",
+          "file": "artifacts/HerbertBpmCompiled-5.1.100.efxj"
+        },
+        {
+          "epicorVersion": "12.2.100.9",
+          "file": "artifacts/HerbertBpmCompiled-5.2.100.efxj"
+        }
+      ],
+      "lifetime": "temporary",
+      "policy": "createInstance",
+      "requiredFunctions": [
+        {
+          "function": "ReadCompiled",
+          "parameters": [
+            {
+              "name": "iOwners",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "iCaller",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "iCompany",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "oSuccess",
+              "dataType": "System.Boolean",
+              "direction": "output"
+            },
+            {
+              "name": "oMessage",
+              "dataType": "System.String",
+              "direction": "output"
+            },
+            {
+              "name": "oDS",
+              "dataType": "System.Data.DataSet",
+              "direction": "output"
+            }
+          ]
+        }
+      ],
+      "effects": {
+        "description": "When optional compiled snapshots are selected, installs a temporary scoped read-only ordinary BPM reader, preserves exact original DLL/PDB rows with native owner/registration witnesses, then removes its owned helper. Direct BPM packages, definitions and authored sources remain independently available. Never compiles or executes source directives."
+      }
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+[
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "method": "ExportBaq",
+    "pointer": "/returnObj",
+    "extension": "baq"
+  },
+  {
+    "service": "Ice.BO.BpMethodSvc",
+    "method": "ExportByService",
+    "pointer": "/returnObj/Data",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.BpMethodSvc",
+    "method": "ExportByTable",
+    "pointer": "/returnObj/Data",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.Lib.EfxLibraryDesignerSvc",
+    "method": "ExportLibrary",
+    "pointer": "/returnObj",
+    "extension": "efxj"
+  },
+  {
+    "service": "Ice.Lib.EfxLibraryDesignerSvc",
+    "method": "GetLibrary",
+    "pointer": "/returnObj/EfxFunction/*/Thumbnail",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "method": "ExportReportStyle",
+    "pointer": "/returnObj/ReportStyleImage/*/ImageContent",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "method": "ExportSsrsRdl",
+    "pointer": "/returnObj",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "method": "GetByID",
+    "pointer": "/returnObj/ReportStyleImage/*/ImageContent",
+    "extension": "bin"
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "method": "GetByID",
+    "pointer": "/returnObj/PcInputs/*/Content",
+    "extension": "bin"
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "method": "GetByID",
+    "pointer": "/returnObj/PcInputs/*/Content",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ThemeSvc",
+    "method": "GetByID",
+    "pointer": "/returnObj/ThemeResource/*/BinaryResource",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ThemeSvc",
+    "method": "GetRows",
+    "pointer": "/returnObj/ThemeResource/*/BinaryResource",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "method": "ExportExtensionSet",
+    "pointer": "/returnObj",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.MessageTemplateSvc",
+    "method": "ExportMessageTemplate",
+    "pointer": "/returnObj",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.AccessScopeSvc",
+    "method": "ExportAccessScope",
+    "pointer": "/returnObj",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.Lib.EcfToolsSvc",
+    "method": "GetAssemblyBytes",
+    "pointer": "/returnObj",
+    "extension": "dll"
+  },
+  {
+    "service": "Ice.Lib.FileStoreSvc",
+    "method": "ReadAllBytes",
+    "pointer": "/returnObj",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.Lib.FileStoreSvc",
+    "method": "ReadAllFiles",
+    "pointer": "/returnObj/*/Contents",
+    "extension": "bin"
+  },
+  {
+    "service": "Ice.BO.ExportPackageSvc",
+    "method": "GetInstalledSolution",
+    "pointer": "/parameters/content",
+    "extension": "bin"
+  },
+  {
+    "service": "HerbertReports",
+    "method": "ReadLayouts",
+    "pointer": "/oDS/Layouts/*/Content",
+    "extension": "bin"
+  }
+]

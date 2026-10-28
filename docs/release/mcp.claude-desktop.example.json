@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "herbert": {
+      "command": "C:/Apps/Herbert/herbert.exe",
+      "args": [
+        "mcp",
+        "--state-dir",
+        "C:/Apps/Herbert/data",
+        "--plugin-dir",
+        "C:/Apps/Herbert/plugins"
+      ]
+    }
+  }
+}

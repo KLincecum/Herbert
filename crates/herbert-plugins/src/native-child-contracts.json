@@ -1,0 +1,2388 @@
+[
+  {
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "table": "ZLookupLink",
+    "entity": "ZLookupLink",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataTableID": "Edm.String",
+      "LookupID": "Edm.String"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataTableID": "DataTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "table": "ZLinkColumn",
+    "entity": "ZLinkColumn",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataTableID": "Edm.String",
+      "LinkID": "Edm.String",
+      "SysRowID": "Edm.Guid"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataTableID": "DataTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "table": "ZLookupField",
+    "entity": "ZLookupField",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataTableID": "Edm.String",
+      "LookupID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataTableID": "DataTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "table": "ZDataField",
+    "entity": "ZDataField",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataTableID": "Edm.String",
+      "FieldName": "Edm.String"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataTableID": "DataTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "table": "ZKey",
+    "entity": "ZKey",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataTableID": "Edm.String",
+      "KeyID": "Edm.String"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataTableID": "DataTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "table": "ZKeyField",
+    "entity": "ZKeyField",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataTableID": "Edm.String",
+      "KeyID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataTableID": "DataTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.UDMapSvc",
+    "root": "UDMapTable",
+    "table": "UDMapColumn",
+    "entity": "UDMapColumn",
+    "keys": {
+      "MapTableID": "Edm.Int32",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "MapTableID": "MapTableID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryCtrlDesigner",
+    "entity": "QueryCtrlDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ControlID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryCtrlValuesDesigner",
+    "entity": "QueryCtrlValuesDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ControlID": "Edm.String",
+      "ID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryCustomActionDesigner",
+    "entity": "QueryCustomActionDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ActionID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryExecuteSettingDesigner",
+    "entity": "QueryExecuteSettingDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SettingID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryParameterDesigner",
+    "entity": "QueryParameterDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ParameterID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryReferenceDesigner",
+    "entity": "QueryReferenceDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ReferenceID": "Edm.Guid"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryParameterBindingDesigner",
+    "entity": "QueryParameterBindingDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ReferenceID": "Edm.Guid",
+      "ParameterID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QuerySubQueryDesigner",
+    "entity": "QuerySubQueryDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryRelationDesigner",
+    "entity": "QueryRelationDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "RelationID": "Edm.Guid"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryRelationFieldDesigner",
+    "entity": "QueryRelationFieldDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "RelationID": "Edm.Guid",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QuerySortByDesigner",
+    "entity": "QuerySortByDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "TableID": "Edm.String",
+      "FieldName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryWhereItemDesigner",
+    "entity": "QueryWhereItemDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "TableID": "Edm.String",
+      "CriteriaID": "Edm.Guid",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryGroupByDesigner",
+    "entity": "QueryGroupByDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "GroupByID": "Edm.Guid"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryTableDesigner",
+    "entity": "QueryTableDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "TableID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryFieldDesigner",
+    "entity": "QueryFieldDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "TableID": "Edm.String",
+      "FieldName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryFieldAttributeDesigner",
+    "entity": "QueryFieldAttributeDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "TableID": "Edm.String",
+      "FieldName": "Edm.String",
+      "AttributeName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryFunctionCallDesigner",
+    "entity": "QueryFunctionCallDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "SubQueryID": "Edm.Guid",
+      "FunctionID": "Edm.String",
+      "ParameterName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryUpdateFieldDesigner",
+    "entity": "QueryUpdateFieldDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "MapTableName": "Edm.String",
+      "MapFieldName": "Edm.String",
+      "Direction": "Edm.Boolean"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryUpdateSettingsDesigner",
+    "entity": "QueryUpdateSettingsDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "table": "QueryValueSetItemsDesigner",
+    "entity": "QueryValueSetItemsDesigner",
+    "keys": {
+      "Company": "Edm.String",
+      "QueryID": "Edm.String",
+      "ValueSetID": "Edm.String",
+      "ItemValue": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "QueryID": "QueryID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BpMethodSvc",
+    "root": "BpMethod",
+    "table": "BpArgument",
+    "entity": "BpArgument",
+    "keys": {
+      "Source": "Edm.String",
+      "BpMethodCode": "Edm.String",
+      "Order": "Edm.Int32"
+    },
+    "links": {
+      "Source": "Source",
+      "BpMethodCode": "BpMethodCode"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.BpMethodSvc",
+    "root": "BpMethod",
+    "table": "BpDirective",
+    "entity": "BpDirective",
+    "keys": {
+      "DirectiveID": "Edm.Guid"
+    },
+    "links": {
+      "Source": "Source",
+      "BpMethodCode": "BpMethodCode"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DashBoardSvc",
+    "root": "DashBdDef",
+    "table": "DashBdBAQ",
+    "entity": "DashBdBAQ",
+    "keys": {
+      "Company": "Edm.String",
+      "ProductID": "Edm.String",
+      "GlbCompany": "Edm.String",
+      "DefinitionID": "Edm.String",
+      "QueryID": "Edm.String",
+      "CGCCode": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ProductID": "ProductID",
+      "GlbCompany": "GlbCompany",
+      "DefinitionID": "DefinitionID",
+      "CGCCode": "CGCCode"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DashBoardSvc",
+    "root": "DashBdDef",
+    "table": "DashBdChunk",
+    "entity": "DashBdChunk",
+    "keys": {
+      "Company": "Edm.String",
+      "ProductID": "Edm.String",
+      "GlbCompany": "Edm.String",
+      "DefinitionID": "Edm.String",
+      "SeqNum": "Edm.Int32",
+      "CGCCode": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ProductID": "ProductID",
+      "GlbCompany": "GlbCompany",
+      "DefinitionID": "DefinitionID",
+      "CGCCode": "CGCCode"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DashBoardSvc",
+    "root": "DashBdDef",
+    "table": "DashBdLike",
+    "entity": "DashBdLike",
+    "keys": {
+      "Company": "Edm.String",
+      "ProductID": "Edm.String",
+      "GlbCompany": "Edm.String",
+      "DefinitionID": "Edm.String",
+      "LikeField": "Edm.String",
+      "CGCCode": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ProductID": "ProductID",
+      "GlbCompany": "GlbCompany",
+      "DefinitionID": "DefinitionID",
+      "CGCCode": "CGCCode"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.QuickSearchSvc",
+    "root": "QuickSearch",
+    "table": "QuickSearchCriteria",
+    "entity": "QuickSearchCriteria",
+    "keys": {
+      "Company": "Edm.String",
+      "QuickSearchID": "Edm.String",
+      "GlbCompany": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "QuickSearchID": "QuickSearchID",
+      "GlbCompany": "GlbCompany"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.QuickSearchSvc",
+    "root": "QuickSearch",
+    "table": "QuickSearchValueList",
+    "entity": "QuickSearchValueList",
+    "keys": {
+      "Company": "Edm.String",
+      "QuickSearchID": "Edm.String",
+      "GlbCompany": "Edm.String",
+      "Seq": "Edm.Int32",
+      "ValueSeq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "QuickSearchID": "QuickSearchID",
+      "GlbCompany": "GlbCompany"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.NamedSearchSvc",
+    "root": "NamedSearch",
+    "table": "ControlSetting",
+    "entity": "ControlSetting",
+    "keys": {
+      "Company": "Edm.String",
+      "SearchForm": "Edm.String",
+      "NSId": "Edm.String",
+      "UserID": "Edm.String",
+      "CalledFrom": "Edm.String",
+      "ControlGuid": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "SearchForm": "SearchForm",
+      "NSId": "NSId",
+      "UserID": "UserID",
+      "CalledFrom": "CalledFrom"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.NamedSearchSvc",
+    "root": "NamedSearch",
+    "table": "WhereClause",
+    "entity": "WhereClause",
+    "keys": {
+      "Company": "Edm.String",
+      "SearchForm": "Edm.String",
+      "NSId": "Edm.String",
+      "UserID": "Edm.String",
+      "CalledFrom": "Edm.String",
+      "TableName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "SearchForm": "SearchForm",
+      "NSId": "NSId",
+      "UserID": "UserID",
+      "CalledFrom": "CalledFrom"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptTable",
+    "entity": "RptTable",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptTableID": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptCalcField",
+    "entity": "RptCalcField",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "ZDataTableID": "Edm.String",
+      "FieldName": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptExclude",
+    "entity": "RptExclude",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "ZDataTableID": "Edm.String",
+      "ZFieldName": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptLinkTable",
+    "entity": "RptLinkTable",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "RptLinkID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "ZDataTableID": "Edm.String",
+      "ZLookupID": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptLinkField",
+    "entity": "RptLinkField",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "RptLinkID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "ZDataTableID": "Edm.String",
+      "ZLookupID": "Edm.String",
+      "FieldName": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptWhereItem",
+    "entity": "RptWhereItem",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "ZDataTableID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptCriteriaSet",
+    "entity": "RptCriteriaSet",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptCriteriaSetID": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptCriteriaFilter",
+    "entity": "RptCriteriaFilter",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptCriteriaSetID": "Edm.String",
+      "FilterID": "Edm.Int32"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptCriteriaMapping",
+    "entity": "RptCriteriaMapping",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptCriteriaSetID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "ParameterID": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptCriteriaPrompt",
+    "entity": "RptCriteriaPrompt",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptCriteriaSetID": "Edm.String",
+      "PromptID": "Edm.Int32"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptCriteriaPromptValue",
+    "entity": "RptCriteriaPromptValue",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptCriteriaSetID": "Edm.String",
+      "PromptID": "Edm.Int32",
+      "ItemID": "Edm.Int32"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptRelation",
+    "entity": "RptRelation",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RelationID": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptRelationField",
+    "entity": "RptRelationField",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RelationID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptLiterals",
+    "entity": "RptLiteral",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "LiteralName": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptDataSourceField",
+    "entity": "RptDataSourceField",
+    "keys": {
+      "SysRowID": "Edm.Guid"
+    },
+    "links": {},
+    "unverifiedParent": true,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "table": "RptDataSourceParameter",
+    "entity": "RptDataSourceParameter",
+    "keys": {
+      "RptDefID": "Edm.String",
+      "RptCriteriaSetID": "Edm.String",
+      "RptTableID": "Edm.String",
+      "ParameterID": "Edm.String"
+    },
+    "links": {
+      "RptDefID": "RptDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DynamicReportSvc",
+    "root": "BAQReport",
+    "table": "BAQRptOptionFld",
+    "entity": "BAQRptOptionFld",
+    "keys": {
+      "BAQRptID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "BAQRptID": "BAQRptID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DynamicReportSvc",
+    "root": "BAQReport",
+    "table": "BAQRptFilter",
+    "entity": "BAQRptFilter",
+    "keys": {
+      "BAQRptID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "BAQRptID": "BAQRptID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DynamicReportSvc",
+    "root": "BAQReport",
+    "table": "BAQRptSort",
+    "entity": "BAQRptSort",
+    "keys": {
+      "BAQRptID": "Edm.String",
+      "SortID": "Edm.String"
+    },
+    "links": {
+      "BAQRptID": "BAQRptID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.DynamicReportSvc",
+    "root": "BAQReport",
+    "table": "BAQRptSortFld",
+    "entity": "BAQRptSortFld",
+    "keys": {
+      "BAQRptID": "Edm.String",
+      "SortID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "BAQRptID": "BAQRptID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "root": "Report",
+    "table": "ReportStyle",
+    "entity": "ReportStyle",
+    "keys": {
+      "ReportID": "Edm.String",
+      "StyleNum": "Edm.Int32"
+    },
+    "links": {
+      "ReportID": "ReportID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "root": "Report",
+    "table": "RptStylePrinters",
+    "entity": "RptStylePrinter",
+    "keys": {
+      "Company": "Edm.String",
+      "ReportID": "Edm.String",
+      "StyleNum": "Edm.Int32",
+      "PrinterID": "Edm.String"
+    },
+    "links": {
+      "ReportID": "ReportID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "root": "Report",
+    "table": "ReportStyleImage",
+    "entity": "ReportStyleImage",
+    "keys": {
+      "ReportID": "Edm.String",
+      "StyleNum": "Edm.Int32",
+      "ReportStyleImageName": "Edm.String",
+      "ImageCompany": "Edm.String"
+    },
+    "links": {
+      "ReportID": "ReportID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "root": "Report",
+    "table": "ReportStyleRule",
+    "entity": "ReportStyleRule",
+    "keys": {
+      "ReportID": "Edm.String",
+      "StyleNum": "Edm.Int32",
+      "SysRowID": "Edm.Guid"
+    },
+    "links": {
+      "ReportID": "ReportID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ReportSvc",
+    "root": "Report",
+    "table": "ReportComp",
+    "entity": "ReportComp",
+    "keys": {
+      "ReportID": "Edm.String",
+      "StyleNum": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ReportID": "ReportID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcStatusAttch",
+    "entity": "PcStatusAttch",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "DrawingSeq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcDocRules",
+    "entity": "PcDocRule",
+    "keys": {
+      "Company": "Edm.String",
+      "RuleSeq": "Edm.Int32",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcDocRulesExpr",
+    "entity": "PcDocRulesExpr",
+    "keys": {
+      "Company": "Edm.String",
+      "RuleSeq": "Edm.Int32",
+      "SeqNum": "Edm.Int32",
+      "TypeCode": "Edm.String",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcDocVar",
+    "entity": "PcDocVar",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "VarNum": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcInputs",
+    "entity": "PcInput",
+    "keys": {
+      "Company": "Edm.String",
+      "InputName": "Edm.String",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcStrComp",
+    "entity": "PcStrComp",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "PosOrder": "Edm.Int32",
+      "CompName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "table": "PcTargetEntity",
+    "entity": "PcTargetEntity",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "TableName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcPage",
+    "entity": "PcPage",
+    "keys": {
+      "Company": "Edm.String",
+      "PageSeq": "Edm.Int32",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcInputs",
+    "entity": "PcInput",
+    "keys": {
+      "Company": "Edm.String",
+      "InputName": "Edm.String",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcInputsLayerHeader",
+    "entity": "PcInputsLayerHeader",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "InputName": "Edm.String",
+      "ImageLayerID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcInputsLayerDetail",
+    "entity": "PcInputsLayerDetail",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "InputName": "Edm.String",
+      "ImageLayerID": "Edm.String",
+      "LayerSeq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcDynLst",
+    "entity": "PcDynLst",
+    "keys": {
+      "Company": "Edm.String",
+      "InputName": "Edm.String",
+      "ListSeq": "Edm.Int32",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcDynLstCriteria",
+    "entity": "PcDynLstCriteria",
+    "keys": {
+      "Company": "Edm.String",
+      "InputName": "Edm.String",
+      "ListSeq": "Edm.Int32",
+      "CriteriaSeq": "Edm.Int32",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcDynLstExpr",
+    "entity": "PcDynLstExpr",
+    "keys": {
+      "Company": "Edm.String",
+      "InputName": "Edm.String",
+      "ListSeq": "Edm.Int32",
+      "TypeCode": "Edm.String",
+      "SeqNum": "Edm.Int32",
+      "ConfigID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcDynLstParams",
+    "entity": "PcDynLstParam",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "InputName": "Edm.String",
+      "ListSeq": "Edm.Int32",
+      "ParamName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcInputsExpr",
+    "entity": "PcInputsExpr",
+    "keys": {
+      "Company": "Edm.String",
+      "InputName": "Edm.String",
+      "ConfigID": "Edm.String",
+      "TypeCode": "Edm.String",
+      "SeqNum": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcInputsRule",
+    "entity": "PcInputsRule",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "TargetInputName": "Edm.String",
+      "RuleSeq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcInputsRuleDef",
+    "entity": "PcInputsRuleDef",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "TargetInputName": "Edm.String",
+      "RuleSeq": "Edm.Int32",
+      "SeqNum": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "QBuildObj",
+    "entity": "QBuildObj",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "InputName": "Edm.String",
+      "ObjName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "QBuildMapping",
+    "entity": "QBuildMapping",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "InputName": "Edm.String",
+      "ObjName": "Edm.String",
+      "ObjParameter": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcPageExpr",
+    "entity": "PcPageExpr",
+    "keys": {
+      "Company": "Edm.String",
+      "PageSeq": "Edm.Int32",
+      "ConfigID": "Edm.String",
+      "SeqNum": "Edm.Int32",
+      "TypeCode": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfigurationDesignSvc",
+    "root": "PcStatus",
+    "table": "PcStatusExpr",
+    "entity": "PcStatusExpr",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "TypeCode": "Edm.String",
+      "SeqNum": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.PcLookupTblSvc",
+    "root": "PcLookupTblHed",
+    "table": "PcLookupTblHedAttch",
+    "entity": "PcLookupTblHedAttch",
+    "keys": {
+      "Company": "Edm.String",
+      "LookupTblID": "Edm.String",
+      "DrawingSeq": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "LookupTblID": "LookupTblID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.PcLookupTblSvc",
+    "root": "PcLookupTblHed",
+    "table": "PcLookupColSetHed",
+    "entity": "PcLookupColSetHed",
+    "keys": {
+      "Company": "Edm.String",
+      "LookupTblID": "Edm.String",
+      "ColSetID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "LookupTblID": "LookupTblID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.PcLookupTblSvc",
+    "root": "PcLookupTblHed",
+    "table": "PcLookupColSetDtl",
+    "entity": "PcLookupColSetDtl",
+    "keys": {
+      "Company": "Edm.String",
+      "LookupTblID": "Edm.String",
+      "ColSetID": "Edm.String",
+      "ColName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "LookupTblID": "LookupTblID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.PcLookupTblSvc",
+    "root": "PcLookupTblHed",
+    "table": "PcLookupTblValues",
+    "entity": "PcLookupTblValue",
+    "keys": {
+      "Company": "Edm.String",
+      "LookupTblID": "Edm.String",
+      "RowNum": "Edm.Int32",
+      "ColName": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "LookupTblID": "LookupTblID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.StructuredOutputDefinitionSvc",
+    "root": "RptStructuredOutputDef",
+    "table": "RptStructuredOutputFile",
+    "entity": "RptStructuredOutputFile",
+    "keys": {
+      "RptStructuredOutputDefID": "Edm.String",
+      "RptStructuredOutputFileID": "Edm.String"
+    },
+    "links": {
+      "RptStructuredOutputDefID": "RptStructuredOutputDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.StructuredOutputDefinitionSvc",
+    "root": "RptStructuredOutputDef",
+    "table": "RptStructuredOutputFileElement",
+    "entity": "RptStructuredOutputFileElement",
+    "keys": {
+      "RptStructuredOutputDefID": "Edm.String",
+      "RptStructuredOutputFileID": "Edm.String",
+      "ElementID": "Edm.Int32"
+    },
+    "links": {
+      "RptStructuredOutputDefID": "RptStructuredOutputDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.StructuredOutputDefinitionSvc",
+    "root": "RptStructuredOutputDef",
+    "table": "RptStructuredOutputFileXMLNS",
+    "entity": "RptStructuredOutputFileXMLN",
+    "keys": {
+      "RptStructuredOutputDefID": "Edm.String",
+      "RptStructuredOutputFileID": "Edm.String",
+      "RptStructuredOutputFileNamespaceID": "Edm.Int32"
+    },
+    "links": {
+      "RptStructuredOutputDefID": "RptStructuredOutputDefID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ACTRevision",
+    "entity": "ACTRevision",
+    "keys": {
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ABTDocLine",
+    "entity": "ABTDocLine",
+    "keys": {
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ABTDocLineUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ABTAmount",
+    "entity": "ABTAmount",
+    "keys": {
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ABTDocLineUID": "Edm.Int32",
+      "ABTAmountUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ABTPostEntity",
+    "entity": "ABTPostEntity",
+    "keys": {
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ABTDocLineUID": "Edm.Int32",
+      "ABTPostEntityUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ABTPostCode",
+    "entity": "ABTPostCode",
+    "keys": {
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ABTDocLineUID": "Edm.Int32",
+      "ABTPostEntityUID": "Edm.Int32",
+      "ABTPostCodeUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ABTQuery",
+    "entity": "ABTQuery",
+    "keys": {
+      "ABTQueryUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "Company": "Edm.String",
+      "ABTDocLineUID": "Edm.Int32"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ABTQParam",
+    "entity": "ABTQParam",
+    "keys": {
+      "BAQParamLinkUID": "Edm.Int32",
+      "ABTQueryUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "Company": "Edm.String",
+      "ABTDocLineUID": "Edm.Int32"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "ACTBook",
+    "entity": "ACTBook",
+    "keys": {
+      "Company": "Edm.String",
+      "BookID": "Edm.String",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BookingRule",
+    "entity": "BookingRule",
+    "keys": {
+      "RuleUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "BookID": "Edm.String",
+      "ACTTypeUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BookValRule",
+    "entity": "BookValRule",
+    "keys": {
+      "VRuleUID": "Edm.Int32",
+      "Company": "Edm.String",
+      "BookID": "Edm.String",
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "RuleUID": "Edm.Int32"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BROperation",
+    "entity": "BROperation",
+    "keys": {
+      "OperationUID": "Edm.Int32",
+      "RuleUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "Company": "Edm.String",
+      "BookID": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BROperationCustom",
+    "entity": "BROperationCustom",
+    "keys": {
+      "Company": "Edm.String",
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "BookID": "Edm.String",
+      "RuleUID": "Edm.Int32",
+      "OperationUID": "Edm.Int32"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BRFunction",
+    "entity": "BRFunction",
+    "keys": {
+      "FunctionUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "BookID": "Edm.String",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BookVar",
+    "entity": "BookVar",
+    "keys": {
+      "ACTTypeUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "BookID": "Edm.String",
+      "BookVarUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BRFuncArgs",
+    "entity": "BRFuncArg",
+    "keys": {
+      "FunctionUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "ArgumentUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ACTTypeSvc",
+    "root": "ACTType",
+    "table": "BRFuncOperation",
+    "entity": "BRFuncOperation",
+    "keys": {
+      "OperationUID": "Edm.Int32",
+      "ACTRevisionUID": "Edm.Int32",
+      "ACTTypeUID": "Edm.Int32",
+      "FuncOperUID": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "ACTTypeUID": "ACTTypeUID",
+      "Company": "Company"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.InfoPromptFormSvc",
+    "root": "IPForm",
+    "table": "IPFormBPAction",
+    "entity": "IPFormBPAction",
+    "keys": {
+      "FormId": "Edm.String",
+      "BPActionNum": "Edm.Int32"
+    },
+    "links": {
+      "FormId": "FormId"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.InfoPromptFormSvc",
+    "root": "IPForm",
+    "table": "IPFormCtrl",
+    "entity": "IPFormCtrl",
+    "keys": {
+      "ControlId": "Edm.String",
+      "FormId": "Edm.String"
+    },
+    "links": {
+      "FormId": "FormId"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.InfoPromptFormSvc",
+    "root": "IPForm",
+    "table": "IPFormCtrlValues",
+    "entity": "IPFormCtrlValue",
+    "keys": {
+      "ParentId": "Edm.String",
+      "ValueSeq": "Edm.Int32",
+      "FormId": "Edm.String"
+    },
+    "links": {
+      "FormId": "FormId"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ThemeSvc",
+    "root": "Theme",
+    "table": "ThemeResource",
+    "entity": "ThemeResource",
+    "keys": {
+      "ThemeID": "Edm.String",
+      "ResourceType": "Edm.String"
+    },
+    "links": {
+      "ThemeID": "ThemeID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.LangNameSvc",
+    "root": "LangName",
+    "table": "Culture",
+    "entity": "Culture",
+    "keys": {
+      "SysRowID": "Edm.Guid"
+    },
+    "links": {},
+    "unverifiedParent": false,
+    "lookup": true
+  },
+  {
+    "service": "Ice.BO.LangNameSvc",
+    "root": "LangName",
+    "table": "NomenclatureModule",
+    "entity": "NomenclatureModule",
+    "keys": {
+      "SysRowID": "Edm.Guid"
+    },
+    "links": {},
+    "unverifiedParent": false,
+    "lookup": true
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "table": "ExtensionSetMapping",
+    "entity": "ExtensionSetMapping",
+    "keys": {
+      "Company": "Edm.String",
+      "ExtensionSetID": "Edm.String"
+    },
+    "links": {
+      "ExtensionSetID": "ExtensionSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "table": "ExtensionTable",
+    "entity": "ExtensionTable",
+    "keys": {
+      "DataTableID": "Edm.String",
+      "ExtensionSetID": "Edm.String",
+      "SystemCode": "Edm.String"
+    },
+    "links": {
+      "ExtensionSetID": "ExtensionSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "table": "ExtensionColumn",
+    "entity": "ExtensionColumn",
+    "keys": {
+      "DataTableID": "Edm.String",
+      "ExtensionSetID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "FieldName": "Edm.String"
+    },
+    "links": {
+      "ExtensionSetID": "ExtensionSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "table": "ExtensionRelation",
+    "entity": "ExtensionRelation",
+    "keys": {
+      "ExtensionSetID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "DataSetID": "Edm.String",
+      "RelationID": "Edm.String"
+    },
+    "links": {
+      "ExtensionSetID": "ExtensionSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "table": "ExtensionRelationColumn",
+    "entity": "ExtensionRelationColumn",
+    "keys": {
+      "ExtensionSetID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "DataSetID": "Edm.String",
+      "RelationID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "ExtensionSetID": "ExtensionSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "table": "ExtensionTableKey",
+    "entity": "ExtensionTableKey",
+    "keys": {
+      "DataTableID": "Edm.String",
+      "ExtensionSetID": "Edm.String",
+      "SystemCode": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "ExtensionSetID": "ExtensionSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZBODefSvc",
+    "root": "ZBODef",
+    "table": "ZBODataSets",
+    "entity": "ZBODataSet",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "ClassName": "Edm.String",
+      "DataSetSystemCode": "Edm.String",
+      "DataSetID": "Edm.String"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "ClassName": "ClassName"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZBODefSvc",
+    "root": "ZBODef",
+    "table": "ZServiceLicenseType",
+    "entity": "ZServiceLicenseType",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "ClassName": "Edm.String",
+      "LicenceTypeID": "Edm.Guid"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "ClassName": "ClassName"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataSetSvc",
+    "root": "ZDataSet",
+    "table": "ZRelation",
+    "entity": "ZRelation",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataSetID": "Edm.String",
+      "RelationID": "Edm.String"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataSetID": "DataSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataSetSvc",
+    "root": "ZDataSet",
+    "table": "ZRelationField",
+    "entity": "ZRelationField",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "DataSetID": "Edm.String",
+      "RelationID": "Edm.String",
+      "Seq": "Edm.Int32"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "DataSetID": "DataSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ZDataSetSvc",
+    "root": "ZDataSet",
+    "table": "ZSubDataSet",
+    "entity": "ZSubDataSet",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "ParentDataSetID": "Edm.String",
+      "DataTableSystemCode": "Edm.String",
+      "DataTableID": "Edm.String"
+    },
+    "links": {
+      "SystemCode": "SystemCode",
+      "ParentDataSetID": "DataSetID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.SysAgentSvc",
+    "root": "SysAgent",
+    "table": "SysAgentSched",
+    "entity": "SysAgentSched",
+    "keys": {
+      "AgentID": "Edm.String",
+      "AgentSchedNum": "Edm.Int64"
+    },
+    "links": {
+      "AgentID": "AgentID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.SysAgentSvc",
+    "root": "SysAgent",
+    "table": "SysAgentTask",
+    "entity": "SysAgentTask",
+    "keys": {
+      "AgentID": "Edm.String",
+      "AgentSchedNum": "Edm.Int64",
+      "AgentTaskNum": "Edm.Int32"
+    },
+    "links": {
+      "AgentID": "AgentID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.SysAgentSvc",
+    "root": "SysAgent",
+    "table": "SysAgentTaskParam",
+    "entity": "SysAgentTaskParam",
+    "keys": {
+      "AgentID": "Edm.String",
+      "AgentSchedNum": "Edm.Int64",
+      "AgentTaskNum": "Edm.Int32",
+      "ParamName": "Edm.String"
+    },
+    "links": {
+      "AgentID": "AgentID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ProcessSetSvc",
+    "root": "ProcessSet",
+    "table": "ProcessTask",
+    "entity": "ProcessTask",
+    "keys": {
+      "SystemCode": "Edm.String",
+      "ProcessID": "Edm.String",
+      "SysTaskNum": "Edm.Int32",
+      "Company": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "SystemCode": "SystemCode",
+      "ProcessID": "ProcessID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.ObjectSecuritySvc",
+    "root": "Security",
+    "table": "ObjectSecurityMethod",
+    "entity": "ObjectSecurityMethod",
+    "keys": {
+      "Company": "Edm.String",
+      "SecCode": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "SecCode": "SecCode"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.AccessScopeSvc",
+    "root": "AccessScope",
+    "table": "AccessScopeEntity",
+    "entity": "AccessScopeEntity",
+    "keys": {
+      "Company": "Edm.String",
+      "AccessScopeID": "Edm.String",
+      "EntityType": "Edm.String",
+      "EntityID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "AccessScopeID": "AccessScopeID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Ice.BO.AccessScopeSvc",
+    "root": "AccessScope",
+    "table": "AccessScopeBOMethod",
+    "entity": "AccessScopeBOMethod",
+    "keys": {
+      "Company": "Edm.String",
+      "AccessScopeID": "Edm.String",
+      "EntityType": "Edm.String",
+      "EntityID": "Edm.String",
+      "MethodID": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "AccessScopeID": "AccessScopeID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorRuleSvc",
+    "root": "PartRev",
+    "table": "PcMethodVar",
+    "entity": "PcMethodVar",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "PartNum": "Edm.String",
+      "RevisionNum": "Edm.String",
+      "AltMethod": "Edm.String",
+      "VarNum": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "PartNum": "PartNum",
+      "RevisionNum": "RevisionNum",
+      "AltMethod": "AltMethod",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorRuleSvc",
+    "root": "PartRev",
+    "table": "PcRuleSet",
+    "entity": "PcRuleSet",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "PartNum": "Edm.String",
+      "RevisionNum": "Edm.String",
+      "AltMethod": "Edm.String",
+      "RuleSetID": "Edm.Int32",
+      "BOMElementSysRowID": "Edm.Guid",
+      "BOMElementTableName": "Edm.String",
+      "RuleTag": "Edm.String"
+    },
+    "links": {
+      "Company": "Company",
+      "PartNum": "PartNum",
+      "RevisionNum": "RevisionNum",
+      "AltMethod": "AltMethod",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorRuleSvc",
+    "root": "PartRev",
+    "table": "PcRules",
+    "entity": "PcRule",
+    "keys": {
+      "Company": "Edm.String",
+      "ConfigID": "Edm.String",
+      "PartNum": "Edm.String",
+      "RevisionNum": "Edm.String",
+      "RuleSeq": "Edm.Int32",
+      "AltMethod": "Edm.String",
+      "RuleSetID": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "PartNum": "PartNum",
+      "RevisionNum": "RevisionNum",
+      "AltMethod": "AltMethod",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  },
+  {
+    "service": "Erp.BO.ConfiguratorRuleSvc",
+    "root": "PartRev",
+    "table": "PcRulesExpr",
+    "entity": "PcRulesExpr",
+    "keys": {
+      "Company": "Edm.String",
+      "PartNum": "Edm.String",
+      "RevisionNum": "Edm.String",
+      "RuleSeq": "Edm.Int32",
+      "AltMethod": "Edm.String",
+      "SeqNum": "Edm.Int32",
+      "TypeCode": "Edm.String",
+      "ConfigID": "Edm.String",
+      "RuleSetID": "Edm.Int32"
+    },
+    "links": {
+      "Company": "Company",
+      "PartNum": "PartNum",
+      "RevisionNum": "RevisionNum",
+      "AltMethod": "AltMethod",
+      "ConfigID": "ConfigID"
+    },
+    "unverifiedParent": false,
+    "lookup": false
+  }
+]

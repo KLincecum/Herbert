@@ -1,0 +1,16 @@
+{
+  "name": "herbert-system-info-assemblyscript",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small Herbert plugin that teaches configuration, state and explicit host capabilities.",
+  "scripts": {
+    "build": "node build.mjs",
+    "format": "prettier --write assembly build.mjs"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.28.20",
+    "json-as": "1.6.1",
+    "prettier": "3.9.10"
+  }
+}

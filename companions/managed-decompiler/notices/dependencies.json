@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "scope": "Pinned ILSpy engine, embedded Humanizer source and linked .NET NativeAOT runtime. Verbatim upstream notices; package does not require a separately installed CLR.",
+  "engineVersion": "11.1.0.9782",
+  "engineCommit": "a6909b2e1062d2404a52711926fa74030bd96119",
+  "sources": [
+    {
+      "file": "ILSPY-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/icsharpcode/ILSpy/a6909b2e1062d2404a52711926fa74030bd96119/LICENSE",
+      "bytes": 1095,
+      "sha256": "5527fe802347740da8ec2b510cffa4d22939c7f0773ae342a85a2e2b64e4a34b"
+    },
+    {
+      "file": "HUMANIZER-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/icsharpcode/ILSpy/a6909b2e1062d2404a52711926fa74030bd96119/ICSharpCode.Decompiler/Humanizer/LICENSE",
+      "bytes": 1080,
+      "sha256": "017ba1711d7afcc91ad461dc7fdc4f3eb830f7fa5738ce96cebb9ead9fe5c81d"
+    },
+    {
+      "file": "ILSPY-THIRD-PARTY-NOTICES.txt",
+      "url": "https://raw.githubusercontent.com/icsharpcode/ILSpy/a6909b2e1062d2404a52711926fa74030bd96119/doc/third-party-notices.txt",
+      "bytes": 28937,
+      "sha256": "b6cfd95304ec030f1ae85d2edc579bc8301d5a2f86b5fba72fac24e56ede49f3"
+    },
+    {
+      "file": "DOTNET-LICENSE.txt",
+      "sourcePackage": "Microsoft.NETCore.App.Runtime.NativeAOT.win-x64/10.0.11",
+      "bytes": 1139,
+      "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b"
+    },
+    {
+      "file": "DOTNET-THIRD-PARTY-NOTICES.txt",
+      "sourcePackage": "Microsoft.NETCore.App.Runtime.NativeAOT.win-x64/10.0.11",
+      "bytes": 78041,
+      "sha256": "6d15e10a101c6bfff2ab4429ed061bf76c456fc4b23ad6b03e0d0f8377148a21"
+    },
+    {
+      "file": "DOTNET-LINUX-LICENSE.txt",
+      "sourcePackage": "Microsoft.NETCore.App.Runtime.linux-x64/10.0.13",
+      "sourcePath": "nuget/microsoft.netcore.app.runtime.linux-x64/10.0.13/LICENSE.TXT",
+      "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310",
+      "bytes": 1116
+    },
+    {
+      "file": "DOTNET-LINUX-THIRD-PARTY-NOTICES.txt",
+      "sourcePackage": "Microsoft.NETCore.App.Runtime.linux-x64/10.0.13",
+      "sourcePath": "nuget/microsoft.netcore.app.runtime.linux-x64/10.0.13/THIRD-PARTY-NOTICES.TXT",
+      "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54",
+      "bytes": 76623
+    }
+  ],
+  "files": [
+    {
+      "path": "ILSPY-LICENSE.txt",
+      "bytes": 1095,
+      "sha256": "5527fe802347740da8ec2b510cffa4d22939c7f0773ae342a85a2e2b64e4a34b"
+    },
+    {
+      "path": "HUMANIZER-LICENSE.txt",
+      "bytes": 1080,
+      "sha256": "017ba1711d7afcc91ad461dc7fdc4f3eb830f7fa5738ce96cebb9ead9fe5c81d"
+    },
+    {
+      "path": "ILSPY-THIRD-PARTY-NOTICES.txt",
+      "bytes": 28937,
+      "sha256": "b6cfd95304ec030f1ae85d2edc579bc8301d5a2f86b5fba72fac24e56ede49f3"
+    },
+    {
+      "path": "DOTNET-LICENSE.txt",
+      "bytes": 1139,
+      "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b"
+    },
+    {
+      "path": "DOTNET-THIRD-PARTY-NOTICES.txt",
+      "bytes": 78041,
+      "sha256": "6d15e10a101c6bfff2ab4429ed061bf76c456fc4b23ad6b03e0d0f8377148a21"
+    },
+    {
+      "path": "DOTNET-LINUX-LICENSE.txt",
+      "bytes": 1116,
+      "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310"
+    },
+    {
+      "path": "DOTNET-LINUX-THIRD-PARTY-NOTICES.txt",
+      "bytes": 76623,
+      "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54"
+    }
+  ],
+  "runtimePackages": {
+    "win-x64": "Microsoft.NETCore.App.Runtime.NativeAOT.win-x64/10.0.11",
+    "linux-x64": "Microsoft.NETCore.App.Runtime.linux-x64/10.0.13"
+  }
+}

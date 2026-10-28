@@ -1,0 +1,990 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "ecosystem": "cargo",
+      "name": "accesskit",
+      "version": "0.24.1",
+      "cargoLockChecksum": "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320",
+      "manifestSha256": "cd01e2e0c169f5d6c72fdb42e77cf707608dbbb615455676518eba33e8f5bc02",
+      "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "pathInVcs": "common",
+      "repository": "AccessKit/accesskit",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-APACHE",
+          "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+          "gitBlob": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT",
+          "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+          "gitBlob": "31aa79387f27e730e33d871925e152e35e428031",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308/LICENSE.chromium",
+          "sourcePath": "LICENSE.chromium",
+          "bytes": 1559,
+          "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE.chromium",
+          "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+          "gitBlob": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "accesskit_consumer",
+      "version": "0.35.0",
+      "cargoLockChecksum": "53cf47daed85312e763fbf85ceca136e0d7abc68e0a7e12abe11f48172bc3b10",
+      "manifestSha256": "7e8bc7fbf9b7bc948e5a743a518fec37e0ae32db56af586b7eee9db1fbc80a25",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "pathInVcs": "consumer",
+      "repository": "AccessKit/accesskit",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-APACHE",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-MIT",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "31aa79387f27e730e33d871925e152e35e428031",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308/LICENSE.chromium",
+          "sourcePath": "LICENSE.chromium",
+          "bytes": 1559,
+          "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE.chromium",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "accesskit_windows",
+      "version": "0.32.1",
+      "cargoLockChecksum": "eff7009f1a532e917d66970a1e80c965140c6cfbbabbdde3d64e5431e6c78e21",
+      "manifestSha256": "76944e31caebbca60c0ef29b13e1d676eb2a943e13d1c45f1c95e49c3f67c26c",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "pathInVcs": "platforms/windows",
+      "repository": "AccessKit/accesskit",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-APACHE",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-MIT",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "31aa79387f27e730e33d871925e152e35e428031",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308/LICENSE.chromium",
+          "sourcePath": "LICENSE.chromium",
+          "bytes": 1559,
+          "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE.chromium",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "accesskit_winit",
+      "version": "0.32.2",
+      "cargoLockChecksum": "1fe9a94394896352cc4660ca2288bd4ef883d83238853c038b44070c8f134313",
+      "manifestSha256": "66f46eab73e555c13f81ad4f7c160eb4140362169cacd619baf0ec7d1769c2e0",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "pathInVcs": "platforms/winit",
+      "repository": "AccessKit/accesskit",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-APACHE",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-MIT",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "31aa79387f27e730e33d871925e152e35e428031",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308/LICENSE.chromium",
+          "sourcePath": "LICENSE.chromium",
+          "bytes": 1559,
+          "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE.chromium",
+          "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+          "gitBlob": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "clipboard-win",
+      "version": "5.4.1",
+      "cargoLockChecksum": "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4",
+      "manifestSha256": "0eca1d8c3cbdea6bacfbc993751d7cff18e841416d35ceae48d061991e68df0a",
+      "commit": "3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+      "pathInVcs": "",
+      "repository": "DoumanAsh/clipboard-win",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 1338,
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+          "url": "https://raw.githubusercontent.com/DoumanAsh/clipboard-win/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE",
+          "commit": "3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+          "gitBlob": "36b7cd93cdfbac762f5be4c6ce276df2ea6305c2",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cranelift-assembler-x64-meta",
+      "version": "0.136.3",
+      "cargoLockChecksum": "c065757905596bc06e82969ebd7b92d691b7fd710a7e9e8181ae0c30dab588d0",
+      "manifestSha256": "f7291e1aeffbe7de5c4ece0c87a502e2b3fc377a1d2006d47ecc647303abc243",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "cranelift/assembler-x64/meta",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cranelift-assembler-x64",
+      "version": "0.136.3",
+      "cargoLockChecksum": "f6d504c8c7ba3f3accaf8e98b7096beb98e1a271404357744c7e9e730c6865ff",
+      "manifestSha256": "129f439db530cd5a822ecbc43748de9d47bb60e36a5521177a28caa0f273c4d3",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "cranelift/assembler-x64",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cranelift-bitset",
+      "version": "0.136.3",
+      "cargoLockChecksum": "0ec2ba2d4f3d959ec4023a10266c3dcfb28381d1938d507a9a5e1abb78bbcc88",
+      "manifestSha256": "b67fb92b3d7ddc4436d72f88a2d4b0d9202b2a28e4222591ab96ee9932cc7bf8",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "cranelift/bitset",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cranelift-isle",
+      "version": "0.136.3",
+      "cargoLockChecksum": "9ea6526ebf9064fff8ce3b1e26afad7027f9e6bb0e45d2b9200e4cbab8343345",
+      "manifestSha256": "b76b97a39b01183116d4590eef430c8184362cacfabcd1676c7dc3aef9f39e5a",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "cranelift/isle/isle",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "cranelift-srcgen",
+      "version": "0.136.3",
+      "cargoLockChecksum": "fc173168f291ff3b95b5d0769d6a05b1eaef5e6d74c2600affab8396b4e7b420",
+      "manifestSha256": "6425e365a40661e9500c80214616a02ab6e59b58628ba9ae186a8207abb0fe5c",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "cranelift/srcgen",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "ecolor",
+      "version": "0.36.2",
+      "cargoLockChecksum": "0656a7530b9e2841ee7a5f983965bdd9840c32f4012f759cfd44b912cced6b34",
+      "manifestSha256": "55cb75cfd03853860a4a234937c3089ad3b3c00ba4af587b0e3d0c6b03c3f99b",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/ecolor",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "eframe",
+      "version": "0.36.2",
+      "cargoLockChecksum": "55ad41fac6e3149abb4866e93df37dbd33baa95db525c3368c944584e95a5dc2",
+      "manifestSha256": "e4f9203c36a20873416e9a5054528706b2e7c89c5c52fd6ff0d66c16e6b5a418",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/eframe",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "egui-winit",
+      "version": "0.36.2",
+      "cargoLockChecksum": "98466000559d66ba4db786a30448b01483946add4188e7f10f522a27b4fb89cc",
+      "manifestSha256": "c287bc85984e44eecc2c503465c080282b0c1e3c818a9e4297734a6e167dd489",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/egui-winit",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "egui",
+      "version": "0.36.2",
+      "cargoLockChecksum": "dc938cc27cd911415e1e4d151bc56ff9df063d8db081374e87aeb805ea74b2ba",
+      "manifestSha256": "96347750ef7eaee0ea163eb6d38f48dc2e48ceb0d8d3a27d15b963a6f8206952",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/egui",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "egui_glow",
+      "version": "0.36.2",
+      "cargoLockChecksum": "606ed4167daf341e5753d703285c4c1d562324b2c07aa8f405cd7d066fe58f3b",
+      "manifestSha256": "5e71a42dd74c1409cab534730d27982283839c7c91fef82fb5b2e3dd3dabb48f",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/egui_glow",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "emath",
+      "version": "0.36.2",
+      "cargoLockChecksum": "52c8d4141cf0f60fb2f7aefaf352d3ffa5171ef0ab09731c64391801e95e48f1",
+      "manifestSha256": "b37fd7ba157deeabd960d0b7ff92f65c2d46e0bfe4ba4ae104fd4324ef68bd44",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/emath",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "epaint",
+      "version": "0.36.2",
+      "cargoLockChecksum": "a0ec0308dc23130fc1a7d4623a8534c2ed069c6dc84e258ee4f3de99615aa1a3",
+      "manifestSha256": "2b5f3f795605521b777f1ae44f716814d734dd5608a052b180326f11f2c2c518",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "pathInVcs": "crates/epaint",
+      "repository": "emilk/egui",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "11069edd79019f7dafbe3138841cf289209270dd",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1092,
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+          "gitBlob": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "gl_generator",
+      "version": "0.14.0",
+      "cargoLockChecksum": "1a95dfc23a2b4a9a2f5ab41d194f8bfda3cabec42af4e39f08c339eb2a0c124d",
+      "manifestSha256": "f586015aa2816b3c34d89f5e6a6539172efcd7f3ed055a0fab433ea83e2a0f0f",
+      "commit": "ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+      "pathInVcs": null,
+      "repository": "brendanzab/gl-rs",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "url": "https://raw.githubusercontent.com/brendanzab/gl-rs/ea503e8d5fb6d73c6030e6191ce738cd3bf3433e/LICENSE",
+          "commit": "ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+          "gitBlob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/2bad74aad9987bd99ea6101d35cf905403968b4954c080c2da8e7c7232d5205d/NOTICE-lib.rs-0.txt",
+          "sourcePath": "NOTICE-lib.rs-0.txt",
+          "bytes": 620,
+          "sha256": "2bad74aad9987bd99ea6101d35cf905403968b4954c080c2da8e7c7232d5205d",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "lib.rs",
+          "sourceFileSHA256": "6f47da878479b503b5202bda84ad8935607264ac03c0b68203109fad9cd479db",
+          "commit": "ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+          "note": "Complete comment/header bytes; no rewording"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "khronos_api",
+      "version": "3.1.0",
+      "cargoLockChecksum": "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc",
+      "manifestSha256": "490cb629224597d30ed4f13789d4cfd0d94ffd84ac95472fa308e724245a54af",
+      "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+      "pathInVcs": null,
+      "repository": "brendanzab/gl-rs",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "url": "https://raw.githubusercontent.com/brendanzab/gl-rs/f150967b1c44ae888e6676f93f639ebc82771bdc/LICENSE",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "gitBlob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/2bad74aad9987bd99ea6101d35cf905403968b4954c080c2da8e7c7232d5205d/NOTICE-src_lib.rs-0.txt",
+          "sourcePath": "NOTICE-src_lib.rs-0.txt",
+          "bytes": 620,
+          "sha256": "2bad74aad9987bd99ea6101d35cf905403968b4954c080c2da8e7c7232d5205d",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "src/lib.rs",
+          "sourceFileSHA256": "befbc0e187097e6c9da1ecbd79e0e1af462b6f6466108247745f6aa38abe0673",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/9b16895aa2e8bfa3d3a7404294316874f8720c85af1285f18cee3ed543cb9c43/NOTICE-api_xml_gl.xml-0.txt",
+          "sourcePath": "NOTICE-api_xml_gl.xml-0.txt",
+          "bytes": 995,
+          "sha256": "9b16895aa2e8bfa3d3a7404294316874f8720c85af1285f18cee3ed543cb9c43",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api/xml/gl.xml",
+          "sourceFileSHA256": "7dae830ddacefd2af92aef2b438ff89f90fb5496f596dec8282b212eb4fc51e3",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/ca3e92114c9f5740a96ec95a583a4379028a93c8732f9e4bd50c042951fd6669/NOTICE-api_xml_glx.xml-0.txt",
+          "sourcePath": "NOTICE-api_xml_glx.xml-0.txt",
+          "bytes": 965,
+          "sha256": "ca3e92114c9f5740a96ec95a583a4379028a93c8732f9e4bd50c042951fd6669",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api/xml/glx.xml",
+          "sourceFileSHA256": "338cee03c97e78aa167dd667407ab973f4bc656c58cf9002aa54fa78b2f9ff32",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/7ef045c445242d054a04c414c512e0a37beb2e53dae44be9c5b78559c95e032c/NOTICE-api_xml_wgl.xml-0.txt",
+          "sourcePath": "NOTICE-api_xml_wgl.xml-0.txt",
+          "bytes": 1080,
+          "sha256": "7ef045c445242d054a04c414c512e0a37beb2e53dae44be9c5b78559c95e032c",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api/xml/wgl.xml",
+          "sourceFileSHA256": "41e0a2182217b099b1628757956cb103cea9660e830f4d2f9fa07bf3a3679feb",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/eb3e21cfe1e6d8d8702381336180735a3ebf6aceb55e027ec5286364e41ef810/NOTICE-api_egl_api_egl.xml-0.txt",
+          "sourcePath": "NOTICE-api_egl_api_egl.xml-0.txt",
+          "bytes": 1164,
+          "sha256": "eb3e21cfe1e6d8d8702381336180735a3ebf6aceb55e027ec5286364e41ef810",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_egl/api/egl.xml",
+          "sourceFileSHA256": "523fc17745545daca85c5b107b4a4c1a23dd3de39f70e499c77249e3dd6569ec",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/eb3e21cfe1e6d8d8702381336180735a3ebf6aceb55e027ec5286364e41ef810/NOTICE-api_angle_scripts_egl.xml-0.txt",
+          "sourcePath": "NOTICE-api_angle_scripts_egl.xml-0.txt",
+          "bytes": 1164,
+          "sha256": "eb3e21cfe1e6d8d8702381336180735a3ebf6aceb55e027ec5286364e41ef810",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_angle/scripts/egl.xml",
+          "sourceFileSHA256": "523fc17745545daca85c5b107b4a4c1a23dd3de39f70e499c77249e3dd6569ec",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/b41afbe0bd10f98d665912627d04365ea53556a1285b0a9f9753128b9c060dd5/NOTICE-api_angle_scripts_egl_angle_ext.xml-0.txt",
+          "sourcePath": "NOTICE-api_angle_scripts_egl_angle_ext.xml-0.txt",
+          "bytes": 279,
+          "sha256": "b41afbe0bd10f98d665912627d04365ea53556a1285b0a9f9753128b9c060dd5",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_angle/scripts/egl_angle_ext.xml",
+          "sourceFileSHA256": "98c60fa9fe46f50dd4e101c2262b4293adeeae48a18c39ad63dc085e639b6096",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/9b16895aa2e8bfa3d3a7404294316874f8720c85af1285f18cee3ed543cb9c43/NOTICE-api_angle_scripts_gl.xml-0.txt",
+          "sourcePath": "NOTICE-api_angle_scripts_gl.xml-0.txt",
+          "bytes": 995,
+          "sha256": "9b16895aa2e8bfa3d3a7404294316874f8720c85af1285f18cee3ed543cb9c43",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_angle/scripts/gl.xml",
+          "sourceFileSHA256": "baac3f2e27b4949773f4ee2e6ed8e43a2ae96a428b9d73ae9d1e9c0c404cae1f",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/06669a758d91bf0e165d400261b09f633f608a129117347ab818280c131e39bd/NOTICE-api_angle_scripts_gl_angle_ext.xml-0.txt",
+          "sourcePath": "NOTICE-api_angle_scripts_gl_angle_ext.xml-0.txt",
+          "bytes": 278,
+          "sha256": "06669a758d91bf0e165d400261b09f633f608a129117347ab818280c131e39bd",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_angle/scripts/gl_angle_ext.xml",
+          "sourceFileSHA256": "dcf1ca2ce9536bd2ea6cab6e93ce0a37821793a9ed12f280f005a3459e2905e8",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/7ef045c445242d054a04c414c512e0a37beb2e53dae44be9c5b78559c95e032c/NOTICE-api_angle_scripts_wgl.xml-0.txt",
+          "sourcePath": "NOTICE-api_angle_scripts_wgl.xml-0.txt",
+          "bytes": 1080,
+          "sha256": "7ef045c445242d054a04c414c512e0a37beb2e53dae44be9c5b78559c95e032c",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_angle/scripts/wgl.xml",
+          "sourceFileSHA256": "41e0a2182217b099b1628757956cb103cea9660e830f4d2f9fa07bf3a3679feb",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/0976403647ef6c51ad03594182c7b72588a167fd56feb1fc530f55534a597b20/NOTICE-api_webgl_specs_latest_1.0_webgl.idl-0.txt",
+          "sourcePath": "NOTICE-api_webgl_specs_latest_1.0_webgl.idl-0.txt",
+          "bytes": 1315,
+          "sha256": "0976403647ef6c51ad03594182c7b72588a167fd56feb1fc530f55534a597b20",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_webgl/specs/latest/1.0/webgl.idl",
+          "sourceFileSHA256": "9bd8707845fb68ff349f95b320582160423ee4cdf47294cbd980933b3b25dae9",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        },
+        {
+          "path": "texts/0976403647ef6c51ad03594182c7b72588a167fd56feb1fc530f55534a597b20/NOTICE-api_webgl_specs_latest_2.0_webgl2.idl-0.txt",
+          "sourcePath": "NOTICE-api_webgl_specs_latest_2.0_webgl2.idl-0.txt",
+          "bytes": 1315,
+          "sha256": "0976403647ef6c51ad03594182c7b72588a167fd56feb1fc530f55534a597b20",
+          "origin": "installed-package-verbatim-header",
+          "packageSourcePath": "api_webgl/specs/latest/2.0/webgl2.idl",
+          "sourceFileSHA256": "4e9ba68c298e76e85f312f86d474975da4ce656e35c2ad4a8c706437d50253a1",
+          "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+          "note": "Complete comment/header bytes; no rewording"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "profiling",
+      "version": "1.0.18",
+      "cargoLockChecksum": "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5",
+      "manifestSha256": "00c84a390cdb283f2fea80bb6ccbfef8af8cd2005e79309057af1b5030d3e6a5",
+      "commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+      "pathInVcs": "profiling",
+      "repository": "aclysma/profiling",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/10d30a673cd5e9349bdc02aeb48f14b3386d27d0da32df8f0a555d4aa16aa551/LICENSE-APACHE",
+          "sourcePath": "LICENSE-APACHE",
+          "bytes": 10818,
+          "sha256": "10d30a673cd5e9349bdc02aeb48f14b3386d27d0da32df8f0a555d4aa16aa551",
+          "url": "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-APACHE",
+          "commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+          "gitBlob": "139dce95d473c201a8561ef17536314d8b8cda65",
+          "origin": "pinned-upstream-repository"
+        },
+        {
+          "path": "texts/c8167fdeeed46d3f244d3f85c5bf998ce889343691c32be2c61a8bc4b5c08333/LICENSE-MIT",
+          "sourcePath": "LICENSE-MIT",
+          "bytes": 1093,
+          "sha256": "c8167fdeeed46d3f244d3f85c5bf998ce889343691c32be2c61a8bc4b5c08333",
+          "url": "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT",
+          "commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+          "gitBlob": "6a84e059ad8b43e03c2b06bc2af4dc1d8442808d",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pulley-interpreter",
+      "version": "49.0.3",
+      "cargoLockChecksum": "def59f28ccaf2cb4f8dfaac83197fd7d56a4470a70e4f2589454c731370101c5",
+      "manifestSha256": "7b104ae8bedc1a032c601891f0bd0759509b075cb386030a8f8aadb0d23ed6df",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "pulley",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pulley-macros",
+      "version": "49.0.3",
+      "cargoLockChecksum": "3a1834d3b3ef994f266a0c9ed29a8214f2c2faaa9b1c44babfa57566bb05af83",
+      "manifestSha256": "1962f066ab9f04ff7c5aed4705522d8e0123542575e552998974389b40ffa4aa",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "pulley/macros",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "wasmtime-internal-component-util",
+      "version": "49.0.3",
+      "cargoLockChecksum": "e754a3ff5690c34eb4713bd7c65f60dd607ead4e39042cbf52ac8011de14455b",
+      "manifestSha256": "7b7946c27f3da2d1150b986750641b127dfde415dfe68ff13478b6937be9c559",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "crates/component-util",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "wasmtime-internal-core",
+      "version": "49.0.3",
+      "cargoLockChecksum": "ba00c5db77adb0749ee059068e5a417bfac3d8969f5a3479d9bd1ca8c1ba248d",
+      "manifestSha256": "e26a04883701ecaa2eb7d4903a80572eafef816fdbf7d3b66ae3dc5f56e3dbce",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "crates/core",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "wasmtime-internal-jit-icache-coherence",
+      "version": "49.0.3",
+      "cargoLockChecksum": "92cb1dd5da78f5b21d65e91063bdd8c2eb343c1f077a1dcbc29003d4a794abb0",
+      "manifestSha256": "38b738f1573174157b36ba713e75ee1ba500a56a6a53ecd941e4028fd04e5ff0",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "crates/jit-icache-coherence",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "nativeHostDependency"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "wasmtime-internal-versioned-export-macros",
+      "version": "49.0.3",
+      "cargoLockChecksum": "20fa5616cd875ec78f5b92020fa47ced7c8bb923079185c8475751098b8c4a69",
+      "manifestSha256": "6197304784b2513176b87cd196f5e1f6ed64449c7a3a9917a149431639ccbaf8",
+      "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+      "pathInVcs": "crates/versioned-export-macros",
+      "repository": "bytecodealliance/wasmtime",
+      "roles": [
+        "buildToolingOnly"
+      ],
+      "texts": [
+        {
+          "path": "texts/268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5/LICENSE",
+          "sourcePath": "LICENSE",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/f96eabaa11a06086e4fb779ed1c1688481067ab9/LICENSE",
+          "commit": "f96eabaa11a06086e4fb779ed1c1688481067ab9",
+          "gitBlob": "f9d81955f4bcb8f96a025e2ecc46f39ec536d465",
+          "origin": "pinned-upstream-repository"
+        }
+      ],
+      "resolution": "Pinned repository license texts omitted from crate package; generated-code inputs covered explicitly where applicable."
+    }
+  ],
+  "firstParty": [
+    "herbert",
+    "herbert-contract",
+    "herbert-plugins"
+  ],
+  "scope": "Exact reviewed dependency versions/checksums only; offline packaging supplements, not a license grant or publication authorization."
+}

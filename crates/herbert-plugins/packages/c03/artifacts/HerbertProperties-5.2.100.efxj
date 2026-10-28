@@ -1,0 +1,85 @@
+﻿{
+  "Mode": "Backup",
+  "Version": "5.2.100",
+  "SystemCode": "ERP",
+  "LibraryId": "HerbertProperties",
+  "Library": {
+    "OriginalID": "HerbertProperties",
+    "Description": "Read custom dictionary property values for Herbert",
+    "GlobalID": "cefdae13-678a-40b8-a23b-23e3ad541c2a",
+    "EpicorVersion": "5.2.100",
+    "Revision": 1,
+    "Published": false,
+    "Private": false,
+    "Disabled": false,
+    "Mode": 0,
+    "AllowCustomCodeWidgets": false,
+    "AllowCustomCodeFunctions": true,
+    "DirectDBAccess": 1,
+    "Notes": "Read-only plugin-owned helper. Installed per download and removed afterward.",
+    "OwnedByCompany": "",
+    "Owner": "",
+    "SharedWithGroup": "",
+    "Functions": [
+      {
+        "FunctionID": "ReadAllProperties",
+        "Description": "Read custom field and column overrides for all dictionary tables",
+        "Kind": 2,
+        "RequireTransaction": false,
+        "SingleRowMode": false,
+        "Private": false,
+        "Disabled": false,
+        "Invalid": false,
+        "Thumbnail": null,
+        "Notes": "",
+        "Body": "{\"Code\": \"// Dictionary overrides are global. Read each source once and retain native keys.\\n// Do not return shipped values when only a custom override belongs in the output.\\noSuccess = false;\\noMessage = \\\"\\\";\\noJson = \\\"[]\\\";\\ntry\\n{\\n    var tables = new System.Collections.Generic.Dictionary<string, Newtonsoft.Json.Linq.JObject>(\\n        StringComparer.OrdinalIgnoreCase);\\n    Action<string, string, Newtonsoft.Json.Linq.JObject, string> add =\\n        (system, table, item, section) =>\\n        {\\n            var key = system + \\\"\\\\u0000\\\" + table;\\n            Newtonsoft.Json.Linq.JObject parent;\\n            if (!tables.TryGetValue(key, out parent))\\n            {\\n                parent = new Newtonsoft.Json.Linq.JObject();\\n                parent[\\\"SystemCode\\\"] = system;\\n                parent[\\\"DataTableID\\\"] = table;\\n                parent[\\\"ZDataField\\\"] = new Newtonsoft.Json.Linq.JArray();\\n                parent[\\\"ZColumnProperty\\\"] = new Newtonsoft.Json.Linq.JArray();\\n                tables.Add(key, parent);\\n            }\\n            ((Newtonsoft.Json.Linq.JArray)parent[section]).Add(item);\\n        };\\n\\n    var fields = Db.ZDataField.Where(row =>\\n        !String.IsNullOrEmpty(row.UDLikeDataFieldSystemCode)\\n        || !String.IsNullOrEmpty(row.UDLikeDataFieldTableID)\\n        || !String.IsNullOrEmpty(row.UDLikeDataFieldName)\\n        || !String.IsNullOrEmpty(row.UDFieldFormat)\\n        || !String.IsNullOrEmpty(row.UDFieldLabel)\\n        || !String.IsNullOrEmpty(row.UDInitialValue)\\n        || !String.IsNullOrEmpty(row.UDCurrencyCodeColumn)\\n        || !String.IsNullOrEmpty(row.UDCurrencyType)\\n        || !String.IsNullOrEmpty(row.UDCurrencySource)\\n        || !String.IsNullOrEmpty(row.UDPredictiveSearchID)\\n        || row.UDRequired || row.UDReadOnly)\\n        .Select(row => new\\n        {\\n            row.SystemCode, row.DataTableID, row.FieldName,\\n            row.UDLikeDataFieldSystemCode, row.UDLikeDataFieldTableID, row.UDLikeDataFieldName,\\n            row.UDFieldFormat, row.UDFieldLabel, row.UDInitialValue,\\n            row.UDCurrencyCodeColumn, row.UDCurrencyType, row.UDCurrencySource,\\n            row.UDPredictiveSearchID, row.UDRequired, row.UDReadOnly\\n        }).ToList();\\n    foreach (var row in fields)\\n    {\\n        var item = new Newtonsoft.Json.Linq.JObject();\\n        item[\\\"SystemCode\\\"] = row.SystemCode;\\n        item[\\\"DataTableID\\\"] = row.DataTableID;\\n        item[\\\"FieldName\\\"] = row.FieldName;\\n        if (!String.IsNullOrEmpty(row.UDLikeDataFieldSystemCode))\\n            item[\\\"UDLikeDataFieldSystemCode\\\"] = row.UDLikeDataFieldSystemCode;\\n        if (!String.IsNullOrEmpty(row.UDLikeDataFieldTableID))\\n            item[\\\"UDLikeDataFieldTableID\\\"] = row.UDLikeDataFieldTableID;\\n        if (!String.IsNullOrEmpty(row.UDLikeDataFieldName))\\n            item[\\\"UDLikeDataFieldName\\\"] = row.UDLikeDataFieldName;\\n        if (!String.IsNullOrEmpty(row.UDFieldFormat))\\n            item[\\\"UDFieldFormat\\\"] = row.UDFieldFormat;\\n        if (!String.IsNullOrEmpty(row.UDFieldLabel))\\n            item[\\\"UDFieldLabel\\\"] = row.UDFieldLabel;\\n        if (!String.IsNullOrEmpty(row.UDInitialValue))\\n            item[\\\"UDInitialValue\\\"] = row.UDInitialValue;\\n        if (!String.IsNullOrEmpty(row.UDCurrencyCodeColumn))\\n            item[\\\"UDCurrencyCodeColumn\\\"] = row.UDCurrencyCodeColumn;\\n        if (!String.IsNullOrEmpty(row.UDCurrencyType))\\n            item[\\\"UDCurrencyType\\\"] = row.UDCurrencyType;\\n        if (!String.IsNullOrEmpty(row.UDCurrencySource))\\n            item[\\\"UDCurrencySource\\\"] = row.UDCurrencySource;\\n        if (!String.IsNullOrEmpty(row.UDPredictiveSearchID))\\n            item[\\\"UDPredictiveSearchID\\\"] = row.UDPredictiveSearchID;\\n        if (row.UDRequired) item[\\\"UDRequired\\\"] = true;\\n        if (row.UDReadOnly) item[\\\"UDReadOnly\\\"] = true;\\n        add(row.SystemCode, row.DataTableID, item, \\\"ZDataField\\\");\\n    }\\n\\n    var properties = Db.ZColumnProperty\\n        .Where(row => !row.SystemFlag || row.OverrideValue != null)\\n        .Select(row => new\\n        {\\n            row.SystemCode, row.DataTableID, row.FieldName, row.PropertyID,\\n            row.SystemFlag, row.PropertyValue, row.OverrideValue\\n        }).ToList();\\n    foreach (var row in properties)\\n    {\\n        var item = new Newtonsoft.Json.Linq.JObject();\\n        item[\\\"SystemCode\\\"] = row.SystemCode;\\n        item[\\\"DataTableID\\\"] = row.DataTableID;\\n        item[\\\"FieldName\\\"] = row.FieldName;\\n        item[\\\"PropertyID\\\"] = row.PropertyID;\\n        if (!row.SystemFlag) item[\\\"PropertyValue\\\"] = row.PropertyValue;\\n        // Empty is an explicit override. Only null means no override.\\n        if (row.OverrideValue != null) item[\\\"OverrideValue\\\"] = row.OverrideValue;\\n        add(row.SystemCode, row.DataTableID, item, \\\"ZColumnProperty\\\");\\n    }\\n\\n    oJson = new Newtonsoft.Json.Linq.JArray(tables.Values\\n        .OrderBy(row => (string)row[\\\"SystemCode\\\"])\\n        .ThenBy(row => (string)row[\\\"DataTableID\\\"]))\\n        .ToString(Newtonsoft.Json.Formatting.None);\\n    oSuccess = true;\\n}\\ncatch (Exception error)\\n{\\n    oMessage = error.Message;\\n}\\n\", \"Usings\": \"\"}",
+        "FunctionSignature": [
+          {
+            "ArgumentName": "oSuccess",
+            "DataType": "System.Boolean",
+            "Response": true,
+            "Order": 1,
+            "ParameterID": 1,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oMessage",
+            "DataType": "System.String",
+            "Response": true,
+            "Order": 2,
+            "ParameterID": 2,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oJson",
+            "DataType": "System.String",
+            "Response": true,
+            "Order": 3,
+            "ParameterID": 3,
+            "Optional": false,
+            "Description": ""
+          }
+        ]
+      }
+    ],
+    "LibraryReferences": [
+      {
+        "ReferenceType": 0,
+        "ReferenceID": "Newtonsoft.Json.dll"
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ZColumnProperty",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ZDataField",
+        "Updatable": false
+      }
+    ],
+    "LibraryMappings": []
+  }
+}

@@ -1,0 +1,52 @@
+[package]
+name = "herbert"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["gui"]
+# Unqualified optional C08 integration; enabled only in explicit qualification builds.
+managed-decompilation = []
+function-compiled = ["managed-decompilation"]
+gui = ["dep:eframe", "dep:image", "dep:rfd"]
+
+[dependencies]
+herbert-contract.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std", "fs", "signal", "process"] }
+tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
+httpdate = "1"
+zip = "2.4.2"
+quick-xml = "0.41.0"
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+bzip2 = "0.5.2"
+zeroize = { version = "1", features = ["derive"] }
+fs2 = "0.4"
+tempfile = "3"
+unicode-normalization = "0.1"
+directories = "6"
+wasmtime = { version = "49.0.3", default-features = false, features = ["cranelift", "parallel-compilation", "runtime", "std"] }
+eframe = { version = "0.36.2", optional = true, default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+image = { version = "0.25.10", optional = true, default-features = false, features = ["png"] }
+rfd = { version = "0.17.2", optional = true }
+futures-util = "0.3"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+[dev-dependencies]
+herbert-plugins = { path = "../herbert-plugins" }
+wat = "1"
+
+
+# Native GUI preview tests run on the Rust test harness worker thread.
+[target.'cfg(windows)'.dev-dependencies]
+winit = { version = "0.30.13", default-features = false }

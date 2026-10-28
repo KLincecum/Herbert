@@ -1,0 +1,14 @@
+# Build outputs and local state
+/target/
+/.cargo/config.toml
+/dist/
+/evidence/
+/.local/
+**/node_modules/
+**/__pycache__/
+*.py[cod]
+/examples/system-info/assemblyscript/build/
+*.state.json
+.env
+!examples/system-info/assemblyscript/system-info.state.json
+!examples/system-info/rust/system-info.state.json

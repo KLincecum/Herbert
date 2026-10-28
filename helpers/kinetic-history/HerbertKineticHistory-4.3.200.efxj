@@ -1,0 +1,107 @@
+﻿{
+  "Mode": "Backup",
+  "Version": "4.3.200",
+  "SystemCode": "ERP",
+  "LibraryId": "HerbertKineticHistory",
+  "Library": {
+    "OriginalID": "HerbertKineticHistory",
+    "Description": "Read paged saved Kinetic history",
+    "GlobalID": "ff896bb9-5bfb-4cfe-a4c0-126880575f43",
+    "EpicorVersion": "4.3.200",
+    "Revision": 1,
+    "Published": false,
+    "Private": false,
+    "Disabled": false,
+    "Mode": 0,
+    "AllowCustomCodeWidgets": false,
+    "AllowCustomCodeFunctions": true,
+    "DirectDBAccess": 1,
+    "Notes": "Read-only temporary history helper. Scope follows the authenticated session.",
+    "OwnedByCompany": "",
+    "Owner": "",
+    "SharedWithGroup": "",
+    "LibraryMappings": [],
+    "LibraryReferences": [
+      {
+        "ReferenceType": 0,
+        "ReferenceID": "Newtonsoft.Json.dll"
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.UXAppVersion",
+        "Updatable": false
+      }
+    ],
+    "Functions": [
+      {
+        "FunctionID": "ReadPage",
+        "Description": "Read one scoped history page",
+        "Kind": 2,
+        "RequireTransaction": false,
+        "SingleRowMode": false,
+        "Private": false,
+        "Disabled": false,
+        "Invalid": false,
+        "Thumbnail": null,
+        "Notes": "",
+        "Body": "{\"Code\": \"// Read one bounded page. Do not save queries, change versions, or use raw SQL.\\noSuccess = false;\\noMessage = \\\"\\\";\\noJson = \\\"{}\\\";\\ntry\\n{\\n    if (iOffset < 0 || iPageSize < 1)\\n        throw new ArgumentException(\\\"The history offset must be nonnegative and the page size must be positive.\\\");\\n    var requests = Newtonsoft.Json.Linq.JArray.Parse(iRequests);\\n    if (requests.Count == 0)\\n        throw new ArgumentException(\\\"Select at least one application or layer history identity.\\\");\\n    var keys = requests.Select(r => (string)r[\\\"Key1\\\"]).Distinct().ToArray();\\n    if (keys.Any(String.IsNullOrEmpty))\\n        throw new ArgumentException(\\\"Each history identity requires its application or layer name.\\\");\\n    var baseApps = requests.Where(r => String.IsNullOrEmpty((string)r[\\\"Key2\\\"]))\\n        .Select(r => (string)r[\\\"Key1\\\"]).Distinct().ToArray();\\n    var company = Session.CompanyID;\\n    var tenant = String.IsNullOrEmpty(Session.TenantID) ? \\\"\\\" : \\\"T_\\\" + Session.TenantID;\\n    // Scope comes from the authenticated session, never from a caller's Company.\\n    // Candidate keys are paged before exact identity matching. The cursor counts\\n    // candidates so a filtered row cannot cause a page loop or skipped match.\\n    var page = Db.UXAppVersion.Where(r =>\\n        (r.Company == company || r.Company == \\\"\\\" || r.Company == tenant)\\n        && (keys.Contains(r.Key1) || (r.Key1 == \\\"\\\" && baseApps.Contains(r.Key2))))\\n        .OrderBy(r => r.SysRowID).Skip(iOffset).Take(iPageSize)\\n        .Select(r => new { r.Company, r.ProductID, r.TypeCode, r.CGCCode,\\n            r.Key1, r.Key2, r.Key3, r.Version, r.SysRowID, r.CreatedBy,\\n            r.CreatedOn, r.PublishDate, r.Comment, r.Content }).ToList();\\n    var rows = new Newtonsoft.Json.Linq.JArray();\\n    foreach (var row in page)\\n    {\\n        var matches = requests.Any(q =>\\n            (String.IsNullOrEmpty((string)q[\\\"ProductID\\\"]) || (string)q[\\\"ProductID\\\"] == row.ProductID)\\n            && (String.IsNullOrEmpty((string)q[\\\"CGCCode\\\"]) || (string)q[\\\"CGCCode\\\"] == row.CGCCode)\\n            && (String.IsNullOrEmpty((string)q[\\\"Key2\\\"])\\n                ? (row.Key1 == (string)q[\\\"Key1\\\"] || (row.Key1 == \\\"\\\" && row.Key2 == (string)q[\\\"Key1\\\"]))\\n                : (row.Key1 == (string)q[\\\"Key1\\\"] && row.Key2 == (string)q[\\\"Key2\\\"]\\n                    && (String.IsNullOrEmpty((string)q[\\\"Key3\\\"]) || row.Key3 == (string)q[\\\"Key3\\\"]))));\\n        if (matches) rows.Add(Newtonsoft.Json.Linq.JObject.FromObject(row));\\n    }\\n    var result = new Newtonsoft.Json.Linq.JObject();\\n    result[\\\"rows\\\"] = rows;\\n    result[\\\"offset\\\"] = iOffset;\\n    result[\\\"scanned\\\"] = page.Count;\\n    result[\\\"more\\\"] = page.Count == iPageSize;\\n    result[\\\"nextOffset\\\"] = checked(iOffset + page.Count);\\n    oJson = result.ToString(Newtonsoft.Json.Formatting.None);\\n    oSuccess = true;\\n}\\ncatch (Exception ex)\\n{\\n    oMessage = ex.Message;\\n}\\n\", \"Usings\": \"\"}",
+        "FunctionSignature": [
+          {
+            "ArgumentName": "iRequests",
+            "DataType": "System.String",
+            "Response": false,
+            "Order": 1,
+            "ParameterID": 1,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iOffset",
+            "DataType": "System.Int32",
+            "Response": false,
+            "Order": 2,
+            "ParameterID": 2,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "iPageSize",
+            "DataType": "System.Int32",
+            "Response": false,
+            "Order": 3,
+            "ParameterID": 3,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oSuccess",
+            "DataType": "System.Boolean",
+            "Response": true,
+            "Order": 1,
+            "ParameterID": 1,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oMessage",
+            "DataType": "System.String",
+            "Response": true,
+            "Order": 2,
+            "ParameterID": 2,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oJson",
+            "DataType": "System.String",
+            "Response": true,
+            "Order": 3,
+            "ParameterID": 3,
+            "Optional": false,
+            "Description": ""
+          }
+        ]
+      }
+    ]
+  }
+}

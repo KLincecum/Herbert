@@ -1,0 +1,295 @@
+{
+  "root": "PcLookupImportExportDataSet",
+  "namespace": "http://www.epicor.com/Ice/300/BO/PcLookupTbl/PcLookupImportExport",
+  "order": [
+    "PcLookupTblHed",
+    "PcLookupColSetDtl",
+    "PcLookupColSetHed",
+    "PcLookupTblValues"
+  ],
+  "tables": {
+    "PcLookupTblHed": [
+      {
+        "name": "Company",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "LookupTblID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "Description",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "GlobalLookup",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "GlobalLock",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRevID",
+        "type": "long",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRowID",
+        "type": "Guid",
+        "mapping": "Element"
+      },
+      {
+        "name": "GlbFlag",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "EnableGlobalLookup",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "BitFlag",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "RowMod",
+        "type": "string",
+        "mapping": "Element"
+      }
+    ],
+    "PcLookupColSetDtl": [
+      {
+        "name": "Company",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "LookupTblID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "ColSetID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "ColName",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "SeqNum",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataType",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "ColFormat",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRevID",
+        "type": "long",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRowID",
+        "type": "Guid",
+        "mapping": "Element"
+      },
+      {
+        "name": "AllowNegative",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "NumericOnly",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "UseSeparator",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "Digits",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "Decimals",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "DisplayFormat",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "StringDigits",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "BitFlag",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "RowMod",
+        "type": "string",
+        "mapping": "Element"
+      }
+    ],
+    "PcLookupColSetHed": [
+      {
+        "name": "Company",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "LookupTblID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "ColSetID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "Description",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "Template",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRevID",
+        "type": "long",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRowID",
+        "type": "Guid",
+        "mapping": "Element"
+      },
+      {
+        "name": "UsedExternally",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "BitFlag",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "RowMod",
+        "type": "string",
+        "mapping": "Element"
+      }
+    ],
+    "PcLookupTblValues": [
+      {
+        "name": "Company",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "LookupTblID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "RowNum",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "ColName",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "ColSetID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "RowSetID",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataValue",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRevID",
+        "type": "long",
+        "mapping": "Element"
+      },
+      {
+        "name": "SysRowID",
+        "type": "Guid",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataValueDecimal",
+        "type": "decimal",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataValueBool",
+        "type": "bool",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataValueDate",
+        "type": "DateTime",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataValueString",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "DataType",
+        "type": "string",
+        "mapping": "Element"
+      },
+      {
+        "name": "BitFlag",
+        "type": "int",
+        "mapping": "Element"
+      },
+      {
+        "name": "RowMod",
+        "type": "string",
+        "mapping": "Element"
+      }
+    ]
+  }
+}

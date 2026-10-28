@@ -1,0 +1,77 @@
+{
+  "id": "technical-guide",
+  "title": "Technical guide",
+  "audience": "Developers and administrators",
+  "status": "Interface and implementation guide. Export success does not prove restore or runtime behavior.",
+  "sections": [
+    {
+      "title": "One application interface",
+      "paragraphs": [
+        "The GUI, CLI, and MCP frontends use the same application commands. Run herbert schema to read command names and schemas.",
+        "The CLI reads one UTF-8 JSON command per line from standard input. A command has schemaVersion 1, a method name and an arguments object. The CLI writes one reply per line.",
+        "Use help.read to read these documents and about to read creator details. Neither operation needs an Epicor connection. MCP exposes the same operations as help_read and about.",
+        "The public interface performs saved downloads and their lifecycle operations. Discovery occurs within a download. The interface does not provide standalone artifact browsing or example-plugin execution.",
+        "The graphical navigation starts with Connection. The other pages are Download, Plugins, and About. Connection contains the environment and authentication inputs. It also contains the credentials file picker and Save action.",
+        "Download contains the destination, output mode, Download action, and shared options. The Download action connects with the selected connection information. It does not save newly entered credentials. Plugins contains collection selection and plugin settings.",
+        "run.status adds activeOperations and executionActive to a live response. Set summary to true for compact progress. The compact response includes fileCount and fileBytes. The default response contains the full journal.",
+        "Active operations are temporary display data. Checkpoints do not save them. Continue polling while executionActive is true. Final cleanup can continue after the phase becomes completed, failed, or canceled. Saved-run reads report false. executionActive is a response field, not a journal field."
+      ]
+    },
+    {
+      "title": "Download requests",
+      "paragraphs": [
+        "Each plugin collects its inventory once, with additional pages when required. It retains full definitions from inventory pages when the service returns them.",
+        "A plugin requests each required native export once. Herbert reads the downloaded package locally to create readable code and other views.",
+        "A plugin uses separate batched reads for required content that the native export omits. System-marked artifacts remain excluded.",
+        "Herbert shares repeated reads within one run. Normal helper calls reuse the ready helper and its definition. Cleanup checks the current server object.",
+        "A failed item or inventory branch does not stop independent work. The configured retry options can repeat a failed request."
+      ]
+    },
+    {
+      "title": "Plugin discovery and help",
+      "paragraphs": [
+        "Each Wasm module provides a descriptor with its identity, description, roles, settings and help sections. A help section has a title and an array of plain-text paragraphs.",
+        "The host discovers the modules that are present. It has no expected plugin registry. Remove a module and its state files to remove that capability.",
+        "The settings interface supplies checkboxes, choices and text filters. The module defines keys, defaults, descriptions and behavior. demoOnly marks an example option that does not affect collection.",
+        "Automation and integrations declares filterSensitiveFields. The interface label is Filter sensitive fields and parameters. Its default is false. Enabling it omits declared sensitive native fields and parameter values. System artifact exclusions apply separately. Other plugins do not inherit this setting.",
+        "Plugins own the collection choices. These choices include native methods, entity routes, projections, query tables, and native byte-field mappings. The host has no fixed allowlist for collection methods or definition tables. It checks common structure. It also requires actions to match the plugin descriptor. Authentication and ownership controls remain active."
+      ]
+    },
+    {
+      "title": "Portable plugin configuration",
+      "paragraphs": [
+        "A plugin's state is stored beside its module. Configuration and status belong to the plugin. Keep the state file with the module when you move it.",
+        "The plugin handles configure requests. The host checks declared value shapes and saves returned opaque state. The host does not interpret a filter or assign collection meaning to a setting. Runtime status is reported by the active download.",
+        "The repository contains AssemblyScript and Rust system information examples. They demonstrate the same interface. The standard package does not contain these teaching examples.",
+        "Run pluginSettings override saved values without saving. Omission inherits saved defaults; explicit blank filters clear that run only. plugin.configure saves values. GUI category toggles, Select all available, Clear selection and Save plugin options save the draft too.",
+        "backup.start performs discovery within effective plugin options. retrieve.start uses exact native identities independently of discovery filters where acquisition is supported. C04 requires paged discovery; C08 exact global library retrieval is supported. Processing options still apply. The persisted fullBackup discriminator controls discovery execution and does not assert full-environment coverage.",
+        "Run journals retain pluginSettings, original plugin-declared filter metadata in pluginSelectionContracts, and module fingerprints. Matching semantics belong to each module: C01 declares c01-code-type-id-prefix-v1, C04 c04-query-id-prefix-v1 and C08 c08-library-id-prefix-v1. Compact status includes frozen values, metadata and fingerprints. Recovery never borrows a missing filter from current saved options: FROZEN_SELECTION_REQUIRED refuses ambiguous legacy selection without weakening module-hash checks.",
+        "C04 queryIdPrefix and C08 libraryIdPrefix are blank-default literal case-sensitive prefixes with no trimming or normalization. C04 retains whole query graphs and native dependency/workflow associations. C08 filters validated inventory IDs before bulk GetLibraries, retaining complete global libraries and company mappings. Required reference rows can name IDs outside the prefix; referenced libraries are not automatically collected. Optional compiled capture remains separate and follows selected owners.",
+        "run.status derives discoveryMessages only from successful complete overall discovery with zero selected roots. An empty page with continuation is not a zero-match result. Private filters and metadata are omitted from sanitized support packets; export performs no network calls."
+      ]
+    },
+    {
+      "title": "Plugin loading",
+      "paragraphs": [
+        "Plugins are portable Wasm files. Loading requires a compatible plugin ABI and declared host capabilities. The standard package supplies compiled BPM, Function and UBAQ support with the matching host, modules, helper definitions and pinned native decompiler companion. Keep that composition together. Plugins require no signing key or signature file.",
+        "Herbert checks and compiles the Wasm. It checks the plugin ABI and declared capabilities. It reuses compiled modules while their source bytes remain unchanged."
+      ]
+    },
+    {
+      "title": "Native helpers and access ownership",
+      "paragraphs": [
+        "Herbert installs and removes its server helpers through its authenticated connection. It records ownership before cleanup.",
+        "The host tracks permission checks, temporary grants when selected, helper upload, use, helper removal and permission restoration. A successful operation or a journal marked removed does not replace independent readback of server cleanup.",
+        "Connection admission requires an enabled Security Manager. Herbert checks the role once for each explicit connection. Reads and token renewal do not repeat admission. Epicor still enforces native operation permissions.",
+        "Ownership evidence must distinguish pre-existing resources from resources Herbert created. An uncertain write needs fresh readback before a retry. Remove only owned resources and preserve unrelated group memberships."
+      ]
+    },
+    {
+      "title": "Transfer and cleanup evidence",
+      "paragraphs": [
+        "Readable output uses collection display names and artifact names. If a journal lacks a collection display name, output naming falls back to its internal category ID. Herbert Data retains raw files, manifests, journals and checkpoints. Conflicts preserves incoming versions when an existing local file has changed.",
+        "Recovery must use the durable run identity and original caller. Pending cleanup must remain visible until independent readback proves it is complete."
+      ]
+    }
+  ]
+}

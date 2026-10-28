@@ -1,0 +1,14 @@
+{
+  "targets": {
+    "release": {
+      "outFile": "build/system-info.wasm",
+      "optimizeLevel": 3,
+      "shrinkLevel": 1
+    }
+  },
+  "options": {
+    "runtime": "minimal",
+    "transform": ["json-as"],
+    "use": ["abort=assembly/abi/abort"]
+  }
+}

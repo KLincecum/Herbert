@@ -1,0 +1,70 @@
+{
+  "id": "user-guide",
+  "title": "User guide",
+  "audience": "Users",
+  "status": "Guide to the supplied application. Review each download result for collection and cleanup failures.",
+  "sections": [
+    {
+      "title": "Enter and save connection information",
+      "paragraphs": [
+        "Open Connection, the first tab, to enter the Epicor server address, company and authentication information. Use the file picker there when your connection information comes from a user-authored environment file.",
+        "Use the Epicor instance address, such as https://erp.example.com/Kinetic or https://erp.example.com:8443/KineticTest. Replace the server, optional port and instance name with your environment. You can paste the full browser address. Herbert removes /apps/ERP or /api/v2 and everything after that route, regardless of case, plus query strings and fragments. It preserves the capitalization of your instance path.",
+        "Select Save on Connection to keep the selected connection profile. Choose whether credentials come from the current input, your environment file or the operating system secure store. Starting a download does not save newly entered credentials.",
+        "Herbert verifies the selected company and caller when it connects. The Epicor user must be an enabled Security Manager. This role check occurs once per explicit connection, not on every read or token renewal. Epicor still enforces permission for each requested operation."
+      ]
+    },
+    {
+      "title": "Set behavior on Download",
+      "paragraphs": [
+        "The tabs are Connection, Download, Plugins and About. Download contains the destination folder picker, output mode, Download action and shared download options. Enter and save connection information on Connection.",
+        "Choose output mode, concurrency and temporary access on Download. Status and progress appear while the download is running."
+      ]
+    },
+    {
+      "title": "Choose collections on Plugins",
+      "paragraphs": [
+        "Open Plugins to choose the collections to include. Every installed collection supplies its own settings and help.",
+        "Plugin controls include enablement and collection-specific options. Category toggles, Select all available, Clear selection and Save plugin options save the current option draft beside the plugin, including filter edits. Opening Plugins does not save options. Downloads use the displayed draft.",
+        "Selection filters narrow the eligible roots to download. Clear filter makes the field blank; save the blank to clear its saved value. A completed filtered download establishes completeness within that selection. Existing ownership, access and system exclusions still apply.",
+        "UD Codes provides Code type ID starts with. This is a literal, case-sensitive prefix: every entered character, including spaces, is preserved. Blank selects all eligible code types. Herbert reads native pages and selects complete code types with every eligible entry locally.",
+        "BAQs and UBAQs provides Query ID starts with. It uses the same literal, case-sensitive prefix rule. Each selected query retains its diagrams, required dependencies and authored update methods/workflows. Exact BAQ retrieval through MCP is unsupported; use filtered discovery.",
+        "Functions provides Library ID starts with. It uses the same prefix rule and preserves the complete library, all Functions, signatures, references and company mappings. Exact global library retrieval through MCP ignores the discovery prefix. Empty selected pages still continue.",
+        "During a download, open Run scope and frozen options to inspect the values fixed for that run. A successful empty selection reports No eligible items matched the run selection. Review failures and incomplete items separately.",
+        "Automation and integrations provides Filter sensitive fields and parameters. It is off by default, so native field and parameter values are preserved. Turn it on to omit the plugin's declared sensitive values. System artifact exclusions apply in either mode.",
+        "Settings marked Demo / example do not affect collection."
+      ]
+    },
+    {
+      "title": "Choose a folder and download",
+      "paragraphs": [
+        "Use the folder picker to choose where Herbert saves the backup, then select Download. Herbert connects using the selected connection information.",
+        "Separate-folder mode creates a folder named Herbert - company - timestamp. Inside the backup, readable files use collection names and artifact names. Herbert Data contains raw evidence and durable recovery records. Conflicts holds incoming versions when an existing local file has been changed.",
+        "Status and progress appear while the download is running. Working now shows each active plugin, item, operation and elapsed time. The latest saved file is separate from work still in progress. Keep Herbert open. Pause stops new work; resume continues it; cancel preserves verified files and finishes owned cleanup. On Windows, Open download folder opens this download's actual output folder once it exists.",
+        "Read the final outcome and any item failures. A permission refusal or partial acquisition means the affected content was not fully collected."
+      ]
+    },
+    {
+      "title": "Permissions and temporary access",
+      "paragraphs": [
+        "A Security Manager can still lack permission to read a particular item. Herbert records the refusal when the read is denied.",
+        "Temporary group access is enabled by default. You can turn it off in Download options, and Herbert remembers your saved choice. When authorized by exact native policy, Herbert records ownership, adds the required group, retries the read and removes only the membership it added. Existing memberships stay unchanged.",
+        "Cleanup warnings remain part of the download result until ownership is reconciled."
+      ]
+    },
+    {
+      "title": "Cleanup and recovery",
+      "paragraphs": [
+        "Herbert records the server helpers, transfer files and temporary permissions it owns so that cleanup can be reconciled. Read any cleanup warnings in the final result.",
+        "Keep the run record if cleanup is pending. Do not delete unidentified server files or permissions.",
+        "Keep the backup's Herbert Data folder with its downloaded files. It contains the durable records needed for recovery. Recovery through the CLI or MCP requires the original caller and run identity. The graphical interface has no saved-run browser or inspection page."
+      ]
+    },
+    {
+      "title": "Get help",
+      "paragraphs": [
+        "Use the application guide for the Download workflow and plugin help on Plugins for collection details and settings. About contains the application information.",
+        "About contains the avatar, vacuum artwork, dedication, and copyright information. The artwork and help documents work offline."
+      ]
+    }
+  ]
+}

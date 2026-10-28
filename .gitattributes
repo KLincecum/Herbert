@@ -1,0 +1,7 @@
+# Preserve binary files exactly across platforms.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.wasm binary
+*.efxj binary

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "config": {
+    "enabled": false,
+    "demoCheckbox": false,
+    "demoChoice": "alpha",
+    "demoFilter": ""
+  },
+  "status": {
+    "phase": "disabled",
+    "runCount": 0,
+    "lastReport": null
+  }
+}

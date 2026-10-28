@@ -1,0 +1,1428 @@
+[
+  {
+    "category": "C09",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedXXXDef",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": [],
+    "type_codes": [
+      "Customization",
+      "BaseExtension",
+      "Productization",
+      "Verticalization",
+      "Localization"
+    ],
+    "discovery_fields": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode",
+      "SysRowID",
+      "SystemFlag"
+    ]
+  },
+  {
+    "category": "C10",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedXXXDef",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "Personalization",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": [],
+    "owner_field": "Key1",
+    "owner_required": true
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedXXXDef",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "KineticGridLayout",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": [],
+    "owner_field": "Key1",
+    "owner_required": true
+  },
+  {
+    "category": "C11",
+    "schema": "Ice",
+    "table": "DashBdDef",
+    "kind": "PersistedDashBdDef",
+    "keys": [
+      "Company",
+      "ProductID",
+      "GlbCompany",
+      "DefinitionID",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "DashBdChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "GlbCompany": "GlbCompany",
+          "DefinitionID": "DefinitionID",
+          "CGCCode": "CGCCode"
+        }
+      },
+      {
+        "table": "DashBdBAQ",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "GlbCompany": "GlbCompany",
+          "DefinitionID": "DefinitionID",
+          "CGCCode": "CGCCode"
+        }
+      },
+      {
+        "table": "DashBdLike",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "GlbCompany": "GlbCompany",
+          "DefinitionID": "DefinitionID",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "ProductID",
+      "GlbCompany",
+      "DefinitionID",
+      "CGCCode",
+      "SysRowID",
+      "SystemFlag"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "ContextMenu",
+    "kind": "PersistedContextMenu",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "ContextMenuItem",
+    "kind": "PersistedContextMenuItem",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "ContextValidation",
+    "kind": "PersistedContextValidation",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "SearchOption",
+    "kind": "PersistedSearchOption",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "ESSearch",
+    "kind": "PersistedESSearch",
+    "keys": [
+      "Company",
+      "SearchID",
+      "GlbCompany"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "SearchID",
+      "GlbCompany",
+      "SysRowID",
+      "UserID"
+    ],
+    "owner_field": "UserID"
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "ESSearchFields",
+    "kind": "PersistedESSearchFields",
+    "keys": [
+      "Company",
+      "SearchID",
+      "GlbCompany",
+      "Seq"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "SearchID",
+      "GlbCompany",
+      "Seq",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C18",
+    "schema": "Ice",
+    "table": "ReportStyleRule",
+    "kind": "PersistedReportStyleRule",
+    "keys": [
+      "Company",
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "SysRowID",
+      "ReportID",
+      "StyleNum"
+    ]
+  },
+  {
+    "category": "C24",
+    "schema": "Ice",
+    "table": "SolutionHeader",
+    "kind": "PersistedSolutionHeader",
+    "keys": [
+      "Company",
+      "SolutionID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [
+      {
+        "table": "SolutionDetail",
+        "links": {
+          "SolutionID": "SolutionID"
+        }
+      },
+      {
+        "table": "SolutionTracker",
+        "links": {
+          "SolutionID": "SolutionID"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C24",
+    "schema": "Ice",
+    "table": "SolutionType",
+    "kind": "PersistedSolutionType",
+    "keys": [
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C24",
+    "schema": "Ice",
+    "table": "SolutionTypeDetail",
+    "kind": "PersistedSolutionTypeDetail",
+    "keys": [
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {},
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C12",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedKineticCustomization",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "KNTCCustLayer",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C12",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedKineticApplicationFile",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "KNTCMetaUI",
+      "Key3": "",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C12",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedKineticEventLayout",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "KNTCEventLayout",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C12",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedKineticLayerBackup",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "KNTCLayerBackup",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedKineticPersonalization",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "TypeCode": "KNTCPersLayer",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "owner_field": "SysCharacter02",
+    "owner_required": true,
+    "coverage": []
+  },
+  {
+    "category": "C19",
+    "schema": "Erp",
+    "table": "PcInputVar",
+    "kind": "PersistedPcInputVar",
+    "keys": [
+      "Company",
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C19",
+    "schema": "Erp",
+    "table": "PcMethodVar",
+    "kind": "PersistedPcMethodVar",
+    "keys": [
+      "Company",
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C19",
+    "schema": "Erp",
+    "table": "PcRuleSet",
+    "kind": "PersistedPcRuleSet",
+    "keys": [
+      "Company",
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C19",
+    "schema": "Erp",
+    "table": "PcRules",
+    "kind": "PersistedPcRules",
+    "keys": [
+      "Company",
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C19",
+    "schema": "Erp",
+    "table": "PcRulesExpr",
+    "kind": "PersistedPcRulesExpr",
+    "keys": [
+      "Company",
+      "SysRowID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": []
+  },
+  {
+    "category": "C20",
+    "schema": "Erp",
+    "table": "ACTType",
+    "kind": "PostingRules",
+    "keys": [
+      "ACTTypeUID",
+      "Company"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [
+      {
+        "table": "ACTRevision",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ABTDocLine",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ABTAmount",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ABTPostEntity",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ABTPostCode",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ABTQuery",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ABTQParam",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "ACTBook",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BookingRule",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BVRule",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BROperation",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BROperationCustom",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BRFunction",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BookVar",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BRFuncArgs",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      },
+      {
+        "table": "BRFuncOperation",
+        "links": {
+          "Company": "Company",
+          "ACTTypeUID": "ACTTypeUID"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C17",
+    "schema": "Ice",
+    "table": "CustomReportStoreHistory",
+    "kind": "PersistedReportHistory",
+    "keys": [
+      "PrintProgram",
+      "Version"
+    ],
+    "order": "SysRowID",
+    "discovery_fields": [
+      "PrintProgram",
+      "Version",
+      "SysRowID"
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C20",
+    "schema": "Ice",
+    "table": "RptStructuredOutputDef",
+    "kind": "StructuredOutput",
+    "discovery_filters": {
+      "SystemFlag": false
+    },
+    "keys": [
+      "RptStructuredOutputDefID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "discovery_fields": [
+      "Company",
+      "RptStructuredOutputDefID",
+      "SysRowID"
+    ],
+    "children": [
+      {
+        "table": "RptStructuredOutputFile",
+        "filters": {
+          "SystemFlag": false
+        },
+        "links": {
+          "RptStructuredOutputDefID": "RptStructuredOutputDefID"
+        }
+      },
+      {
+        "table": "RptStructuredOutputFileElement",
+        "filters": {
+          "SystemFlag": false
+        },
+        "links": {
+          "RptStructuredOutputDefID": "RptStructuredOutputDefID"
+        }
+      },
+      {
+        "table": "RptStructuredOutputFileXMLNamespace",
+        "filters": {
+          "SystemFlag": false
+        },
+        "links": {
+          "RptStructuredOutputDefID": "RptStructuredOutputDefID"
+        }
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "ShellLayout",
+    "kind": "PersistedShellLayout",
+    "keys": [
+      "TenantID",
+      "LayoutID",
+      "HomePageType",
+      "SubType"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "discovery_fields": [
+      "TenantID",
+      "LayoutID",
+      "HomePageType",
+      "SubType",
+      "SysRowID",
+      "SystemFlag"
+    ],
+    "coverage": [],
+    "filters": {
+      "SystemFlag": false
+    }
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "ShellLayoutPersonal",
+    "kind": "PersistedShellLayoutPersonal",
+    "keys": [
+      "TenantID",
+      "UserID",
+      "LayoutID",
+      "HomePageType",
+      "SubType"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "discovery_fields": [
+      "TenantID",
+      "UserID",
+      "LayoutID",
+      "HomePageType",
+      "SubType",
+      "SysRowID"
+    ],
+    "coverage": [],
+    "owner_field": "UserID",
+    "owner_required": true
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "HomeUserOption",
+    "kind": "PersistedHomeUserOption",
+    "keys": [
+      "UserID",
+      "HomePageType",
+      "SubType"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "discovery_fields": [
+      "UserID",
+      "HomePageType",
+      "SubType",
+      "SysRowID"
+    ],
+    "coverage": [],
+    "owner_field": "UserID",
+    "owner_required": true
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "FavFolder",
+    "kind": "PersistedFavFolder",
+    "keys": [
+      "UserID",
+      "FolderSeq"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "discovery_fields": [
+      "UserID",
+      "FolderSeq",
+      "SysRowID"
+    ],
+    "coverage": [],
+    "owner_field": "UserID",
+    "owner_required": true
+  },
+  {
+    "category": "C13",
+    "schema": "Ice",
+    "table": "FavItems",
+    "kind": "PersistedFavItems",
+    "keys": [
+      "UserID",
+      "FolderSeq",
+      "ItemSeq"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "discovery_fields": [
+      "UserID",
+      "FolderSeq",
+      "ItemSeq",
+      "SysRowID"
+    ],
+    "coverage": [],
+    "owner_field": "UserID",
+    "owner_required": true
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "QuickSearch",
+    "kind": "PersistedQuickSearch",
+    "keys": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany",
+      "SysRowID",
+      "UserID"
+    ],
+    "owner_field": "UserID"
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "QuickSearchCriteria",
+    "kind": "PersistedQuickSearchCriteria",
+    "keys": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany",
+      "Seq"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany",
+      "Seq",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "QuickSearchValueList",
+    "kind": "PersistedQuickSearchValueList",
+    "keys": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany",
+      "Seq",
+      "ValueSeq"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany",
+      "Seq",
+      "ValueSeq",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "NamedSearch",
+    "kind": "PersistedNamedSearch",
+    "keys": [
+      "Company",
+      "SearchForm",
+      "NSId",
+      "UserID",
+      "CalledFrom"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "SearchForm",
+      "NSId",
+      "UserID",
+      "CalledFrom",
+      "SysRowID"
+    ],
+    "owner_field": "UserID"
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "ControlSetting",
+    "kind": "PersistedControlSetting",
+    "keys": [
+      "Company",
+      "SearchForm",
+      "NSId",
+      "UserID",
+      "CalledFrom",
+      "ControlGuid"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "SearchForm",
+      "NSId",
+      "UserID",
+      "CalledFrom",
+      "ControlGuid",
+      "SysRowID"
+    ],
+    "owner_field": "UserID"
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "WhereClause",
+    "kind": "PersistedWhereClause",
+    "keys": [
+      "Company",
+      "SearchForm",
+      "NSId",
+      "UserID",
+      "CalledFrom",
+      "TableName"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {},
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "SearchForm",
+      "NSId",
+      "UserID",
+      "CalledFrom",
+      "TableName",
+      "SysRowID"
+    ],
+    "owner_field": "UserID"
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "AlternateKeyLike",
+    "kind": "PersistedAlternateKeyLike",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "LikeField"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "LikeField",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "LaunchOption",
+    "kind": "PersistedLaunchOption",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "AlternateKeyBinding",
+    "kind": "PersistedAlternateKeyBinding",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding",
+      "AlternateKeyBinding"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding",
+      "AlternateKeyBinding",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "AlternateKey",
+    "kind": "PersistedAlternateKey",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "WhereClauseBinding",
+    "kind": "PersistedWhereClauseBinding",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "WhereClauseToken",
+    "kind": "PersistedWhereClauseToken",
+    "keys": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding",
+      "BindingToken"
+    ],
+    "order": "SysRowID",
+    "company": false,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "LikeID",
+      "ContextTypeCode",
+      "ContextMenuID",
+      "CalledFrom",
+      "CurrentBinding",
+      "BindingToken",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C15",
+    "schema": "Ice",
+    "table": "Menu",
+    "kind": "PersistedMenu",
+    "keys": [
+      "Company",
+      "MenuID"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "SystemFlag": false
+    },
+    "children": [],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "MenuID",
+      "SysRowID"
+    ]
+  },
+  {
+    "category": "C12",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedKineticApplicationRegistration",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "filters": {
+      "ProductID": "EP",
+      "TypeCode": "KNTCUDApp",
+      "SystemFlag": false
+    },
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3",
+          "CGCCode": "CGCCode"
+        }
+      }
+    ],
+    "coverage": [],
+    "discovery_fields": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "Key1",
+      "Key2",
+      "Key3",
+      "CGCCode",
+      "SysRowID",
+      "SystemFlag"
+    ]
+  },
+  {
+    "category": "C14",
+    "schema": "Ice",
+    "table": "XXXDef",
+    "kind": "PersistedContextMenuXml",
+    "keys": [
+      "Company",
+      "ProductID",
+      "TypeCode",
+      "CGCCode",
+      "Key1",
+      "Key2",
+      "Key3"
+    ],
+    "order": "SysRowID",
+    "company": true,
+    "owner_field": "Key2",
+    "filters": {
+      "SystemFlag": false,
+      "Key1": "CustomContextMenu"
+    },
+    "type_codes": [
+      "Customization",
+      "Personalization"
+    ],
+    "children": [
+      {
+        "table": "XXXChunk",
+        "links": {
+          "Company": "Company",
+          "ProductID": "ProductID",
+          "TypeCode": "TypeCode",
+          "CGCCode": "CGCCode",
+          "Key1": "Key1",
+          "Key2": "Key2",
+          "Key3": "Key3"
+        },
+        "filters": {}
+      }
+    ],
+    "coverage": []
+  }
+]

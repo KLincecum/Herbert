@@ -1,0 +1,114 @@
+﻿{
+  "Mode": "Backup",
+  "Version": "5.1.100",
+  "SystemCode": "ERP",
+  "LibraryId": "HerbertPrograms",
+  "Library": {
+    "OriginalID": "HerbertPrograms",
+    "Description": "Read hidden custom-program registration metadata for Herbert",
+    "GlobalID": "6d31202c-92f2-441d-8042-ee0c78fe65af",
+    "EpicorVersion": "5.1.100",
+    "Revision": 1,
+    "Published": false,
+    "Private": false,
+    "Disabled": false,
+    "Mode": 0,
+    "AllowCustomCodeWidgets": false,
+    "AllowCustomCodeFunctions": true,
+    "DirectDBAccess": 1,
+    "Notes": "Read-only hidden metadata collector; direct definitions and binary coverage remain independent.",
+    "OwnedByCompany": "",
+    "Owner": "",
+    "SharedWithGroup": "",
+    "Functions": [
+      {
+        "FunctionID": "ReadInternalMetadata",
+        "Description": "Read authorized extension runtime registrations, dataset-table links and custom namespace metadata",
+        "Kind": 2,
+        "RequireTransaction": false,
+        "SingleRowMode": false,
+        "Private": false,
+        "Disabled": false,
+        "Invalid": false,
+        "Thumbnail": null,
+        "Notes": "",
+        "Body": "{\"Code\":\"// Read only hidden registration metadata; ordinary definitions and binaries remain direct.\\noSuccess=false;oMessage=\\\"\\\";oJson=\\\"{}\\\";\\ntry {\\n var allowed=new System.Collections.Generic.List<string>();\\n this.CallService<Ice.Contracts.ExtensionSvcContract>(svc=>{bool more;var ds=svc.GetList(\\\"SystemFlag = false\\\",0,1,out more);if(more)throw new Exception(\\\"The complete extension inventory reported more pages.\\\");allowed.AddRange(ds.ExtensionList.Select(row=>row.ExtensionSetID));});\\n var roots=Db.ExtensionSet.Where(row=>!row.SystemFlag&&allowed.Contains(row.ExtensionSetID)).Select(row=>new{row.ExtensionSetID,row.SysRowID}).ToList();\\n var ids=roots.Select(row=>row.SysRowID).ToList();\\n var names=roots.Select(row=>row.ExtensionSetID).ToList();\\n var runtime=Db.Extension.Where(row=>ids.Contains(row.ExtensionSetRowID)).Select(row=>new{row.ExtensionSetRowID, row.InterceptType, row.ImplementationType, row.CreatedBy, row.CreatedOn, row.ChangedBy, row.ChangedOn, row.SysRevID, row.SysRowID}).ToList();\\n var links=Db.ExtensionDataSetTable.Where(row=>names.Contains(row.ExtensionSetID)&&!row.SystemFlag).Select(row=>new{row.ExtensionSetID, row.SystemCode, row.ParentDataSetID, row.DataTableSystemCode, row.DataTableID, row.IsPrimaryTable, row.SystemFlag, row.CreatedBy, row.CreatedOn, row.ChangedBy, row.ChangedOn, row.SysRevID, row.SysRowID, row.GenIMTable}).ToList();\\n var systems=links.Select(row=>row.DataTableSystemCode).Distinct().ToList();\\n var namespaces=Db.ZSystem.Where(row=>systems.Contains(row.SystemCode)&&!row.SystemFlag).Select(row=>new{row.SystemCode, row.Description, row.DBSchemaName, row.DataContextType, row.SystemFlag, row.SysRevID, row.SysRowID}).ToList();\\n var serviceDatasetFields=Db.ZBODataSets.Where(row=>!row.SystemFlag&&Db.ZBODef.Any(parent=>!parent.SystemFlag&&parent.SystemCode==row.SystemCode&&parent.ClassName==row.ClassName)).Select(row=>new{row.SystemCode,row.ClassName,row.DataSetSystemCode,row.DataSetID,row.SysRowID,row.ObjectNS}).ToList();\\n var datasetStoredFields=Db.ZDataSet.Where(row=>!row.SystemFlag).Select(row=>new{row.SystemCode,row.DataSetID,row.SysRowID,row.DataSetName,row.TargetNamespace,row.ProIncDir,row.ProIncName,row.Version,row.XsdTypeName,row.AutoGen,row.VerIncr,row.Generated}).ToList();\\n oJson=Newtonsoft.Json.JsonConvert.SerializeObject(new{RuntimeExtension=runtime,ExtensionDataSetTable=links,ZSystem=namespaces,ServiceDatasetFields=serviceDatasetFields,DatasetStoredFields=datasetStoredFields});oSuccess=true;\\n}catch(Exception error){oMessage=error.Message;}\\n\",\"Usings\":\"\"}",
+        "FunctionSignature": [
+          {
+            "ArgumentName": "oSuccess",
+            "DataType": "System.Boolean",
+            "Response": true,
+            "Order": 1,
+            "ParameterID": 1,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oMessage",
+            "DataType": "System.String",
+            "Response": true,
+            "Order": 2,
+            "ParameterID": 2,
+            "Optional": false,
+            "Description": ""
+          },
+          {
+            "ArgumentName": "oJson",
+            "DataType": "System.String",
+            "Response": true,
+            "Order": 3,
+            "ParameterID": 3,
+            "Optional": false,
+            "Description": ""
+          }
+        ]
+      }
+    ],
+    "LibraryReferences": [
+      {
+        "ReferenceType": 0,
+        "ReferenceID": "Newtonsoft.Json.dll"
+      },
+      {
+        "ReferenceType": 2,
+        "ReferenceID": "ICE:BO:Extension"
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ExtensionSet",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.Extension",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ExtensionDataSetTable",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ZSystem",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ZBODef",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ZBODataSets",
+        "Updatable": false
+      },
+      {
+        "ReferenceType": 1,
+        "ReferenceID": "ICE.ZDataSet",
+        "Updatable": false
+      }
+    ],
+    "LibraryMappings": []
+  }
+}

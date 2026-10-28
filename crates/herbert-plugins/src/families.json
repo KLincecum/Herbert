@@ -1,0 +1,1097 @@
+[
+  {
+    "category": "C02",
+    "kind": "UDTableSchema",
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "list_table": "ZDataTableList",
+    "keys": [
+      "SystemCode",
+      "DataTableID"
+    ],
+    "list": {
+      "service": "Ice.BO.ZDataTableSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ZDataTableSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "ZLookupLink",
+      "ZLinkColumn",
+      "ZLookupField",
+      "ZDataField",
+      "ZKey",
+      "ZKeyField"
+    ],
+    "extras": [],
+    "coverage": []
+  },
+  {
+    "category": "C02",
+    "kind": "UDMapping",
+    "service": "Ice.BO.UDMapSvc",
+    "root": "UDMapTable",
+    "list_table": "UDMapTable",
+    "keys": [
+      "MapTableID"
+    ],
+    "list": {
+      "service": "Ice.BO.UDMapSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseUDMapTable": "(Company = '@companyLiteral' OR Company = '')",
+        "whereClauseUDMapColumn": ""
+      }
+    },
+    "read": {
+      "service": "Ice.BO.UDMapSvc",
+      "method": "GetByID",
+      "arguments": {
+        "mapTableID": "@integer:MapTableID"
+      }
+    },
+    "children": [
+      "UDMapColumn"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C03",
+    "kind": "ExtendedTableProperties",
+    "service": "Ice.BO.ZDataTableSvc",
+    "root": "ZDataTable",
+    "list_table": "ZDataTableList",
+    "keys": [
+      "SystemCode",
+      "DataTableID"
+    ],
+    "list": {
+      "service": "Ice.BO.ZDataTableSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ZDataTableSvc",
+      "method": "GetByID",
+      "arguments": {
+        "systemCode": "@key:SystemCode",
+        "dataTableID": "@key:DataTableID"
+      }
+    },
+    "children": [
+      "ZLookupLink",
+      "ZLinkColumn",
+      "ZLookupField",
+      "ZDataField",
+      "ZKey",
+      "ZKeyField"
+    ],
+    "extras": [],
+    "coverage": []
+  },
+  {
+    "category": "C04",
+    "kind": "BAQ",
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "list_table": "DynamicQueryDesignerList",
+    "keys": [
+      "Company",
+      "QueryID"
+    ],
+    "list": {
+      "service": "Ice.BO.BAQDesignerSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "((Company = '@companyLiteral' OR Company = '')) AND SystemFlag = false AND Updatable = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.BAQDesignerSvc",
+      "method": "ExportBaq",
+      "arguments": {
+        "queryId": "@key:QueryID",
+        "options": {}
+      }
+    },
+    "children": [],
+    "extras": [],
+    "coverage": []
+  },
+  {
+    "category": "C05",
+    "kind": "UBAQ",
+    "service": "Ice.BO.BAQDesignerSvc",
+    "root": "DynamicQueryDesigner",
+    "list_table": "DynamicQueryDesignerList",
+    "keys": [
+      "Company",
+      "QueryID"
+    ],
+    "list": {
+      "service": "Ice.BO.BAQDesignerSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "((Company = '@companyLiteral' OR Company = '') AND (Updatable = true)) AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.BAQDesignerSvc",
+      "method": "ExportBaq",
+      "arguments": {
+        "queryId": "@key:QueryID",
+        "options": {}
+      }
+    },
+    "children": [],
+    "extras": [],
+    "coverage": []
+  },
+  {
+    "category": "C06",
+    "kind": "MethodDirectiveGroup",
+    "service": "Ice.BO.BpMethodSvc",
+    "root": "BpMethod",
+    "list_table": "BpMethod",
+    "keys": [
+      "Source",
+      "BpMethodCode"
+    ],
+    "list": {
+      "service": "Ice.BO.BpMethodSvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseBpMethod": "Source = 'BO' AND SystemFlag = false",
+        "whereClauseBpArgument": "",
+        "whereClauseBpDirective": "",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.BpMethodSvc",
+      "method": "GetByID",
+      "arguments": {
+        "source": "@key:Source",
+        "bpMethodCode": "@key:BpMethodCode"
+      }
+    },
+    "children": [
+      "BpArgument",
+      "BpDirective"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C06",
+    "kind": "DataDirectiveGroup",
+    "service": "Ice.BO.BpMethodSvc",
+    "root": "BpMethod",
+    "list_table": "BpMethod",
+    "keys": [
+      "Source",
+      "BpMethodCode"
+    ],
+    "list": {
+      "service": "Ice.BO.BpMethodSvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseBpMethod": "Source = 'DB' AND SystemFlag = false",
+        "whereClauseBpArgument": "",
+        "whereClauseBpDirective": "",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.BpMethodSvc",
+      "method": "GetByID",
+      "arguments": {
+        "source": "@key:Source",
+        "bpMethodCode": "@key:BpMethodCode"
+      }
+    },
+    "children": [
+      "BpArgument",
+      "BpDirective"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C14",
+    "kind": "PredictiveSearch",
+    "service": "Ice.BO.PredictiveSearchSvc",
+    "root": "PredictiveSearch",
+    "list_table": "PredictiveSearch",
+    "keys": [
+      "Company",
+      "QuickSearchID",
+      "GlbCompany"
+    ],
+    "list": {
+      "service": "Ice.BO.PredictiveSearchSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClausePredictiveSearch": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.PredictiveSearchSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C16",
+    "kind": "ReportDataDefinition",
+    "service": "Ice.BO.RptDataDefSvc",
+    "root": "RptDataDef",
+    "list_table": "RptDataDefList",
+    "keys": [
+      "RptDefID"
+    ],
+    "list": {
+      "service": "Ice.BO.RptDataDefSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false AND SystemRpt = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.RptDataDefSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "RptTable",
+      "RptCalcField",
+      "RptExclude",
+      "RptLinkTable",
+      "RptLinkField",
+      "RptWhereItem",
+      "RptCriteriaSet",
+      "RptCriteriaFilter",
+      "RptCriteriaMapping",
+      "RptCriteriaPrompt",
+      "RptCriteriaPromptValue",
+      "RptRelation",
+      "RptRelationField",
+      "RptLiterals",
+      "RptDataSourceField",
+      "RptDataSourceParameter"
+    ],
+    "extras": [
+      {
+        "service": "Ice.BO.RptDataDefSvc",
+        "method": "ExportReport",
+        "arguments": {
+          "rptDefId": "@key:RptDefID"
+        },
+        "export": true,
+        "label": "ExportReport"
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C16",
+    "kind": "BAQReport",
+    "service": "Ice.BO.DynamicReportSvc",
+    "root": "BAQReport",
+    "list_table": "BAQReportList",
+    "keys": [
+      "BAQRptID"
+    ],
+    "list": {
+      "service": "Ice.BO.DynamicReportSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.DynamicReportSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "BAQRptOptionFld",
+      "BAQRptFilter",
+      "BAQRptSort",
+      "BAQRptSortFld"
+    ],
+    "extras": [],
+    "coverage": []
+  },
+  {
+    "category": "C17",
+    "kind": "ReportStyles",
+    "service": "Ice.BO.ReportSvc",
+    "root": "ReportStyle",
+    "list_table": "ReportList",
+    "keys": [
+      "ReportID",
+      "StyleNum"
+    ],
+    "list": {
+      "service": "Ice.BO.ReportSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "(Company = '@companyLiteral' OR Company = '')",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ReportSvc",
+      "method": "GetByID",
+      "arguments": {
+        "reportID": "@key:ReportID"
+      }
+    },
+    "children": [
+      "ReportStyle",
+      "RptStylePrinters",
+      "ReportStyleImage",
+      "ReportStyleRule",
+      "ReportComp"
+    ],
+    "extras": [
+      {
+        "service": "Ice.BO.ReportSvc",
+        "method": "ExportReportStyle",
+        "arguments": {
+          "reportId": "@row:ReportID",
+          "styleNumber": "@row:StyleNum"
+        },
+        "export": true,
+        "label": "ExportReportStyle",
+        "for_each": "ReportStyle"
+      },
+      {
+        "service": "Ice.BO.ReportSvc",
+        "method": "ExportReportStyleImages",
+        "arguments": {
+          "reportId": "@row:ReportID",
+          "styleNumber": "@row:StyleNum"
+        },
+        "export": true,
+        "label": "ExportReportStyleImages",
+        "for_each": "ReportStyle"
+      },
+      {
+        "service": "Ice.BO.ReportSvc",
+        "method": "ExportSsrsRdl",
+        "arguments": {
+          "reportPath": "@row:PrintProgram"
+        },
+        "export": true,
+        "label": "ExportSsrsRdl",
+        "for_each": "ReportStyle"
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C19",
+    "kind": "Configurator",
+    "service": "Erp.BO.ConfiguratorDefSvc",
+    "root": "PcStatus",
+    "list_table": "PcStatus",
+    "keys": [
+      "Company",
+      "ConfigID"
+    ],
+    "list": {
+      "service": "Erp.BO.ConfiguratorDefSvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClausePcStatus": "(Company = '@companyLiteral' OR Company = '')",
+        "whereClausePcStatusAttch": "",
+        "whereClausePcAudit": "1 = 0",
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClausePcDocRules": "1 = 0",
+        "whereClausePcDocRulesExpr": "1 = 0",
+        "whereClausePcDocVar": "1 = 0",
+        "whereClausePcInputs": "1 = 0",
+        "whereClausePcStrComp": "1 = 0",
+        "whereClausePcTargetEntity": "1 = 0"
+      }
+    },
+    "read": {
+      "service": "Erp.BO.ConfiguratorDefSvc",
+      "method": "GetByID",
+      "arguments": {
+        "configID": "@key:ConfigID"
+      }
+    },
+    "children": [
+      "PcStatusAttch",
+      "PcDocRules",
+      "PcDocRulesExpr",
+      "PcDocVar",
+      "PcInputs",
+      "PcStrComp",
+      "PcTargetEntity"
+    ],
+    "extras": [
+      {
+        "service": "Erp.BO.ConfiguratorDefSvc",
+        "method": "RetrievePcLayeredImagesForExport",
+        "arguments": {
+          "configID": "@key:ConfigID",
+          "configImportExportLayeredImageTableset": {
+            "ConfigImportExportLayeredImage": [],
+            "ExtensionTables": []
+          }
+        }
+      }
+    ],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C19",
+    "kind": "ConfiguratorLookup",
+    "service": "Erp.BO.PcLookupTblSvc",
+    "root": "PcLookupTblHed",
+    "list_table": "PcLookupTblHed",
+    "keys": [
+      "Company",
+      "LookupTblID"
+    ],
+    "list": {
+      "service": "Erp.BO.PcLookupTblSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClausePcLookupTblHed": "(Company = '@companyLiteral' OR Company = '')",
+        "whereClausePcLookupTblHedAttch": "",
+        "whereClausePcLookupColSetHed": "",
+        "whereClausePcLookupColSetDtl": "",
+        "whereClausePcLookupTblValues": ""
+      }
+    },
+    "read": {
+      "service": "Erp.BO.PcLookupTblSvc",
+      "method": "GetByID",
+      "arguments": {
+        "lookupTblID": "@key:LookupTblID"
+      }
+    },
+    "children": [
+      "PcLookupTblHedAttch",
+      "PcLookupColSetHed",
+      "PcLookupColSetDtl",
+      "PcLookupTblValues"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C20",
+    "kind": "BPMDataForm",
+    "service": "Ice.BO.InfoPromptFormSvc",
+    "root": "IPForm",
+    "list_table": "IPForm",
+    "keys": [
+      "FormId"
+    ],
+    "list": {
+      "service": "Ice.BO.InfoPromptFormSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseIPForm": "",
+        "whereClauseIPFormBPAction": "",
+        "whereClauseIPFormCtrl": "",
+        "whereClauseIPFormCtrlValues": ""
+      }
+    },
+    "read": {
+      "service": "Ice.BO.InfoPromptFormSvc",
+      "method": "GetByID",
+      "arguments": {
+        "formId": "@key:FormId"
+      }
+    },
+    "children": [
+      "IPFormBPAction",
+      "IPFormCtrl",
+      "IPFormCtrlValues"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C21",
+    "kind": "Theme",
+    "service": "Ice.BO.ThemeSvc",
+    "root": "Theme",
+    "list_table": "Theme",
+    "keys": [
+      "ThemeID"
+    ],
+    "list": {
+      "service": "Ice.BO.ThemeSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseTheme": "SystemFlag = false",
+        "whereClauseThemeResource": "SystemFlag = false"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ThemeSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "ThemeResource"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C21",
+    "kind": "Translation",
+    "service": "Ice.BO.LangTranSvc",
+    "root": "LangTran",
+    "list_table": "LangTran",
+    "keys": [
+      "Company",
+      "LangNameID",
+      "OrgTextID",
+      "ProgramID"
+    ],
+    "list": {
+      "service": "Ice.BO.LangTranSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseLangTran": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.LangTranSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C21",
+    "kind": "Language",
+    "service": "Ice.BO.LangNameSvc",
+    "root": "LangName",
+    "list_table": "LangName",
+    "keys": [
+      "Company",
+      "LangNameID"
+    ],
+    "list": {
+      "service": "Ice.BO.LangNameSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseLangName": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "whereClauseCulture": "",
+        "whereClauseNomenclatureModule": ""
+      }
+    },
+    "read": {
+      "service": "Ice.BO.LangNameSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "Culture",
+      "NomenclatureModule"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C22",
+    "kind": "ExtensionSet",
+    "service": "Ice.BO.ExtensionSvc",
+    "root": "Extension",
+    "list_table": "ExtensionList",
+    "keys": [
+      "ExtensionSetID"
+    ],
+    "list": {
+      "service": "Ice.BO.ExtensionSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ExtensionSvc",
+      "method": "GetByID",
+      "arguments": {
+        "extensionSetID": "@key:ExtensionSetID"
+      }
+    },
+    "children": [
+      "ExtensionSetMapping",
+      "ExtensionRelation",
+      "ExtensionRelationColumn"
+    ],
+    "extras": [
+      {
+        "service": "Ice.BO.ExtensionSvc",
+        "method": "ExportExtensionSet",
+        "arguments": {
+          "extensionSetID": "@key:ExtensionSetID"
+        },
+        "export": true,
+        "label": "ExportExtensionSet"
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C22",
+    "kind": "ServiceDefinition",
+    "service": "Ice.BO.ZBODefSvc",
+    "root": "ZBODef",
+    "list_table": "ZBODef",
+    "keys": [
+      "SystemCode",
+      "ClassName"
+    ],
+    "list": {
+      "service": "Ice.BO.ZBODefSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseZBODef": "SystemFlag = false",
+        "whereClauseZBODataSets": "SystemFlag = false",
+        "whereClauseZServiceLicenseType": ""
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ZBODefSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": 1,
+        "absolutePage": 1,
+        "whereClauseZBODef": "SystemFlag = false",
+        "whereClauseZBODataSets": "SystemFlag = false",
+        "whereClauseZServiceLicenseType": ""
+      }
+    },
+    "children": [
+      "ZBODataSets",
+      "ZServiceLicenseType"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C22",
+    "kind": "DatasetDefinition",
+    "service": "Ice.BO.ZDataSetSvc",
+    "root": "ZDataSet",
+    "list_table": "ZDataSet",
+    "keys": [
+      "SystemCode",
+      "DataSetID"
+    ],
+    "list": {
+      "service": "Ice.BO.ZDataSetSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseZDataSet": "SystemFlag = false",
+        "whereClauseZRelation": "SystemFlag = false",
+        "whereClauseZRelationField": "SystemFlag = false",
+        "whereClauseZSubDataSet": "SystemFlag = false"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ZDataSetSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": 1,
+        "absolutePage": 1,
+        "whereClauseZDataSet": "SystemFlag = false",
+        "whereClauseZRelation": "SystemFlag = false",
+        "whereClauseZRelationField": "SystemFlag = false",
+        "whereClauseZSubDataSet": "SystemFlag = false"
+      }
+    },
+    "children": [
+      "ZRelation",
+      "ZRelationField",
+      "ZSubDataSet"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C25",
+    "kind": "SystemAgent",
+    "service": "Ice.BO.SysAgentSvc",
+    "root": "SysAgent",
+    "list_table": "SysAgent",
+    "keys": [
+      "AgentID"
+    ],
+    "list": {
+      "service": "Ice.BO.SysAgentSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseSysAgent": "",
+        "whereClauseSysAgentSched": "",
+        "whereClauseSysAgentTask": "",
+        "whereClauseSysAgentTaskParam": ""
+      }
+    },
+    "read": {
+      "service": "Ice.BO.SysAgentSvc",
+      "method": "GetByID",
+      "arguments": {
+        "agentID": "@key:AgentID"
+      }
+    },
+    "children": [
+      "SysAgentSched",
+      "SysAgentTask",
+      "SysAgentTaskParam"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C25",
+    "kind": "ProcessSet",
+    "service": "Ice.BO.ProcessSetSvc",
+    "root": "ProcessSet",
+    "list_table": "ProcessSet",
+    "keys": [
+      "Company",
+      "SystemCode",
+      "ProcessID"
+    ],
+    "list": {
+      "service": "Ice.BO.ProcessSetSvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseProcessSet": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "whereClauseProcessTask": "SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ProcessSetSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "ProcessTask"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C25",
+    "kind": "MessageTemplate",
+    "service": "Ice.BO.MessageTemplateSvc",
+    "root": "MessageTemplate",
+    "list_table": "MessageTemplate",
+    "keys": [
+      "Company",
+      "MessageTemplateID",
+      "LangNameID"
+    ],
+    "list": {
+      "service": "Ice.BO.MessageTemplateSvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseMessageTemplate": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.MessageTemplateSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [],
+    "extras": [
+      {
+        "service": "Ice.BO.MessageTemplateSvc",
+        "method": "ExportMessageTemplate",
+        "arguments": {
+          "langNameID": "@key:LangNameID",
+          "messageTemplateID": "@key:MessageTemplateID"
+        },
+        "export": true,
+        "label": "ExportMessageTemplate"
+      }
+    ],
+    "coverage": []
+  },
+  {
+    "category": "C25",
+    "kind": "GlobalAlert",
+    "service": "Erp.BO.GlbAlertSvc",
+    "root": "GlbAlert",
+    "list_table": "GlbAlert",
+    "keys": [
+      "Company",
+      "Alertnum"
+    ],
+    "list": {
+      "service": "Erp.BO.GlbAlertSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseGlbAlert": "(Company = '@companyLiteral' OR Company = '')"
+      }
+    },
+    "read": {
+      "service": "Erp.BO.GlbAlertSvc",
+      "method": "GetByID",
+      "arguments": {
+        "alertnum": "@integer:Alertnum"
+      }
+    },
+    "children": [],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C26",
+    "kind": "SecurityDefinition",
+    "service": "Ice.BO.SecuritySvc",
+    "root": "Security",
+    "list_table": "Security",
+    "keys": [
+      "Company",
+      "SecCode"
+    ],
+    "list": {
+      "service": "Ice.BO.SecuritySvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseSecurity": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.SecuritySvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C26",
+    "kind": "ObjectSecurity",
+    "service": "Ice.BO.ObjectSecuritySvc",
+    "root": "Security",
+    "list_table": "Security",
+    "keys": [
+      "Company",
+      "SecCode"
+    ],
+    "list": {
+      "service": "Ice.BO.ObjectSecuritySvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseSecurity": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseObjectSecurityMethod": "SystemFlag = false"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.ObjectSecuritySvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "ObjectSecurityMethod"
+    ],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C26",
+    "kind": "SecurityGroup",
+    "service": "Ice.BO.SecGroupSvc",
+    "root": "SecGroup",
+    "list_table": "SecGroup",
+    "keys": [
+      "Company",
+      "SecGroupCode"
+    ],
+    "list": {
+      "service": "Ice.BO.SecGroupSvc",
+      "method": "GetRows",
+      "arguments": {
+        "whereClauseSecGroup": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.SecGroupSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C26",
+    "kind": "ColumnSecurity",
+    "service": "Ice.BO.SecColumnSvc",
+    "root": "SecColumn",
+    "list_table": "SecColumn",
+    "keys": [
+      "Company",
+      "DatasourceType",
+      "SchemaName",
+      "TableName",
+      "ColumnName"
+    ],
+    "list": {
+      "service": "Ice.BO.SecColumnSvc",
+      "method": "GetRows",
+      "arguments": {
+        "pageSize": "@size",
+        "absolutePage": "@page",
+        "whereClauseSecColumn": "(Company = '@companyLiteral' OR Company = '')"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.SecColumnSvc",
+      "method": "GetByID",
+      "arguments": {
+        "company": "@key:Company",
+        "datasourceType": "@key:DatasourceType",
+        "schemaName": "@key:SchemaName",
+        "tableName": "@key:TableName",
+        "columnName": "@key:ColumnName"
+      }
+    },
+    "children": [],
+    "extras": [],
+    "coverage": [],
+    "inventory_definition": true
+  },
+  {
+    "category": "C26",
+    "kind": "AccessScope",
+    "service": "Ice.BO.AccessScopeSvc",
+    "root": "AccessScope",
+    "list_table": "AccessScopeList",
+    "keys": [
+      "Company",
+      "AccessScopeID"
+    ],
+    "list": {
+      "service": "Ice.BO.AccessScopeSvc",
+      "method": "GetList",
+      "arguments": {
+        "whereClause": "(Company = '@companyLiteral' OR Company = '') AND SystemFlag = false",
+        "pageSize": "@size",
+        "absolutePage": "@page"
+      }
+    },
+    "read": {
+      "service": "Ice.BO.AccessScopeSvc",
+      "method": "GetRows",
+      "arguments": {}
+    },
+    "children": [
+      "AccessScopeEntity",
+      "AccessScopeBOMethod"
+    ],
+    "extras": [
+      {
+        "service": "Ice.BO.AccessScopeSvc",
+        "method": "ExportAccessScope",
+        "arguments": {
+          "accessScopeID": "@key:AccessScopeID"
+        },
+        "export": true,
+        "label": "ExportAccessScope"
+      }
+    ],
+    "coverage": []
+  }
+]

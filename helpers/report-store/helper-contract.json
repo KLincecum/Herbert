@@ -1,0 +1,736 @@
+{
+  "libraryId": "HerbertReports",
+  "globalId": "ce17c3fb-56bd-4b15-95cf-1bcb135da524",
+  "companyArgument": "iCompany",
+  "functions": [
+    {
+      "functionId": "ReadLayouts",
+      "binaryOutputs": [],
+      "effect": "read"
+    },
+    {
+      "functionId": "ReadPage",
+      "binaryOutputs": [],
+      "effect": "read"
+    },
+    {
+      "functionId": "Inventory",
+      "binaryOutputs": [],
+      "effect": "read"
+    },
+    {
+      "functionId": "Read",
+      "binaryOutputs": [
+        "oContent"
+      ],
+      "effect": "read"
+    }
+  ],
+  "installation": {
+    "supportsInstances": true,
+    "packages": [
+      {
+        "epicorVersion": "5.1.100",
+        "package": {
+          "Mode": "Backup",
+          "Version": "5.1.100",
+          "SystemCode": "ERP",
+          "LibraryId": "HerbertReports",
+          "Library": {
+            "OriginalID": "HerbertReports",
+            "Description": "Read-only deployed layouts and current custom report packages",
+            "GlobalID": "ce17c3fb-56bd-4b15-95cf-1bcb135da524",
+            "EpicorVersion": "5.1.100",
+            "Revision": 1,
+            "Published": false,
+            "Private": false,
+            "Disabled": false,
+            "Mode": 0,
+            "AllowCustomCodeWidgets": false,
+            "AllowCustomCodeFunctions": true,
+            "DirectDBAccess": 1,
+            "Notes": "Native bulk layout collection and exact CustomReportStore reads. No deployment, business writes, or generic database input.",
+            "OwnedByCompany": "",
+            "Owner": "",
+            "SharedWithGroup": "",
+            "Functions": [
+              {
+                "FunctionID": "ReadLayouts",
+                "Description": "Read-only report collection: ReadLayouts",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPaths",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\n// Read a page of deployed layouts through Epicor's native collector.\\n// ExportSsrsReports is not used: its validation step can deploy stored reports.\\nvar requested = Newtonsoft.Json.JsonConvert.DeserializeObject<String[]>(iPaths);\\nif (requested == null) { oMessage = \\\"LAYOUT_PATHS_REQUIRED\\\"; return; }\\nvar failures = new System.Collections.Generic.Dictionary<String, String>(StringComparer.OrdinalIgnoreCase);\\nvar layouts = new DataTable(\\\"Layouts\\\");\\nlayouts.Columns.Add(\\\"Path\\\", typeof(String));\\nlayouts.Columns.Add(\\\"Content\\\", typeof(Byte[]));\\nlayouts.Columns.Add(\\\"IsSubReport\\\", typeof(Boolean));\\nvar errors = new DataTable(\\\"Errors\\\");\\nerrors.Columns.Add(\\\"Path\\\", typeof(String));\\nerrors.Columns.Add(\\\"Code\\\", typeof(String));\\n\\n// Use native tenant conversion for roots and every discovered dependency.\\n// The helper accepts report display paths, not URLs or filesystem paths.\\nFunc<String, String> fullPath = path =>\\n{\\n    if (String.IsNullOrWhiteSpace(path)) throw new InvalidOperationException(\\\"LAYOUT_PATH_REQUIRED\\\");\\n    string full = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, path);\\n    if (full.Split('/').Any(part => part == \\\"..\\\"))\\n        throw new InvalidOperationException(\\\"LAYOUT_PATH_NOT_RESOLVED\\\");\\n    string clean = Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, full);\\n    if (!String.Equals(full, clean, StringComparison.OrdinalIgnoreCase) ||\\n        !full.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))\\n        throw new InvalidOperationException(\\\"LAYOUT_OUTSIDE_CALLER_SCOPE\\\");\\n    return full;\\n};\\nthis.CallService<Ice.Contracts.ReportSvcContract>(service =>\\n{\\n    var collector = new Ice.Lib.Reporting.SsrsReportCollector(path =>\\n    {\\n        if (failures.ContainsKey(path)) throw new InvalidOperationException(\\\"LAYOUT_READ_FAILED\\\");\\n        try\\n        {\\n            // CleanFullPath rejects foreign tenant paths before the native read.\\n            string clean = Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, path);\\n            if (!String.Equals(path, clean, StringComparison.OrdinalIgnoreCase) ||\\n                path.Split('/').Any(part => part == \\\"..\\\") ||\\n                !path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))\\n                throw new InvalidOperationException(\\\"LAYOUT_OUTSIDE_CALLER_SCOPE\\\");\\n            return service.LoadSsrsRdl(path);\\n        }\\n        catch (Exception)\\n        {\\n            failures[path] = \\\"LAYOUT_READ_FAILED\\\";\\n            throw;\\n        }\\n    });\\n    foreach (string path in requested.Distinct(StringComparer.OrdinalIgnoreCase))\\n    {\\n        try\\n        {\\n            // A missing dependency must not discard the remaining page.\\n            collector.CollectReport(fullPath(path), false, false);\\n        }\\n        catch (Exception)\\n        {\\n            failures[path ?? \\\"\\\"] = \\\"LAYOUT_COLLECTION_FAILED\\\";\\n        }\\n    }\\n    foreach (var pair in collector.CollectedReports)\\n        layouts.Rows.Add(Ice.Lib.Reporting.SsrsPath.FullPathToDisplayPath(pair.Key),\\n            pair.Value.ReportContents, pair.Value.IsSubReport);\\n});\\nforeach (var failure in failures)\\n{\\n    // Invalid caller paths also need a failure row. Formatting that row must\\n    // not discard layouts that the same page read successfully.\\n    string path = failure.Key;\\n    try { path = Ice.Lib.Reporting.SsrsPath.FullPathToDisplayPath(path); }\\n    catch (Exception) { }\\n    errors.Rows.Add(path, failure.Value);\\n}\\noDS.Tables.Add(layouts);\\noDS.Tables.Add(errors);\\noSuccess = true;\\noMessage = errors.Rows.Count == 0 ? \\\"OK\\\" : \\\"PARTIAL_LAYOUT_PAGE\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\"); }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              },
+              {
+                "FunctionID": "ReadPage",
+                "Description": "Read-only report collection: ReadPage",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPageSize",
+                    "Order": 2,
+                    "DataType": "System.Int32",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 3,
+                    "ArgumentName": "iHasCursor",
+                    "Order": 3,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 4,
+                    "ArgumentName": "iAfter",
+                    "Order": 4,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\n// Read original current packages in one page. Do not create a second ZIP.\\n// Keep the existing caller, tenant and native-root checks from scope.cs.\\nif (iPageSize <= 0) { oMessage = \\\"POSITIVE_PAGE_SIZE_REQUIRED\\\"; return; }\\nvar query = Db.CustomReportStore.Where(row => row.PrintProgram.StartsWith(rootPrefix));\\nif (hasTenant) query = query.Where(row => !row.PrintProgram.StartsWith(customPrefix) || row.PrintProgram.StartsWith(tenantPrefix));\\nelse query = query.Where(row => !row.PrintProgram.StartsWith(allTenantsPrefix));\\nif (iHasCursor) query = query.Where(row => String.Compare(row.PrintProgram, iAfter) > 0);\\nvar rows = query.OrderBy(row => row.PrintProgram).Take(iPageSize)\\n    .Select(row => new { row.PrintProgram, row.Content, row.ContentHash,\\n        row.CreatedBy, row.CreatedOn, row.ModifiedBy, row.ModifiedOn,\\n        row.SysRowID, row.SysRevID }).ToList();\\nvar table = new DataTable(\\\"Store\\\");\\nforeach (var name in new [] { \\\"PrintProgram\\\", \\\"Content\\\", \\\"ContentHash\\\", \\\"CreatedBy\\\", \\\"CreatedOn\\\", \\\"ModifiedBy\\\", \\\"ModifiedOn\\\", \\\"SysRowID\\\", \\\"SysRevID\\\", \\\"SHA256\\\" })\\n    table.Columns.Add(name, typeof(String));\\ntable.Columns.Add(\\\"Length\\\", typeof(Int64));\\nforeach (var row in rows)\\n{\\n    if (!String.Equals(row.PrintProgram, Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, row.PrintProgram), StringComparison.OrdinalIgnoreCase))\\n        throw new InvalidOperationException(\\\"CURRENT_PACKAGE_SCOPE_MISMATCH\\\");\\n    if (row.Content == null) throw new InvalidOperationException(\\\"CURRENT_PACKAGE_CONTENT_NULL\\\");\\n    string digest;\\n    using (var hash = System.Security.Cryptography.SHA256.Create())\\n        digest = BitConverter.ToString(hash.ComputeHash(row.Content)).Replace(\\\"-\\\", \\\"\\\").ToLowerInvariant();\\n    Object revision = row.SysRevID;\\n    DateTime? createdOn = row.CreatedOn, modifiedOn = row.ModifiedOn;\\n    table.Rows.Add(row.PrintProgram, Convert.ToBase64String(row.Content), row.ContentHash, row.CreatedBy,\\n        createdOn.HasValue ? (Object)createdOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value,\\n        row.ModifiedBy, modifiedOn.HasValue ? (Object)modifiedOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value,\\n        row.SysRowID.ToString(), revision is Byte[] ? Convert.ToBase64String((Byte[])revision) : Convert.ToString(revision, System.Globalization.CultureInfo.InvariantCulture), digest, row.Content.LongLength);\\n}\\nstring after = rows.Count == 0 ? \\\"\\\" : rows[rows.Count - 1].PrintProgram;\\nbool more = rows.Count == iPageSize && query.Any(row => String.Compare(row.PrintProgram, after) > 0);\\nvar cursor = new DataTable(\\\"Cursor\\\");\\ncursor.Columns.Add(\\\"More\\\", typeof(Boolean)); cursor.Columns.Add(\\\"After\\\", typeof(String));\\ncursor.Rows.Add(more, after); oDS.Tables.Add(table); oDS.Tables.Add(cursor);\\noSuccess = true; oMessage = \\\"OK\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\"); }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              },
+              {
+                "FunctionID": "Inventory",
+                "Description": "Read-only report collection: Inventory",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPageSize",
+                    "Order": 2,
+                    "DataType": "System.Int32",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 3,
+                    "ArgumentName": "iHasCursor",
+                    "Order": 3,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 4,
+                    "ArgumentName": "iAfter",
+                    "Order": 4,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\nif (iPageSize <= 0) { oMessage = \\\"POSITIVE_PAGE_SIZE_REQUIRED\\\"; return; }\\n// Native Int32 page contract only; no total row limit. Never load Content here.\\nvar query = Db.CustomReportStore.Where(row => row.PrintProgram.StartsWith(rootPrefix));\\n// This is caller scope, not a custom-content classifier. Stock-named entries\\n// in the dedicated custom store remain eligible within the same native root.\\nif (hasTenant) query = query.Where(row => !row.PrintProgram.StartsWith(customPrefix) || row.PrintProgram.StartsWith(tenantPrefix));\\nelse query = query.Where(row => !row.PrintProgram.StartsWith(allTenantsPrefix));\\nif (iHasCursor) query = query.Where(row => String.Compare(row.PrintProgram, iAfter) > 0);\\nvar rows = query.OrderBy(row => row.PrintProgram).Take(iPageSize)\\n    .Select(row => new { row.PrintProgram, row.ContentHash, row.SysRowID }).ToList();\\nvar table = new DataTable(\\\"Store\\\");\\ntable.Columns.Add(\\\"PrintProgram\\\", typeof(String));\\ntable.Columns.Add(\\\"ContentHash\\\", typeof(String));\\ntable.Columns.Add(\\\"SysRowID\\\", typeof(String));\\nforeach (var row in rows)\\n{\\n    if (!String.Equals(row.PrintProgram, Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, row.PrintProgram), StringComparison.OrdinalIgnoreCase))\\n        throw new InvalidOperationException(\\\"CURRENT_PACKAGE_INVENTORY_SCOPE_MISMATCH\\\");\\n    table.Rows.Add(row.PrintProgram, row.ContentHash, row.SysRowID.ToString());\\n}\\nvar after = rows.Count == 0 ? \\\"\\\" : rows[rows.Count - 1].PrintProgram;\\nbool more = rows.Count == iPageSize && query.Any(row => String.Compare(row.PrintProgram, after) > 0);\\nvar cursor = new DataTable(\\\"Cursor\\\");\\ncursor.Columns.Add(\\\"More\\\", typeof(Boolean)); cursor.Columns.Add(\\\"After\\\", typeof(String));\\ncursor.Rows.Add(more, after); oDS.Tables.Add(table); oDS.Tables.Add(cursor);\\noSuccess = true; oMessage = \\\"OK\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\"); }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              },
+              {
+                "FunctionID": "Read",
+                "Description": "Read-only report collection: Read",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPrintProgram",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 4,
+                    "ArgumentName": "oContent",
+                    "Order": 4,
+                    "DataType": "System.Byte[]",
+                    "Optional": false,
+                    "Description": "",
+                    "DataTypeInfo": "{\"wellknownType\": 5, \"namespace\": \"System\", \"name\": \"Byte[]\", \"options\": 0, \"elementType\": {\"wellknownType\": 1, \"namespace\": \"System\", \"name\": \"Byte\", \"options\": 1}}"
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\noContent=new Byte[0];\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\n// PrintProgram is the exact native stored key from Inventory, never a guessed\\n// display path. Dedicated CustomReportStore is the custom provenance boundary.\\nif (String.IsNullOrEmpty(iPrintProgram)) { oMessage = \\\"EXACT_KEY_REQUIRED\\\"; return; }\\nif (!String.Equals(iPrintProgram, Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, iPrintProgram), StringComparison.OrdinalIgnoreCase))\\n{ oMessage = \\\"CURRENT_PACKAGE_OUTSIDE_CALLER_SCOPE\\\"; return; }\\nvar currentRecord = Db.CustomReportStore.Where(r => r.PrintProgram == iPrintProgram)\\n    .Select(r => new { r.PrintProgram, r.Content, r.ContentHash, r.CreatedBy, r.CreatedOn,\\n        r.ModifiedBy, r.ModifiedOn, r.SysRowID, r.SysRevID }).SingleOrDefault();\\nif (currentRecord == null) { oMessage = \\\"CURRENT_PACKAGE_NOT_FOUND\\\"; return; }\\nif (!String.Equals(currentRecord.PrintProgram, iPrintProgram, StringComparison.Ordinal))\\n{ oMessage = \\\"EXACT_KEY_MISMATCH\\\"; return; }\\nif (currentRecord.Content == null) { oMessage = \\\"CURRENT_PACKAGE_CONTENT_NULL\\\"; return; }\\noContent = currentRecord.Content;\\nstring digest;\\nusing (var hash = System.Security.Cryptography.SHA256.Create())\\n    digest = BitConverter.ToString(hash.ComputeHash(oContent)).Replace(\\\"-\\\", \\\"\\\").ToLowerInvariant();\\nvar metadata = new DataTable(\\\"Metadata\\\");\\nforeach (var name in new [] { \\\"PrintProgram\\\", \\\"ContentHash\\\", \\\"CreatedBy\\\", \\\"CreatedOn\\\", \\\"ModifiedBy\\\", \\\"ModifiedOn\\\", \\\"SysRowID\\\", \\\"SysRevID\\\", \\\"SHA256\\\" })\\n    metadata.Columns.Add(name, typeof(String));\\nmetadata.Columns.Add(\\\"Length\\\", typeof(Int64));\\nObject revision = currentRecord.SysRevID;\\nDateTime? createdOn = currentRecord.CreatedOn, modifiedOn = currentRecord.ModifiedOn;\\nmetadata.Rows.Add(currentRecord.PrintProgram, currentRecord.ContentHash, currentRecord.CreatedBy, createdOn.HasValue ? (Object)createdOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value,\\n    currentRecord.ModifiedBy, modifiedOn.HasValue ? (Object)modifiedOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value, currentRecord.SysRowID.ToString(),\\n    revision is Byte[] ? Convert.ToBase64String((Byte[])revision) : Convert.ToString(revision, System.Globalization.CultureInfo.InvariantCulture), digest, oContent.LongLength);\\noDS.Tables.Add(metadata); oSuccess = true; oMessage = \\\"OK\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\");oContent=new Byte[0]; }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              }
+            ],
+            "LibraryReferences": [
+              {
+                "ReferenceType": 1,
+                "ReferenceID": "ICE.CustomReportStore",
+                "Updatable": false
+              },
+              {
+                "ReferenceType": 2,
+                "ReferenceID": "ICE:BO:UserFile"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Contracts.BO.UserFile.dll"
+              },
+              {
+                "ReferenceType": 2,
+                "ReferenceID": "ICE:BO:Report"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Contracts.BO.Report.dll"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Newtonsoft.Json.dll"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Core.TaskBase.dll"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Lib.RoutingBreakingRules.dll"
+              }
+            ],
+            "LibraryMappings": []
+          }
+        }
+      },
+      {
+        "epicorVersion": "5.2.100",
+        "package": {
+          "Mode": "Backup",
+          "Version": "5.2.100",
+          "SystemCode": "ERP",
+          "LibraryId": "HerbertReports",
+          "Library": {
+            "OriginalID": "HerbertReports",
+            "Description": "Read-only deployed layouts and current custom report packages",
+            "GlobalID": "ce17c3fb-56bd-4b15-95cf-1bcb135da524",
+            "EpicorVersion": "5.2.100",
+            "Revision": 1,
+            "Published": false,
+            "Private": false,
+            "Disabled": false,
+            "Mode": 0,
+            "AllowCustomCodeWidgets": false,
+            "AllowCustomCodeFunctions": true,
+            "DirectDBAccess": 1,
+            "Notes": "Native bulk layout collection and exact CustomReportStore reads. No deployment, business writes, or generic database input.",
+            "OwnedByCompany": "",
+            "Owner": "",
+            "SharedWithGroup": "",
+            "Functions": [
+              {
+                "FunctionID": "ReadLayouts",
+                "Description": "Read-only report collection: ReadLayouts",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPaths",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\n// Read a page of deployed layouts through Epicor's native collector.\\n// ExportSsrsReports is not used: its validation step can deploy stored reports.\\nvar requested = Newtonsoft.Json.JsonConvert.DeserializeObject<String[]>(iPaths);\\nif (requested == null) { oMessage = \\\"LAYOUT_PATHS_REQUIRED\\\"; return; }\\nvar failures = new System.Collections.Generic.Dictionary<String, String>(StringComparer.OrdinalIgnoreCase);\\nvar layouts = new DataTable(\\\"Layouts\\\");\\nlayouts.Columns.Add(\\\"Path\\\", typeof(String));\\nlayouts.Columns.Add(\\\"Content\\\", typeof(Byte[]));\\nlayouts.Columns.Add(\\\"IsSubReport\\\", typeof(Boolean));\\nvar errors = new DataTable(\\\"Errors\\\");\\nerrors.Columns.Add(\\\"Path\\\", typeof(String));\\nerrors.Columns.Add(\\\"Code\\\", typeof(String));\\n\\n// Use native tenant conversion for roots and every discovered dependency.\\n// The helper accepts report display paths, not URLs or filesystem paths.\\nFunc<String, String> fullPath = path =>\\n{\\n    if (String.IsNullOrWhiteSpace(path)) throw new InvalidOperationException(\\\"LAYOUT_PATH_REQUIRED\\\");\\n    string full = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, path);\\n    if (full.Split('/').Any(part => part == \\\"..\\\"))\\n        throw new InvalidOperationException(\\\"LAYOUT_PATH_NOT_RESOLVED\\\");\\n    string clean = Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, full);\\n    if (!String.Equals(full, clean, StringComparison.OrdinalIgnoreCase) ||\\n        !full.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))\\n        throw new InvalidOperationException(\\\"LAYOUT_OUTSIDE_CALLER_SCOPE\\\");\\n    return full;\\n};\\nthis.CallService<Ice.Contracts.ReportSvcContract>(service =>\\n{\\n    var collector = new Ice.Lib.Reporting.SsrsReportCollector(path =>\\n    {\\n        if (failures.ContainsKey(path)) throw new InvalidOperationException(\\\"LAYOUT_READ_FAILED\\\");\\n        try\\n        {\\n            // CleanFullPath rejects foreign tenant paths before the native read.\\n            string clean = Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, path);\\n            if (!String.Equals(path, clean, StringComparison.OrdinalIgnoreCase) ||\\n                path.Split('/').Any(part => part == \\\"..\\\") ||\\n                !path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))\\n                throw new InvalidOperationException(\\\"LAYOUT_OUTSIDE_CALLER_SCOPE\\\");\\n            return service.LoadSsrsRdl(path);\\n        }\\n        catch (Exception)\\n        {\\n            failures[path] = \\\"LAYOUT_READ_FAILED\\\";\\n            throw;\\n        }\\n    });\\n    foreach (string path in requested.Distinct(StringComparer.OrdinalIgnoreCase))\\n    {\\n        try\\n        {\\n            // A missing dependency must not discard the remaining page.\\n            collector.CollectReport(fullPath(path), false, false);\\n        }\\n        catch (Exception)\\n        {\\n            failures[path ?? \\\"\\\"] = \\\"LAYOUT_COLLECTION_FAILED\\\";\\n        }\\n    }\\n    foreach (var pair in collector.CollectedReports)\\n        layouts.Rows.Add(Ice.Lib.Reporting.SsrsPath.FullPathToDisplayPath(pair.Key),\\n            pair.Value.ReportContents, pair.Value.IsSubReport);\\n});\\nforeach (var failure in failures)\\n{\\n    // Invalid caller paths also need a failure row. Formatting that row must\\n    // not discard layouts that the same page read successfully.\\n    string path = failure.Key;\\n    try { path = Ice.Lib.Reporting.SsrsPath.FullPathToDisplayPath(path); }\\n    catch (Exception) { }\\n    errors.Rows.Add(path, failure.Value);\\n}\\noDS.Tables.Add(layouts);\\noDS.Tables.Add(errors);\\noSuccess = true;\\noMessage = errors.Rows.Count == 0 ? \\\"OK\\\" : \\\"PARTIAL_LAYOUT_PAGE\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\"); }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              },
+              {
+                "FunctionID": "ReadPage",
+                "Description": "Read-only report collection: ReadPage",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPageSize",
+                    "Order": 2,
+                    "DataType": "System.Int32",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 3,
+                    "ArgumentName": "iHasCursor",
+                    "Order": 3,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 4,
+                    "ArgumentName": "iAfter",
+                    "Order": 4,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\n// Read original current packages in one page. Do not create a second ZIP.\\n// Keep the existing caller, tenant and native-root checks from scope.cs.\\nif (iPageSize <= 0) { oMessage = \\\"POSITIVE_PAGE_SIZE_REQUIRED\\\"; return; }\\nvar query = Db.CustomReportStore.Where(row => row.PrintProgram.StartsWith(rootPrefix));\\nif (hasTenant) query = query.Where(row => !row.PrintProgram.StartsWith(customPrefix) || row.PrintProgram.StartsWith(tenantPrefix));\\nelse query = query.Where(row => !row.PrintProgram.StartsWith(allTenantsPrefix));\\nif (iHasCursor) query = query.Where(row => String.Compare(row.PrintProgram, iAfter) > 0);\\nvar rows = query.OrderBy(row => row.PrintProgram).Take(iPageSize)\\n    .Select(row => new { row.PrintProgram, row.Content, row.ContentHash,\\n        row.CreatedBy, row.CreatedOn, row.ModifiedBy, row.ModifiedOn,\\n        row.SysRowID, row.SysRevID }).ToList();\\nvar table = new DataTable(\\\"Store\\\");\\nforeach (var name in new [] { \\\"PrintProgram\\\", \\\"Content\\\", \\\"ContentHash\\\", \\\"CreatedBy\\\", \\\"CreatedOn\\\", \\\"ModifiedBy\\\", \\\"ModifiedOn\\\", \\\"SysRowID\\\", \\\"SysRevID\\\", \\\"SHA256\\\" })\\n    table.Columns.Add(name, typeof(String));\\ntable.Columns.Add(\\\"Length\\\", typeof(Int64));\\nforeach (var row in rows)\\n{\\n    if (!String.Equals(row.PrintProgram, Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, row.PrintProgram), StringComparison.OrdinalIgnoreCase))\\n        throw new InvalidOperationException(\\\"CURRENT_PACKAGE_SCOPE_MISMATCH\\\");\\n    if (row.Content == null) throw new InvalidOperationException(\\\"CURRENT_PACKAGE_CONTENT_NULL\\\");\\n    string digest;\\n    using (var hash = System.Security.Cryptography.SHA256.Create())\\n        digest = BitConverter.ToString(hash.ComputeHash(row.Content)).Replace(\\\"-\\\", \\\"\\\").ToLowerInvariant();\\n    Object revision = row.SysRevID;\\n    DateTime? createdOn = row.CreatedOn, modifiedOn = row.ModifiedOn;\\n    table.Rows.Add(row.PrintProgram, Convert.ToBase64String(row.Content), row.ContentHash, row.CreatedBy,\\n        createdOn.HasValue ? (Object)createdOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value,\\n        row.ModifiedBy, modifiedOn.HasValue ? (Object)modifiedOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value,\\n        row.SysRowID.ToString(), revision is Byte[] ? Convert.ToBase64String((Byte[])revision) : Convert.ToString(revision, System.Globalization.CultureInfo.InvariantCulture), digest, row.Content.LongLength);\\n}\\nstring after = rows.Count == 0 ? \\\"\\\" : rows[rows.Count - 1].PrintProgram;\\nbool more = rows.Count == iPageSize && query.Any(row => String.Compare(row.PrintProgram, after) > 0);\\nvar cursor = new DataTable(\\\"Cursor\\\");\\ncursor.Columns.Add(\\\"More\\\", typeof(Boolean)); cursor.Columns.Add(\\\"After\\\", typeof(String));\\ncursor.Rows.Add(more, after); oDS.Tables.Add(table); oDS.Tables.Add(cursor);\\noSuccess = true; oMessage = \\\"OK\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\"); }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              },
+              {
+                "FunctionID": "Inventory",
+                "Description": "Read-only report collection: Inventory",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPageSize",
+                    "Order": 2,
+                    "DataType": "System.Int32",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 3,
+                    "ArgumentName": "iHasCursor",
+                    "Order": 3,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 4,
+                    "ArgumentName": "iAfter",
+                    "Order": 4,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\nif (iPageSize <= 0) { oMessage = \\\"POSITIVE_PAGE_SIZE_REQUIRED\\\"; return; }\\n// Native Int32 page contract only; no total row limit. Never load Content here.\\nvar query = Db.CustomReportStore.Where(row => row.PrintProgram.StartsWith(rootPrefix));\\n// This is caller scope, not a custom-content classifier. Stock-named entries\\n// in the dedicated custom store remain eligible within the same native root.\\nif (hasTenant) query = query.Where(row => !row.PrintProgram.StartsWith(customPrefix) || row.PrintProgram.StartsWith(tenantPrefix));\\nelse query = query.Where(row => !row.PrintProgram.StartsWith(allTenantsPrefix));\\nif (iHasCursor) query = query.Where(row => String.Compare(row.PrintProgram, iAfter) > 0);\\nvar rows = query.OrderBy(row => row.PrintProgram).Take(iPageSize)\\n    .Select(row => new { row.PrintProgram, row.ContentHash, row.SysRowID }).ToList();\\nvar table = new DataTable(\\\"Store\\\");\\ntable.Columns.Add(\\\"PrintProgram\\\", typeof(String));\\ntable.Columns.Add(\\\"ContentHash\\\", typeof(String));\\ntable.Columns.Add(\\\"SysRowID\\\", typeof(String));\\nforeach (var row in rows)\\n{\\n    if (!String.Equals(row.PrintProgram, Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, row.PrintProgram), StringComparison.OrdinalIgnoreCase))\\n        throw new InvalidOperationException(\\\"CURRENT_PACKAGE_INVENTORY_SCOPE_MISMATCH\\\");\\n    table.Rows.Add(row.PrintProgram, row.ContentHash, row.SysRowID.ToString());\\n}\\nvar after = rows.Count == 0 ? \\\"\\\" : rows[rows.Count - 1].PrintProgram;\\nbool more = rows.Count == iPageSize && query.Any(row => String.Compare(row.PrintProgram, after) > 0);\\nvar cursor = new DataTable(\\\"Cursor\\\");\\ncursor.Columns.Add(\\\"More\\\", typeof(Boolean)); cursor.Columns.Add(\\\"After\\\", typeof(String));\\ncursor.Rows.Add(more, after); oDS.Tables.Add(table); oDS.Tables.Add(cursor);\\noSuccess = true; oMessage = \\\"OK\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\"); }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              },
+              {
+                "FunctionID": "Read",
+                "Description": "Read-only report collection: Read",
+                "Notes": "Deployed layouts use native reads. Stored packages use CustomReportStore. No deployment or stock-store fallback.",
+                "Kind": 2,
+                "RequireTransaction": false,
+                "SingleRowMode": false,
+                "Private": false,
+                "Disabled": false,
+                "Invalid": false,
+                "Thumbnail": null,
+                "FunctionSignature": [
+                  {
+                    "Response": false,
+                    "ParameterID": 1,
+                    "ArgumentName": "iCompany",
+                    "Order": 1,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": false,
+                    "ParameterID": 2,
+                    "ArgumentName": "iPrintProgram",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 1,
+                    "ArgumentName": "oSuccess",
+                    "Order": 1,
+                    "DataType": "System.Boolean",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 2,
+                    "ArgumentName": "oMessage",
+                    "Order": 2,
+                    "DataType": "System.String",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 3,
+                    "ArgumentName": "oDS",
+                    "Order": 3,
+                    "DataType": "System.Data.DataSet",
+                    "Optional": false,
+                    "Description": ""
+                  },
+                  {
+                    "Response": true,
+                    "ParameterID": 4,
+                    "ArgumentName": "oContent",
+                    "Order": 4,
+                    "DataType": "System.Byte[]",
+                    "Optional": false,
+                    "Description": "",
+                    "DataTypeInfo": "{\"wellknownType\": 5, \"namespace\": \"System\", \"name\": \"Byte[]\", \"options\": 0, \"elementType\": {\"wellknownType\": 1, \"namespace\": \"System\", \"name\": \"Byte\", \"options\": 1}}"
+                  }
+                ],
+                "Body": "{\"Code\": \"oSuccess=false; oMessage=\\\"NOT_STARTED\\\"; oDS=new DataSet(\\\"HerbertReports\\\");\\noContent=new Byte[0];\\ntry {\\n// Check the caller and selected company before reading report packages.\\nif (String.IsNullOrEmpty(iCompany) ||\\n    !String.Equals(iCompany, Session.CompanyID, StringComparison.Ordinal) ||\\n    String.IsNullOrEmpty(Session.UserID))\\n{\\n    oMessage = \\\"CALLER_COMPANY_MISMATCH\\\";\\n    return;\\n}\\nbool admitted = false;\\nthis.CallService<Ice.Contracts.UserFileSvcContract>(service =>\\n{\\n    var ds = service.GetByID(Session.UserID);\\n    var user = ds.UserFile.SingleOrDefault(row =>\\n        String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n    admitted = user != null && user.SecurityMgr && !user.UserDisabled &&\\n        ds.UserComp.Any(row =>\\n            String.Equals(row.Company, iCompany, StringComparison.Ordinal) &&\\n            String.Equals(row.UserID, Session.UserID, StringComparison.Ordinal));\\n});\\nif (!admitted)\\n{\\n    oMessage = \\\"SECURITY_MANAGER_REQUIRED\\\";\\n    return;\\n}\\n// The BO is disposed and its rows materialized before opening a Db reader.\\n\\n// ReportSvc.SaveCustomReportToDB constructs its key with this exact native\\n// root and tenant conversion. GetRootFolder reads SSRSRootFolder only; passing\\n// null avoids fetching unrelated SysCompany configuration/credential fields.\\nstring rootFolder = new Ice.Core.SsrsReporting.SsrsConfigurationInformation(null).GetRootFolder();\\nstring tenant = Session.TenantID;\\nstring rootPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/\\\");\\nstring customPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, \\\"\\\", \\\"reports/CustomReports/\\\");\\nstring tenantPrefix = Ice.Lib.Reporting.SsrsPath.DisplayPathToFullPath(rootFolder, tenant, \\\"reports/CustomReports/\\\");\\nstring allTenantsPrefix = customPrefix + \\\"Tenants/\\\";\\nbool hasTenant = !String.IsNullOrWhiteSpace(tenant);\\n\\n// PrintProgram is the exact native stored key from Inventory, never a guessed\\n// display path. Dedicated CustomReportStore is the custom provenance boundary.\\nif (String.IsNullOrEmpty(iPrintProgram)) { oMessage = \\\"EXACT_KEY_REQUIRED\\\"; return; }\\nif (!String.Equals(iPrintProgram, Ice.Lib.Reporting.SsrsPath.CleanFullPath(rootFolder, tenant, iPrintProgram), StringComparison.OrdinalIgnoreCase))\\n{ oMessage = \\\"CURRENT_PACKAGE_OUTSIDE_CALLER_SCOPE\\\"; return; }\\nvar currentRecord = Db.CustomReportStore.Where(r => r.PrintProgram == iPrintProgram)\\n    .Select(r => new { r.PrintProgram, r.Content, r.ContentHash, r.CreatedBy, r.CreatedOn,\\n        r.ModifiedBy, r.ModifiedOn, r.SysRowID, r.SysRevID }).SingleOrDefault();\\nif (currentRecord == null) { oMessage = \\\"CURRENT_PACKAGE_NOT_FOUND\\\"; return; }\\nif (!String.Equals(currentRecord.PrintProgram, iPrintProgram, StringComparison.Ordinal))\\n{ oMessage = \\\"EXACT_KEY_MISMATCH\\\"; return; }\\nif (currentRecord.Content == null) { oMessage = \\\"CURRENT_PACKAGE_CONTENT_NULL\\\"; return; }\\noContent = currentRecord.Content;\\nstring digest;\\nusing (var hash = System.Security.Cryptography.SHA256.Create())\\n    digest = BitConverter.ToString(hash.ComputeHash(oContent)).Replace(\\\"-\\\", \\\"\\\").ToLowerInvariant();\\nvar metadata = new DataTable(\\\"Metadata\\\");\\nforeach (var name in new [] { \\\"PrintProgram\\\", \\\"ContentHash\\\", \\\"CreatedBy\\\", \\\"CreatedOn\\\", \\\"ModifiedBy\\\", \\\"ModifiedOn\\\", \\\"SysRowID\\\", \\\"SysRevID\\\", \\\"SHA256\\\" })\\n    metadata.Columns.Add(name, typeof(String));\\nmetadata.Columns.Add(\\\"Length\\\", typeof(Int64));\\nObject revision = currentRecord.SysRevID;\\nDateTime? createdOn = currentRecord.CreatedOn, modifiedOn = currentRecord.ModifiedOn;\\nmetadata.Rows.Add(currentRecord.PrintProgram, currentRecord.ContentHash, currentRecord.CreatedBy, createdOn.HasValue ? (Object)createdOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value,\\n    currentRecord.ModifiedBy, modifiedOn.HasValue ? (Object)modifiedOn.Value.ToString(\\\"O\\\", System.Globalization.CultureInfo.InvariantCulture) : DBNull.Value, currentRecord.SysRowID.ToString(),\\n    revision is Byte[] ? Convert.ToBase64String((Byte[])revision) : Convert.ToString(revision, System.Globalization.CultureInfo.InvariantCulture), digest, oContent.LongLength);\\noDS.Tables.Add(metadata); oSuccess = true; oMessage = \\\"OK\\\";\\n\\n} catch (Exception error) { oSuccess=false; oMessage=error.Message; oDS=new DataSet(\\\"HerbertReports\\\");oContent=new Byte[0]; }\", \"Usings\": \"using System;\\r\\nusing System.Data;\\r\\nusing System.Linq;\"}"
+              }
+            ],
+            "LibraryReferences": [
+              {
+                "ReferenceType": 1,
+                "ReferenceID": "ICE.CustomReportStore",
+                "Updatable": false
+              },
+              {
+                "ReferenceType": 2,
+                "ReferenceID": "ICE:BO:UserFile"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Contracts.BO.UserFile.dll"
+              },
+              {
+                "ReferenceType": 2,
+                "ReferenceID": "ICE:BO:Report"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Contracts.BO.Report.dll"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Newtonsoft.Json.dll"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Core.TaskBase.dll"
+              },
+              {
+                "ReferenceType": 0,
+                "ReferenceID": "Ice.Lib.RoutingBreakingRules.dll"
+              }
+            ],
+            "LibraryMappings": []
+          }
+        }
+      }
+    ]
+  }
+}

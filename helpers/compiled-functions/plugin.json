@@ -1,0 +1,68 @@
+{
+  "artifacts": [
+    {
+      "alias": "compiled_functions",
+      "purpose": "requiredContent",
+      "coverage": "someContent",
+      "type": "functionLibrary",
+      "file": "artifacts/HerbertFunctions-4.3.200.efxj",
+      "versionFiles": [
+        {
+          "epicorVersion": "12.1.100.29",
+          "file": "artifacts/HerbertFunctions-5.1.100.efxj"
+        },
+        {
+          "epicorVersion": "12.2.100.9",
+          "file": "artifacts/HerbertFunctions-5.2.100.efxj"
+        }
+      ],
+      "lifetime": "temporary",
+      "policy": "createInstance",
+      "requiredFunctions": [
+        {
+          "function": "ReadCompiled",
+          "parameters": [
+            {
+              "name": "iLibraryIDs",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "iCaller",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "iCompany",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "iKnownCaptures",
+              "dataType": "System.String",
+              "direction": "input"
+            },
+            {
+              "name": "oSuccess",
+              "dataType": "System.Boolean",
+              "direction": "output"
+            },
+            {
+              "name": "oMessage",
+              "dataType": "System.String",
+              "direction": "output"
+            },
+            {
+              "name": "oDS",
+              "dataType": "System.Data.DataSet",
+              "direction": "output"
+            }
+          ]
+        }
+      ],
+      "effects": {
+        "description": "When compiled snapshots are selected, temporarily installs a caller-scoped reader for the hidden Function binary store, reads original DLL/PDB rows without compilation or target execution, then removes its owned helper. Normal Function backups remain direct and independent."
+      }
+    }
+  ]
+}
