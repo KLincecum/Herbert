@@ -66,7 +66,7 @@ fn query(j: &Value, size: Option<u32>, after: &Value) -> HostAction {
 }
 fn table_page(r: &GuestRequest) -> GuestReply {
     let Some(size) = r.page_size.filter(|n| *n > 0) else {
-        return fail("Supply the run's positive page size for native extension table discovery.");
+        return fail("Supply the run's positive page size for Epicor extension table discovery.");
     };
     let keys = r.state["step"] == "keys";
     GuestReply::Action {
@@ -119,7 +119,7 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
         };
     }
     let Some(response) = r.response.take() else {
-        return fail("The extension continuation omitted its response.");
+        return fail("The extension resume point omitted its response.");
     };
     match r.state["step"].as_str().unwrap_or("") {
         "root" => {
@@ -137,10 +137,10 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
             let keys = r.state["step"] == "keys";
             let refs = if keys { "keyRefs" } else { "tableRefs" };
             let Some(rows) = response["value"].as_array() else {
-                return fail("The native extension table projection omitted its rows.");
+                return fail("The Epicor extension table projection omitted its rows.");
             };
             let Some(total) = response["@odata.count"].as_u64() else {
-                return fail("The native extension table projection omitted its total count.");
+                return fail("The Epicor extension table projection omitted its total count.");
             };
             r.state["tableTotal"] = json!(total);
             let mut seen: BTreeSet<String> = r.state[refs]
@@ -178,7 +178,7 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
                             | "@odata.etag"
                     )
                 }) {
-                    return fail("The native table projection returned undeclared body fields.");
+                    return fail("The Epicor table projection returned undeclared body fields.");
                 }
                 r.state[refs].as_array_mut().unwrap().push(row.clone());
             }
@@ -274,7 +274,7 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
             let index = r.state["index"].as_u64().unwrap() as usize;
             let j = r.state["jobs"][index].clone();
             let Some(rows) = response["rows"].as_array() else {
-                return fail("A persisted extension query omitted its rows.");
+                return fail("A saved extension query omitted its rows.");
             };
             if j["probe"] == true {
                 if !rows.is_empty() {
@@ -286,15 +286,15 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
                     for (key, value) in j["values"].as_object().unwrap() {
                         if row.get(key) != Some(value) {
                             return fail(
-                                "A persisted extension row violates its ownership predicate.",
+                                "A saved extension row violates its ownership predicate.",
                             );
                         }
                     }
                     let Some(rowid) = row["SysRowID"].as_str().filter(|v| !v.is_empty()) else {
-                        return fail("A persisted extension row omitted its identity.");
+                        return fail("A saved extension row omitted its identity.");
                     };
                     if !seen.insert(rowid) {
-                        return fail("A persisted extension query repeated a row.");
+                        return fail("A saved extension query repeated a row.");
                     }
                 }
                 r.state["definition"][j["output"].as_str().unwrap()]
@@ -314,7 +314,7 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
                     Err(failure) => return failure,
                 };
                 if after == r.state["jobAfter"] {
-                    return fail("The extension page cursor did not advance.");
+                    return fail("The extension page saved position did not advance.");
                 }
                 r.state["jobAfter"] = after;
                 return GuestReply::Action {
@@ -325,7 +325,7 @@ pub fn acquire(mut r: GuestRequest) -> GuestReply {
             r.state["jobAfter"] = Value::Null;
             r.state["index"] = json!(index + 1);
         }
-        _ => return fail("The extension continuation step is invalid."),
+        _ => return fail("The extension resume point step is invalid."),
     }
     let mut index = r.state["index"].as_u64().unwrap() as usize;
     while let Some(j) = r.state["jobs"].get(index) {
@@ -374,7 +374,7 @@ fn package_tables(xml: &Value) -> Result<Value, Diagnostic> {
     let invalid = || {
         Diagnostic::new(
             "EXTENSION_PACKAGE_INVALID",
-            "The native extension XML has an invalid table or row structure.",
+            "The Epicor extension XML has an invalid table or row structure.",
         )
     };
     if xml["name"] != "ExtensionTableset" {
@@ -497,10 +497,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C22".into(),
+            category: "programs-and-extensions".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C22".into(),
+                category: "programs-and-extensions".into(),
                 kind: "ExtensionSet".into(),
                 scope: Scope::Global,
                 keys: BTreeMap::from([("ExtensionSetID".into(), "Owned's extension".into())]),

@@ -142,7 +142,7 @@ fn image_bytes(r: &mut GuestRequest, rows: &[serde_json::Value]) -> Option<HostA
     error(
         r,
         "REPORT_IMAGE_OWNERSHIP_UNVERIFIED",
-        "The image mapping did not resolve to one accessible native image and file identity.",
+        "The image mapping did not resolve to one accessible Epicor image and file identity.",
     );
     r.state["styleImageIndex"] = json!(index + 1);
     None
@@ -187,7 +187,7 @@ pub fn complete(r: &mut GuestRequest) -> Option<HostAction> {
             error(
                 r,
                 "REPORT_IMAGE_METADATA_INCOMPLETE",
-                "The image list is missing rows or its page cursor did not advance.",
+                "The image list is missing rows or its page saved position did not advance.",
             );
         } else {
             let file = response
@@ -200,7 +200,7 @@ pub fn complete(r: &mut GuestRequest) -> Option<HostAction> {
                 error(
                     r,
                     "REPORT_IMAGE_BYTES_UNVERIFIED",
-                    "The original image bytes are absent or differ from the native Image file length.",
+                    "The original image bytes are absent or differ from the Epicor Image file length.",
                 );
             }
             r.state["supplements"][format!("ReportImage/{index}")] = json!({"mapping":mapping,"metadata":r.state["styleImageMetadata"],"bytes":response});
@@ -209,7 +209,7 @@ pub fn complete(r: &mut GuestRequest) -> Option<HostAction> {
         error(
             r,
             "REPORT_IMAGE_RESPONSE_MISSING",
-            "The native image operation returned no response.",
+            "The Epicor image operation returned no response.",
         );
     }
     r.state["styleImageIndex"] = json!(index + 1);
@@ -223,7 +223,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

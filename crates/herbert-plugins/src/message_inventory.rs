@@ -170,7 +170,7 @@ mod tests {
         let mut r = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C25".into(),
+            category: "automation-and-integrations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

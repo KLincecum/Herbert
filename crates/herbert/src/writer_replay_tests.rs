@@ -3,7 +3,7 @@ use super::*;
 use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Instant};
 
 #[test]
-#[ignore = "Requires a retained collection and an external qualification directory"]
+#[ignore = "Requires a retained collection and an external test directory"]
 fn replay_collected_files() {
     let source = std::path::PathBuf::from(std::env::var("HERBERT_REPLAY_SOURCE").unwrap());
     let root = std::env::var("HERBERT_WRITE_BENCH_ROOT").unwrap();
@@ -31,7 +31,7 @@ fn replay_collected_files() {
     let dir = tempfile::tempdir_in(root).unwrap();
     let mut journal = crate::storage::new_journal("writer-replay".into());
     journal.company = manifest.company.clone();
-    journal.category_names.insert("C13".into(), "Kinetic personalizations".into());
+    journal.category_names.insert("kinetic-personalizations".into(), "Kinetic personalizations".into());
     let shared = Arc::new(Mutex::new(Storage::open(dir.path(), false, journal).unwrap()));
     let pool = crate::file_writers::WriterPool::default();
     let token = tokio_util::sync::CancellationToken::new();

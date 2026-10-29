@@ -16,7 +16,7 @@ fn namespace(value: ResolveResult<'_>) -> Result<Value, Diagnostic> {
         ResolveResult::Unbound => Ok(Value::Null),
         ResolveResult::Bound(value) => Ok(json!(
             std::str::from_utf8(value.as_ref())
-                .map_err(|_| error("XML_ENCODING_UNSUPPORTED", "An XML namespace is not UTF-8."))?
+                .map_err(|_| error("XML_ENCODING_UNSUPPORTED", "Epicor returned XML with an unreadable namespace name. The original bytes were kept."))?
         )),
         ResolveResult::Unknown(_) => Err(error(
             "XML_NAMESPACE_UNBOUND",
@@ -55,7 +55,7 @@ fn decode(bytes: &[u8]) -> Result<String, Diagnostic> {
         String::from_utf16(&units).map_err(|_| {
             error(
                 "XML_ENCODING_INVALID",
-                "The native XML contains invalid UTF-16.",
+                "The Epicor XML contains invalid UTF-16.",
             )
         })
     } else {
@@ -68,7 +68,7 @@ fn decode(bytes: &[u8]) -> Result<String, Diagnostic> {
         .map_err(|_| {
             error(
                 "XML_ENCODING_UNSUPPORTED",
-                "Native XML must use UTF-8 or BOM-marked UTF-16; original bytes remain preserved.",
+                "Epicor returned XML in a text encoding Herbert cannot read. The original bytes were kept.",
             )
         })
     }
@@ -78,7 +78,7 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Value, Diagnostic> {
     if !text.chars().all(xml_character) {
         return Err(error(
             "XML_INVALID_CHARACTER",
-            "Native XML contains a character forbidden by XML 1.0.",
+            "Epicor XML contains a character forbidden by XML 1.0.",
         ));
     }
     let mut reader = NsReader::from_str(&text);
@@ -88,7 +88,7 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Value, Diagnostic> {
     loop {
         let (ns, event) = reader
             .read_resolved_event()
-            .map_err(|_| error("XML_INVALID", "The native member contains malformed XML."))?;
+            .map_err(|_| error("XML_INVALID", "The Epicor member contains malformed XML."))?;
         match event {
             Event::Start(ref e) | Event::Empty(ref e) => {
                 let ns = namespace(ns)?;
@@ -192,7 +192,7 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Value, Diagnostic> {
             Event::DocType(_) => {
                 return Err(error(
                     "XML_DTD_UNSUPPORTED",
-                    "Native XML with a DTD is not resolved; external files and entities are never loaded.",
+                    "Epicor XML with a DTD is not resolved; external files and entities are never loaded.",
                 ));
             }
             Event::GeneralRef(e) => {
@@ -217,7 +217,7 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Value, Diagnostic> {
                         .ok_or_else(|| {
                             error(
                                 "XML_ENTITY_UNSUPPORTED",
-                                "Native XML contains an undeclared entity reference.",
+                                "Epicor XML contains an undeclared entity reference.",
                             )
                         })?
                         .to_owned()
@@ -241,7 +241,7 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Value, Diagnostic> {
                 {
                     return Err(error(
                         "XML_VERSION_UNSUPPORTED",
-                        "The native XML uses a version other than XML 1.0; original bytes remain preserved.",
+                        "The Epicor XML uses a version other than XML 1.0; original bytes remain preserved.",
                     ));
                 }
             }
@@ -255,7 +255,7 @@ pub fn parse_xml(bytes: &[u8]) -> Result<Value, Diagnostic> {
             "The XML member ends inside an element.",
         ));
     }
-    root.ok_or_else(|| error("XML_INVALID", "The native XML member has no root element."))
+    root.ok_or_else(|| error("XML_INVALID", "The Epicor XML member has no root element."))
 }
 pub fn parse(bytes: &[u8], requested: &[String]) -> Result<Value, Diagnostic> {
     parse_members(bytes, requested, "xml", parse_xml)
@@ -288,7 +288,7 @@ fn parse_members(
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| {
         error(
             "ARCHIVE_INVALID",
-            "The native package ZIP directory is invalid.",
+            "The Epicor package ZIP directory is invalid.",
         )
     })?;
     let mut members = Vec::new();
@@ -297,7 +297,7 @@ fn parse_members(
         let mut file = archive.by_index(index).map_err(|_| {
             error(
                 "ARCHIVE_ENTRY_UNAVAILABLE",
-                "A native package member cannot be decoded.",
+                "An Epicor package member cannot be decoded.",
             )
         })?;
         let name = file.name().to_owned();
@@ -309,7 +309,7 @@ fn parse_members(
         if documents.contains_key(&name) {
             return Err(error(
                 "ARCHIVE_MEMBER_AMBIGUOUS",
-                "The native package repeats a requested member name.",
+                "The Epicor package repeats a requested member name.",
             ));
         }
         if file.is_dir() {
@@ -322,13 +322,13 @@ fn parse_members(
         file.read_to_end(&mut bytes).map_err(|_| {
             error(
                 "ARCHIVE_ENTRY_INVALID",
-                "A native package member failed decompression or CRC validation.",
+                "An Epicor package member failed decompression or CRC validation.",
             )
         })?;
         if bytes.len() as u64 != file.size() {
             return Err(error(
                 "ARCHIVE_LENGTH_MISMATCH",
-                "The expanded native package length differs from its ZIP directory.",
+                "The expanded Epicor package length differs from its ZIP directory.",
             ));
         }
         let (xml, diagnostic) = if bytes.is_empty() {

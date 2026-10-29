@@ -155,7 +155,7 @@ impl PluginManifest {
                     && !artifact.required_query_parameters.is_empty()
             {
                 return Err(invalid(format!(
-                    "Artifact {} declares requirements for a different native artifact type.",
+                    "Artifact {} declares requirements for a different Epicor artifact type.",
                     artifact.alias
                 )));
             }
@@ -216,10 +216,11 @@ impl PluginManifest {
                     )));
                 };
                 if !unique.insert(before) {
-                    return Err(invalid(format!(
-                        "Artifact {} repeats dependency {}.",
-                        artifact.alias, dependency
-                    )));
+                    return Err(invalid(
+                        "This plugin lists the same server helper twice, so Herbert will not load it. Reinstall the plugin.",
+                    )
+                    .with_context("artifact", artifact.alias.as_str())
+                    .with_context("dependency", dependency.as_str()));
                 }
                 dependents[before].push(index);
             }

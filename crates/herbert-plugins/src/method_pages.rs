@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const SERVICE: &str = "Ice.BO.BpMethodSvc";
 pub fn methods() -> Vec<(String, String)> {
-    let mut methods = crate::collectors::methods("C06");
+    let mut methods = crate::collectors::methods("bpm-directives");
     methods.extend([
         (SERVICE.into(), "GetRowsEx".into()),
         ("Ice.Lib.SessionModSvc".into(), "GetBaseLevel".into()),
@@ -31,6 +31,14 @@ fn selection(request: &GuestRequest) -> Result<(bool, bool, String), Diagnostic>
         Some(_) => return Err(Diagnostic::new("INVALID_SETTING", "Method or table code starts with must be a string.")),
     };
     Ok((family != "data", family != "method", prefix))
+}
+/// The prefix's leading run before any LIKE wildcard, bracket or non-ASCII character, for a
+/// server-side `LIKE 'stem%'` superset that needs no escape syntax. Non-ASCII stops the stem
+/// because the literal is not N-prefixed and could be converted lossily. None when nothing
+/// narrows the read.
+fn like_stem(prefix: &str) -> Option<&str> {
+    let stem = &prefix[..prefix.find(|c: char| matches!(c, '%' | '_' | '[' | ']') || !c.is_ascii()).unwrap_or(prefix.len())];
+    (!stem.is_empty()).then_some(stem)
 }
 fn with_settings(mut state: Value, from: &Value) -> Value {
     if let Some(settings) = from.get("_pluginSettings") {
@@ -151,9 +159,11 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let data = &response["returnObj"];
             let more = response["parameters"]["morePages"]
                 .as_bool()
-                .ok_or_else(|| invalid("The method page omitted its continuation status."))?;
-            let mut identities = validate_page(data, &request.company, source(&request))?;
-            if more && identities.is_empty() {
+                .ok_or_else(|| invalid("The method page omitted its resume point status."))?;
+            // Only owners the literal prefix keeps (and their rows) are validated.
+            // Exact acquisition uses a blank prefix, so its whole page validates.
+            let identities = validate_page(data, &request.company, source(&request), &prefix)?;
+            if more && data["BpMethod"].as_array().is_some_and(Vec::is_empty) {
                 return Err(invalid("The method page did not advance."));
             }
             if request.operation == "acquire"
@@ -176,13 +186,9 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             } else {
                 None
             };
-            if request.operation != "acquire" {
-                identities.retain(|id| id.keys["BpMethodCode"].starts_with(&prefix));
-            }
             let mut state = request.state.clone();
             state["dataset"] = data.clone();
-            // Full raw ownership/scope validation above must not be hidden by
-            // filtering. Queue complete selected graphs, including future tables.
+            // Queue complete validated selected graphs, including future tables.
             let selected: BTreeSet<_> = identities.iter().map(|id| id.keys["BpMethodCode"].as_str()).collect();
             for rows in state["dataset"].as_object_mut().unwrap().values_mut() {
                 if let Some(rows) = rows.as_array_mut() {
@@ -211,7 +217,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             request.response = None;
             process(request)
         }
-        _ => Err(invalid("The method page checkpoint is invalid.")),
+        _ => Err(invalid("The method page saved progress is invalid.")),
     }
 }
 fn independent_methods(state: &Value, identities: &[Identity], next: Option<String>) -> GuestReply {
@@ -270,18 +276,18 @@ fn read_page(request: &GuestRequest, version: &str) -> Result<GuestReply, Diagno
     let size = u64::from(request.page_size.unwrap_or(24));
     if size == 0 || size > i32::MAX as u64 {
         return Err(invalid(
-            "The native page size must be a positive Int32 value.",
+            "Page size must be a whole number from 1 to 2147483647.",
         ));
     }
     // GetRowsEx builds SQL for its first selection. SQL bit fields require 0;
-    // the ordinary GetRows expression `false` fails here in both qualified labs.
+    // the ordinary GetRows expression `false` fails here in both tested versions.
     let mut filter = "SystemFlag = 0".to_owned();
     if request.operation == "acquire" {
         let id = request
             .identity
             .as_ref()
             .ok_or_else(|| invalid("Select an exact method identity."))?;
-        if id.category != "C06"
+        if id.category != "bpm-directives"
             || id.kind != kind(source)
             || id.keys.len() != 2
             || id.keys.get("Source").map(String::as_str) != Some(source)
@@ -300,6 +306,10 @@ fn read_page(request: &GuestRequest, version: &str) -> Result<GuestReply, Diagno
             " AND BpMethodCode = '{}'",
             code.replace('\'', "''")
         ));
+    } else if let Some(stem) = like_stem(&selection(request)?.2) {
+        // Server-side superset over the full native code of either family; the
+        // literal case-sensitive prefix is applied locally. Dependency reads are not narrowed.
+        filter.push_str(&format!(" AND BpMethodCode LIKE '{}%'", stem.replace('\'', "''")));
     }
     filter.push_str(" BY BpMethodCode");
     Ok(GuestReply::Action {
@@ -317,15 +327,17 @@ fn read_page(request: &GuestRequest, version: &str) -> Result<GuestReply, Diagno
     })
 }
 
-fn validate_page(data: &Value, company: &str, source: &str) -> Result<Vec<Identity>, Diagnostic> {
+fn validate_page(data: &Value, company: &str, source: &str, prefix: &str) -> Result<Vec<Identity>, Diagnostic> {
     for table in ["BpMethod", "BpArgument", "BpDirective"] {
         if !data[table].is_array() {
             return Err(invalid("The method page omitted a required table."));
         }
     }
+    // Rows outside the literal prefix are not collected, so they are not validated.
+    let kept = |row: &&Value| prefix.is_empty() || row["BpMethodCode"].as_str().is_some_and(|code| code.starts_with(prefix));
     let mut methods = BTreeSet::new();
     let mut identities = Vec::new();
-    for row in data["BpMethod"].as_array().unwrap() {
+    for row in data["BpMethod"].as_array().unwrap().iter().filter(kept) {
         let code = row["BpMethodCode"]
             .as_str()
             .filter(|v| !v.is_empty())
@@ -336,7 +348,7 @@ fn validate_page(data: &Value, company: &str, source: &str) -> Result<Vec<Identi
             ));
         }
         identities.push(Identity {
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             kind: kind(source).into(),
             scope: Scope::Global,
             keys: BTreeMap::from([
@@ -352,7 +364,7 @@ fn validate_page(data: &Value, company: &str, source: &str) -> Result<Vec<Identi
         let Some(rows) = rows.as_array() else {
             continue;
         };
-        for row in rows {
+        for row in rows.iter().filter(kept) {
             if row["Source"] != source
                 || row["BpMethodCode"]
                     .as_str()
@@ -436,7 +448,7 @@ fn process(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 } => Ok((definition, diagnostics, completeness)),
                 GuestReply::Failure { diagnostic } => Err(diagnostic),
                 _ => Err(invalid(
-                    "The native dependency exporter returned an invalid reply.",
+                    "The Epicor dependency exporter returned an invalid reply.",
                 )),
             }
         } else {
@@ -493,9 +505,9 @@ fn process(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
     }
     let mut records: Vec<(Identity, Value)> =
         serde_json::from_value(request.state["records"].clone())
-            .map_err(|_| invalid("The method output checkpoint is invalid."))?;
+            .map_err(|_| invalid("The method output saved progress is invalid."))?;
     let diagnostics: Vec<Diagnostic> = serde_json::from_value(request.state["diagnostics"].clone())
-        .map_err(|_| invalid("The method diagnostics checkpoint is invalid."))?;
+        .map_err(|_| invalid("The method diagnostics saved progress is invalid."))?;
     if request.state["targeted"] == true {
         let (identity, definition) = records
             .pop()
@@ -673,7 +685,7 @@ mod tests {
             panic!()
         };
         assert_eq!(records[0].0.kind, "DataDirectiveGroup");
-        assert_eq!(records[0].0.category, "C06");
+        assert_eq!(records[0].0.category, "bpm-directives");
         assert_eq!(records[0].1["herbertOutputGroup"], "Data directives");
         assert_eq!(
             records[0].1["definition"]["BpDirective"][0]["DirectiveType"],
@@ -697,7 +709,7 @@ mod tests {
         let mut r = data_request();
         r.operation = "acquire".into();
         r.identity = Some(
-            validate_page(&r.response.as_ref().unwrap()["returnObj"], "C", "DB")
+            validate_page(&r.response.as_ref().unwrap()["returnObj"], "C", "DB", "")
                 .unwrap()
                 .remove(0),
         );
@@ -722,7 +734,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -785,22 +797,36 @@ mod tests {
         }
     }
     #[test]
-    fn prefix_validates_all_raw_owners_before_selection_and_rejects_bad_settings() {
+    fn prefix_validates_only_selected_owners_and_rejects_bad_settings() {
         for source in ["BO", "DB"] {
-            for problem in ["orphan", "source", "company", "root"] {
-                let mut r = prefix_fixture(source);
-                let code = r.response.as_ref().unwrap()["returnObj"]["BpMethod"][0]["BpMethodCode"].clone();
-                r.state["_pluginSettings"] = json!({"methodCodePrefix":code});
-                let data = &mut r.response.as_mut().unwrap()["returnObj"];
-                match problem {
-                    "orphan" => data["FutureTable"][1]["BpMethodCode"] = json!("missing"),
-                    "source" => data["BpArgument"][1]["Source"] = json!("wrong"),
-                    "company" => data["BpDirective"].as_array_mut().unwrap().last_mut().unwrap()["Company"] = json!("foreign"),
-                    _ => data["BpMethod"][1]["SystemFlag"] = json!(true),
+            for problem in ["orphan", "source", "company", "root", "codeless"] {
+                for selected in [false, true] {
+                    // A codeless row can never match a nonblank literal prefix.
+                    if selected && problem == "codeless" {continue;}
+                    let mut r = prefix_fixture(source);
+                    let code = r.response.as_ref().unwrap()["returnObj"]["BpMethod"][0]["BpMethodCode"].as_str().unwrap().to_owned();
+                    r.state["_pluginSettings"] = json!({"methodCodePrefix":code});
+                    // Row 0 is the selected owner's; row 1 (and the last directive) the unselected peer's.
+                    let (row, orphan) = if selected {(0, format!("{code}Missing"))} else {(1, "missing".to_owned())};
+                    let data = &mut r.response.as_mut().unwrap()["returnObj"];
+                    match problem {
+                        "orphan" => data["FutureTable"][row]["BpMethodCode"] = json!(orphan),
+                        "source" => data["BpArgument"][row]["Source"] = json!("wrong"),
+                        "company" => {let rows = data["BpDirective"].as_array_mut().unwrap(); let at = if selected {0} else {rows.len() - 1}; rows[at]["Company"] = json!("foreign");}
+                        "codeless" => data["BpMethod"].as_array_mut().unwrap().push(json!({"Source":source,"SystemFlag":false})),
+                        _ => data["BpMethod"][row]["SystemFlag"] = json!(true),
+                    }
+                    if selected {
+                        assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "METHOD_PAGE_INVALID"),"{source}/{problem}");
+                    } else {
+                        let records = plain_records(r); assert_eq!(records.len(), 1, "{source}/{problem}");
+                        assert_eq!(records[0].0.keys["BpMethodCode"], code);
+                    }
                 }
-                assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "METHOD_PAGE_INVALID"),"{source}/{problem}");
             }
         }
+        let mut blank = prefix_fixture("BO"); blank.response.as_mut().unwrap()["returnObj"]["BpMethod"][1]["SystemFlag"] = json!(true);
+        assert!(matches!(handle(blank),GuestReply::Failure {diagnostic} if diagnostic.code == "METHOD_PAGE_INVALID"), "Blank prefix still validates every owner");
         for invalid in [Value::Null,json!(true),json!(4),json!([]),json!({})] {
             let mut r = request(); r.state["_pluginSettings"] = json!({"methodCodePrefix":invalid});
             assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "INVALID_SETTING"));
@@ -808,6 +834,25 @@ mod tests {
         for invalid in [Value::Null,json!("BO"),json!(false)] {
             let mut r = request(); r.state["_pluginSettings"] = json!({"directiveFamily":invalid});
             assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "INVALID_SETTING"));
+        }
+    }
+    #[test]
+    fn prefix_pushes_literal_like_stem_superset_onto_bo_and_db_method_code() {
+        for source in ["BO", "DB"] {
+            for (prefix, narrowed) in [("Ice.BO.O'Brien.Update", Some("Ice.BO.O''Brien.Update")), ("Ice.UD_39", Some("Ice.UD")),
+                ("Ice.UD39[", Some("Ice.UD39")), ("Ice%x", Some("Ice")), ("%Ice", None), ("_", None), ("", None)] {
+                let mut r = request(); r.response = None; r.cursor = Some(format!("{source}:3"));
+                r.state = json!({"phase":"nextPage","version":"5.2.100.0","_pluginSettings":{"methodCodePrefix":prefix}});
+                let GuestReply::Action {action:HostAction::NativeRead {method,arguments,..},state} = handle(r) else {panic!("{source}/{prefix}")};
+                assert_eq!(method, "GetRowsEx"); assert_eq!(arguments["source"], source); assert_eq!(arguments["absolutePage"], 3);
+                let expected = match narrowed {
+                    Some(stem) => format!("SystemFlag = 0 AND BpMethodCode LIKE '{stem}%' BY BpMethodCode"),
+                    None => "SystemFlag = 0 BY BpMethodCode".to_owned(),
+                };
+                assert_eq!(arguments["whereClauseBpMethod"], expected, "{source}/{prefix}");
+                assert_eq!(arguments["whereClauseBpDirective"], "DirectiveGroup IS NULL OR DirectiveGroup >= ''");
+                assert_eq!(state["_pluginSettings"]["methodCodePrefix"], prefix);
+            }
         }
     }
     #[test]
@@ -861,7 +906,7 @@ mod tests {
     fn prefix_exact_bo_and_db_acquisition_ignore_excluded_family_and_prefix() {
         for source in ["BO", "DB"] {
             let mut r = prefix_fixture(source);
-            let identity = validate_page(&r.response.as_ref().unwrap()["returnObj"],"C",source).unwrap().remove(0);
+            let identity = validate_page(&r.response.as_ref().unwrap()["returnObj"],"C",source,"").unwrap().remove(0);
             for rows in r.response.as_mut().unwrap()["returnObj"].as_object_mut().unwrap().values_mut().filter_map(Value::as_array_mut) {
                 rows.retain(|row| row["BpMethodCode"] == identity.keys["BpMethodCode"]);
             }
@@ -885,8 +930,12 @@ mod tests {
             for directive in r.response.as_mut().unwrap()["returnObj"]["BpDirective"].as_array_mut().unwrap() {
                 if directive["BpMethodCode"] == code {directive["Body"] = json!("<Workflow><BpmDataFormAction FormId='Selected'/></Workflow>");}
             }
+            let mut wide = r.clone(); wide.state["_pluginSettings"] = json!({});
+            let (_,wide_actions) = finish_refused(wide.clone(),handle(wide));
             let (records,actions) = finish_refused(r.clone(),handle(r)); assert_eq!(records.len(),1);
             assert_eq!(records[0].0.keys["BpMethodCode"],code.as_str().unwrap());
+            // The prefix narrows only the owner read: the selected owner's dependency reads are unchanged.
+            assert!(wide_actions.len() > actions.len()); assert_eq!(actions[..],wide_actions[..actions.len()]);
             let exports: Vec<_> = actions.iter().filter(|action| action["method"] == "ExportByService" || action["method"] == "ExportByTable").collect();
             assert_eq!(exports.len(),1);
             assert_eq!(exports[0]["arguments"][if source == "BO" {"serviceName"} else {"tableName"}],if source == "BO" {"X"} else {"UD39"});

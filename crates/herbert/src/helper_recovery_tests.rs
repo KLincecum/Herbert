@@ -379,8 +379,9 @@ impl Case {
             plugin_hash: HASH.into(),
             dispatch_count: 1,
         };
-        let journal: storage::RunJournal = serde_json::from_value(json!({
-            "schemaVersion":1,"runId":holder,"requestId":uuid::Uuid::new_v4().to_string(),
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let mut journal: storage::RunJournal = serde_json::from_value(json!({
+            "schemaVersion":1,"runId":holder,"requestId":request_id,
             "endpoint":server.endpoint.as_str(),"company":COMPANY,"caller":CALLER,
             "scope":"global","categories":["fixtureResource"],
             "pluginHashes":{"fixtureResource":HASH},"settings":OperatingSettings::default(),
@@ -388,6 +389,32 @@ impl Case {
             "helperTransfers":[transfer],"helperLibraries":[file.lease]
         }))
         .unwrap();
+        // Restoring a missing helper is a new import, so it needs the run's current authority
+        // for `legacyHelper:<library>` (lease batch 1, F1). Grant exactly that for this run.
+        use crate::server_changes::{Capability, Lifetime, MaterialScope, RunAuthority};
+        let scope = MaterialScope {
+            endpoint: server.endpoint.as_str().into(),
+            company: COMPANY.into(),
+            principal: CALLER.into(),
+            capabilities: BTreeMap::from([(
+                "fixtureResource".into(),
+                Capability {
+                    binding: "fixture".into(),
+                    selection: BTreeMap::new(),
+                    effects: BTreeMap::from([(format!("legacyHelper:{}", file.lease.template_id), json!({"kind":"legacyHelper"}))]),
+                },
+            )]),
+        };
+        let grant = crate::server_changes::create(&host.state_root, scope.clone(), Lifetime::OneRun { request_id: request_id.clone() }, None, "explicitLocalClient").unwrap();
+        journal.collection_method = herbert_contract::CollectionMethod::ServerAssisted;
+        journal.server_change_authority = Some(RunAuthority {
+            grant_id: grant.id,
+            material_digest: scope.digest(),
+            material_scope: scope,
+            request_id,
+            original_session: host.authorization_session.read().await.clone(),
+            workflow_id: None,
+        });
         let run = Arc::new(Run {
             storage: Arc::new(StdMutex::new(
                 Storage::open(&root.path().join("output"), false, journal).unwrap(),
@@ -506,6 +533,58 @@ async fn missing_helper_restores_exact_generation_and_closes_original_transfer()
             .collect::<Vec<_>>(),
         vec!["Close", "Acknowledge"]
     );
+    case.assert_original_import(&server, &original);
+    server.assert_clean();
+}
+
+impl Case {
+    fn grant_id(&self) -> String {
+        self.run.storage.lock().unwrap().journal.server_change_authority.as_ref().unwrap().grant_id.clone()
+    }
+    fn revoke(&self) {
+        crate::server_changes::revoke(&self.host.state_root, &self.grant_id()).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn legacy_restore_after_loss_uses_current_authority_not_cleanup_grant() {
+    let server = NativeFixture::new(ImportOutcome::Succeeded);
+    let mut case = Case::new(&server).await;
+    let original = case.file.lease.clone();
+    // The run's authority is revoked. What remains is cleanup authority for owned resources;
+    // a restore is a new import and must not proceed on it.
+    case.revoke();
+    let refused = case.restore().await.unwrap_err();
+    assert_eq!(refused.code, "SERVER_CHANGE_AUTHORIZATION_REQUIRED", "{refused:?}");
+    assert!(server.requests("ImportLibrary").is_empty(), "no import without current authority");
+    assert!(server.requests("IsValidLibraryId").is_empty(), "refused before any restore step");
+    assert!(case.run.helper_restore_attempts.lock().await.is_empty(), "a refused restore leaves no attempt fence");
+    // Renewed authority for the same logical run permits the same exact generation.
+    let mut renewed = case.run.storage.lock().unwrap().journal.server_change_authority.clone().unwrap();
+    let grant = crate::server_changes::create(&case.host.state_root, renewed.material_scope.clone(),
+        crate::server_changes::Lifetime::OneRun { request_id: renewed.request_id.clone() }, None, "explicitLocalClient").unwrap();
+    renewed.grant_id = grant.id;
+    case.run.storage.lock().unwrap().journal.server_change_authority = Some(renewed);
+    case.restore().await.unwrap();
+    case.assert_original_import(&server, &original);
+    server.assert_clean();
+}
+
+#[tokio::test]
+async fn legacy_helper_revocation_stops_new_invocation_but_owned_cleanup_succeeds() {
+    let server = NativeFixture::new(ImportOutcome::Succeeded);
+    let mut case = Case::new(&server).await;
+    let original = case.file.lease.clone();
+    case.restore().await.unwrap();
+    case.revoke();
+    // Owned cleanup of the retained transfer still runs after revocation.
+    let errors = case.host.cleanup_helper_transfers(&case.run, &case.connection, None).await;
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(case.retained_transfer().phase, "closed");
+    // A new disappearance would need a new import: refused without current authority.
+    server.state.lock().unwrap().package = None;
+    let refused = case.restore().await.unwrap_err();
+    assert_eq!(refused.code, "SERVER_CHANGE_AUTHORIZATION_REQUIRED", "{refused:?}");
     case.assert_original_import(&server, &original);
     server.assert_clean();
 }

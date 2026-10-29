@@ -86,10 +86,20 @@ struct Name {
 
 /// Cache verified names while the destination lock is held. Page collectors
 /// commit one registry instead of two synchronized files for every artifact.
+/// The registry is `pages.json` (a compacted base) plus `pages.log` (one JSON
+/// name per line, appended at each saved-progress point). Rewriting the whole
+/// registry at every checkpoint made a large download quadratic; the log is
+/// folded into the base only once it outgrows it, so total bytes stay linear.
 #[derive(Default)]
 pub(crate) struct NameRegistry {
     loaded: bool,
-    dirty: bool,
+    /// Page names not yet in the registry files.
+    unsaved: Vec<Name>,
+    /// Names in pages.json and pages.log respectively.
+    base: usize,
+    logged: usize,
+    /// The log ended with a torn (never acknowledged) append; rewrite it.
+    compact: bool,
     identities: std::collections::BTreeMap<String, Name>,
     paths: std::collections::BTreeMap<String, String>,
 }
@@ -112,7 +122,34 @@ impl NameRegistry {
         match fs::read(path) {
             Ok(bytes) => {
                 let records: Vec<Name> = serde_json::from_slice(&bytes).map_err(|_| name_error())?;
-                for record in records { self.insert(record)?; }
+                self.base = records.len();
+                for mut record in records {
+                    // A Release 1 destination stores retired codes. Key its names by the current
+                    // identity so refresh reuses the stored path instead of refusing it.
+                    crate::legacy_category_ids::normalize_identity(&mut record.identity);
+                    self.insert(record)?;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return Err(name_error()),
+        }
+        match fs::read(storage.confined(NAME_LOG)?) {
+            Ok(bytes) => {
+                let mut lines = bytes.split_inclusive(|byte| *byte == b'\n').peekable();
+                while let Some(line) = lines.next() {
+                    match serde_json::from_slice::<Name>(line) {
+                        Ok(mut record) => {
+                            crate::legacy_category_ids::normalize_identity(&mut record.identity);
+                            self.insert(record)?;
+                            self.logged += 1;
+                        }
+                        // Only the final append can be torn by a crash, and the log is
+                        // synchronized before saved progress acknowledges any file under
+                        // that name. Drop it; the name is assigned again if still needed.
+                        Err(_) if lines.peek().is_none() && !line.ends_with(b"\n") => self.compact = true,
+                        Err(_) => return Err(name_error()),
+                    }
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
             Err(_) => return Err(name_error()),
@@ -122,14 +159,50 @@ impl NameRegistry {
     }
 }
 
+const NAME_LOG: &str = "Herbert Data/names/pages.log";
+
 impl Storage {
     pub(crate) fn checkpoint_names(&self) -> Result<(), Diagnostic> {
         let mut names = self.output_names.lock().map_err(|_| name_error())?;
-        if names.dirty {
-            let bytes = serde_json::to_vec(&names.identities.values().collect::<Vec<_>>()).map_err(|_| name_error())?;
-            atomic_write(&self.confined("Herbert Data/names/pages.json")?, &bytes)?;
-            names.dirty = false;
+        if names.unsaved.is_empty() && !names.compact {
+            return Ok(());
         }
+        if names.compact || names.logged + names.unsaved.len() > names.base {
+            return self.compact_names_locked(&mut names);
+        }
+        let mut bytes = Vec::new();
+        for record in &names.unsaved {
+            serde_json::to_writer(&mut bytes, record).map_err(|_| name_error())?;
+            bytes.push(b'\n');
+        }
+        let path = self.confined(NAME_LOG)?;
+        let mut log = fs::OpenOptions::new().create(true).append(true).open(&path)
+            .map_err(|e| Diagnostic::new("OUTPUT_WRITE_FAILED", "Herbert could not save the list of output folder names. Check that the download folder is writable and has free space, then retry.").with_cause(&e))?;
+        std::io::Write::write_all(&mut log, &bytes).and_then(|_| log.sync_all())
+            .map_err(|e| Diagnostic::new("OUTPUT_WRITE_FAILED", "Herbert could not save the list of output folder names. Check that the download folder is writable and has free space, then retry.").with_cause(&e))?;
+        names.logged += names.unsaved.len();
+        names.unsaved.clear();
+        Ok(())
+    }
+    /// Fold the log into pages.json. A crash after the rewrite but before the
+    /// log is removed only repeats identical names, which `insert` accepts.
+    pub(crate) fn compact_names(&self) -> Result<(), Diagnostic> {
+        let mut names = self.output_names.lock().map_err(|_| name_error())?;
+        if names.logged == 0 && names.unsaved.is_empty() && !names.compact { return Ok(()); }
+        self.compact_names_locked(&mut names)
+    }
+    fn compact_names_locked(&self, names: &mut NameRegistry) -> Result<(), Diagnostic> {
+        let bytes = serde_json::to_vec(&names.identities.values().collect::<Vec<_>>()).map_err(|_| name_error())?;
+        atomic_write(&self.confined("Herbert Data/names/pages.json")?, &bytes)?;
+        match fs::remove_file(self.confined(NAME_LOG)?) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(Diagnostic::new("OUTPUT_WRITE_FAILED", "Herbert could not tidy the list of output folder names. Check that the download folder is writable, then retry.").with_cause(&e)),
+        }
+        names.base = names.identities.len();
+        names.logged = 0;
+        names.compact = false;
+        names.unsaved.clear();
         Ok(())
     }
     pub(crate) fn artifact_folder(&self, identity: &Identity) -> Result<String, Diagnostic> {
@@ -170,14 +243,23 @@ impl Storage {
             if record.identity != *identity { return Err(name_error()); }
             return Ok(record.path.clone());
         }
-        let pointer = self.confined(&format!(
+        let mut pointer = self.confined(&format!(
             "Herbert Data/names/identities/{}.json",
             identity_key(identity)
         ))?;
+        if !pointer.exists() {
+            // A Release 1 pointer is named by the identity hash under its retired code.
+            if let Some(code) = crate::legacy_category_ids::retired(&identity.category) {
+                let mut legacy = identity.clone();
+                legacy.category = code.to_owned();
+                pointer = self.confined(&format!("Herbert Data/names/identities/{}.json", identity_key(&legacy)))?;
+            }
+        }
         if pointer.exists() {
-            let record: Name =
+            let mut record: Name =
                 serde_json::from_slice(&fs::read(&pointer).map_err(|_| name_error())?)
                     .map_err(|_| name_error())?;
+            crate::legacy_category_ids::normalize_identity(&mut record.identity);
             if record.identity != *identity {
                 return Err(name_error());
             }
@@ -251,7 +333,7 @@ impl Storage {
         };
         if self.page_owns_derived_files {
             names.insert(name.clone())?;
-            names.dirty = true;
+            names.unsaved.push(name);
         } else {
             let record = serde_json::to_vec(&name).map_err(|_| name_error())?;
             atomic_write(&claim, &record)?;
@@ -275,7 +357,7 @@ mod tests {
     use std::collections::BTreeMap;
     fn id(name: &str) -> Identity {
         Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "BAQ".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([("QueryID".into(), name.into())]),
@@ -285,7 +367,7 @@ mod tests {
     fn readable_names_collisions_refresh_and_user_edits_are_preserved() {
         let temp = tempfile::tempdir().unwrap();
         let mut journal = new_journal("names".into());
-        journal.category_names.insert("C04".into(), "BAQs".into());
+        journal.category_names.insert("baqs-and-ubaqs".into(), "BAQs".into());
         let store = Storage::open(temp.path(), false, journal.clone()).unwrap();
         let first = id("MyQuery");
         assert_eq!(store.artifact_folder(&first).unwrap(), "BAQs/MyQuery");
@@ -316,6 +398,39 @@ mod tests {
         assert!(!temp.path().join("raw").exists());
     }
     #[test]
+    fn refresh_into_a_release_1_destination_reuses_its_names_and_artifacts() {
+        // Release 1 wrote category "C01" and the folder "UD Codes" (display name before the
+        // sentence-case change). The current version must reuse both and create no second folder.
+        let temp = tempfile::tempdir().unwrap();
+        let r1 = Identity { category: "C01".into(), kind: "UDCodeType".into(), scope: Scope::Global,
+            keys: BTreeMap::from([("CodeTypeID".into(), "Alpha".into())]) };
+        let r2 = Identity { category: "ud-codes".into(), ..r1.clone() };
+        let mut journal = new_journal("refresh".into());
+        journal.category_names.insert("ud-codes".into(), "UD codes".into());
+        fs::create_dir_all(temp.path().join("UD Codes/Alpha")).unwrap();
+        fs::write(temp.path().join("UD Codes/Alpha/Alpha.json"), b"release 1").unwrap();
+        let artifact: herbert_contract::Artifact = serde_json::from_value(serde_json::json!({
+            "identity": r1, "classification": "discoveredDefinition", "acquisition": "collected",
+            "integrity": "hostHashComputed", "processing": "derived",
+            "files": [{"path": "UD Codes/Alpha/Alpha.json", "sha256": crate::storage::sha256(b"release 1"), "bytes": 9, "role": "derived"}],
+            "dependencies": [], "diagnostics": [], "sourceConsistency": "nonAtomicUnknown"})).unwrap();
+        let manifest = crate::storage::Manifest { schema_version: 1, endpoint: journal.endpoint.clone(),
+            company: journal.company.clone(), caller: journal.caller.clone(), references: vec![],
+            artifacts: BTreeMap::from([(identity_key(&r1), artifact)]), retained_files: BTreeMap::new(), checkpoint: None };
+        fs::create_dir_all(temp.path().join("Herbert Data/names")).unwrap();
+        fs::write(temp.path().join("Herbert Data/manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        fs::write(temp.path().join("Herbert Data/names/pages.json"),
+            serde_json::to_vec(&serde_json::json!([{"identity": r1, "path": "UD Codes/Alpha"}])).unwrap()).unwrap();
+
+        let store = Storage::open(temp.path(), false, journal).unwrap();
+        assert!(store.manifest.artifacts.contains_key(&identity_key(&r2)), "existing artifact is recognized");
+        assert!(!store.manifest.artifacts.contains_key(&identity_key(&r1)), "no stale duplicate entry");
+        assert_eq!(store.artifact_folder(&r2).unwrap(), "UD Codes/Alpha", "stored path is reused, no name_error");
+        let visible: Vec<_> = fs::read_dir(temp.path()).unwrap().filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n != "Herbert Data").collect();
+        assert_eq!(visible, ["UD Codes"], "exactly one category folder, no sibling of different case");
+    }
+    #[test]
     fn names_escape_paths_and_accommodate_long_identifiers() {
         assert_eq!(component("A/B"), "A%2FB");
         assert_eq!(component("CON"), "%5FCON");
@@ -331,7 +446,7 @@ mod tests {
         let mut journal = new_journal("grouped".into());
         journal
             .category_names
-            .insert("C04".into(), "Combined".into());
+            .insert("baqs-and-ubaqs".into(), "Combined".into());
         let store = Storage::open(temp.path(), false, journal).unwrap();
         let first = id("First");
         store.group_artifact(&first, "Methods").unwrap();

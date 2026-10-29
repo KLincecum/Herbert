@@ -44,7 +44,7 @@ pub(super) fn rows(journal: &Value, operations: &[Value], batches: &[Value]) -> 
         else if finished { "Finished" }
         else if journal["pauseRequested"] == true { "Paused" }
         else if active { "Queued" }
-        else { "Not finished" };
+        else { "Ended early" };
         let mut steps = Vec::new();
         for op in &ops {
             if let Some(step) = op["step"].as_str() {
@@ -59,7 +59,7 @@ pub(super) fn rows(journal: &Value, operations: &[Value], batches: &[Value]) -> 
         }
         let work = if !steps.is_empty() { steps.join(" · ") }
         else if running { "Processing received data / preparing the next request".into() }
-        else if attention { format!("{state}; review the reported issues") }
+        else if attention { format!("{state}. See Issues below for what was not saved.") }
         else if finished && outcome == "verifiedAbsent" { "No eligible items matched the run selection".into() }
         else if finished { "Collection complete within the run selection".into() }
         else if state == "Queued" { "Waiting for a plugin slot or prerequisite".into() }
@@ -102,9 +102,9 @@ pub(super) fn table(ui: &mut egui::Ui, rows: &[PluginRow]) {
     let (header, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(),20.0),egui::Sense::hover());
     let split = header.left() + (header.width()*0.36).clamp(180.0,350.0);
     let color = ui.visuals().weak_text_color();
-    line(ui,egui::Rect::from_min_max(header.min+egui::vec2(6.0,0.0),egui::pos2(split-80.0,header.bottom())),"Plugin / completed items",13.0,color,true);
-    line(ui,egui::Rect::from_min_max(egui::pos2(split-78.0,header.top()),egui::pos2(split-4.0,header.bottom())),"State",13.0,color,true);
-    line(ui,egui::Rect::from_min_max(egui::pos2(split+8.0,header.top()),header.max),"Current work / page progress",13.0,color,true);
+    line(ui,egui::Rect::from_min_max(header.min+egui::vec2(6.0,0.0),egui::pos2(split-80.0,header.bottom())),"Plugin / completed items",TEXT_DETAIL,color,true);
+    line(ui,egui::Rect::from_min_max(egui::pos2(split-78.0,header.top()),egui::pos2(split-4.0,header.bottom())),"State",TEXT_DETAIL,color,true);
+    line(ui,egui::Rect::from_min_max(egui::pos2(split+8.0,header.top()),header.max),"Current work / page progress",TEXT_DETAIL,color,true);
     // Eight rows match the largest user-selectable concurrency. More selected
     // plugins remain available in this table; they are not a collection limit.
     egui::ScrollArea::vertical().id_salt("plugin-run-table")
@@ -123,11 +123,11 @@ pub(super) fn table(ui: &mut egui::Ui, rows: &[PluginRow]) {
                     else if row.running { if ui.visuals().dark_mode { egui::Color32::from_rgb(139, 216, 188) } else { egui::Color32::from_rgb(21, 100, 76) } }
                     else { muted };
                 let cell = |left, right, top, bottom| egui::Rect::from_min_max(egui::pos2(left,top),egui::pos2(right,bottom));
-                line(ui, cell(rect.left()+6.0, split-80.0, rect.top(),rect.top()+17.0), &row.name, 14.0, fg, true);
-                line(ui, cell(split-78.0,split-4.0,rect.top(),rect.top()+17.0), row.state, 13.0, color, true);
-                line(ui, cell(split+8.0,rect.right()-6.0,rect.top(),rect.top()+17.0), &row.work,14.0,fg,false);
-                line(ui, cell(rect.left()+6.0,split-4.0,rect.top()+17.0,rect.bottom()), &row.totals,13.0,muted,false);
-                line(ui, cell(split+8.0,rect.right()-6.0,rect.top()+17.0,rect.bottom()), &row.batch,13.0,muted,false);
+                line(ui, cell(rect.left()+6.0, split-80.0, rect.top(),rect.top()+17.0), &row.name, TEXT_DENSE, fg, true);
+                line(ui, cell(split-78.0,split-4.0,rect.top(),rect.top()+17.0), row.state, TEXT_DETAIL, color, true);
+                line(ui, cell(split+8.0,rect.right()-6.0,rect.top(),rect.top()+17.0), &row.work,TEXT_DENSE,fg,false);
+                line(ui, cell(rect.left()+6.0,split-4.0,rect.top()+17.0,rect.bottom()), &row.totals,TEXT_DETAIL,muted,false);
+                line(ui, cell(split+8.0,rect.right()-6.0,rect.top()+17.0,rect.bottom()), &row.batch,TEXT_DETAIL,muted,false);
             }
         });
 }
@@ -137,8 +137,8 @@ mod tests {
     use super::*;
     #[test]
     fn completed_items_do_not_claim_first_page_wait_and_queue_age_is_not_work_age() {
-        let journal=json!({"executionActive":true,"categories":["C27"],"categoryNames":{"C27":"References"},"pluginStates":{"C27":"running"}});
-        let batches=vec![json!({"category":"C27","completedItems":451,"files":0})];
+        let journal=json!({"executionActive":true,"categories":["configuration-references"],"categoryNames":{"configuration-references":"References"},"pluginStates":{"configuration-references":"running"}});
+        let batches=vec![json!({"category":"configuration-references","completedItems":451,"files":0})];
         let operations=vec![json!({"plugin":"References","step":"Downloaded pages waiting in memory: 0","elapsedSeconds":978}),json!({"plugin":"References","step":"Writing output files","elapsedSeconds":0})];
         let result=rows(&journal,&operations,&batches);
         assert_eq!(result[0].batch,"Processing collected items");
@@ -156,8 +156,8 @@ mod tests {
             ("discoveryIncomplete", "incomplete", "Incomplete"),
         ] {
             let journal = json!({"executionActive":false,"phase":"partial",
-                "categories":["C16"],"pluginStates":{"C16":lifecycle},
-                "categoryOutcomes":{"C16":outcome},"discoveryFinished":{"C16":true}});
+                "categories":["report-definitions"],"pluginStates":{"report-definitions":lifecycle},
+                "categoryOutcomes":{"report-definitions":outcome},"discoveryFinished":{"report-definitions":true}});
             let result = rows(&journal, &[], &[]);
             assert_eq!(result[0].state, expected);
             assert!(!result[0].work.contains("Collection complete"));

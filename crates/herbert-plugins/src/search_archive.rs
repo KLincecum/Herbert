@@ -103,7 +103,7 @@ pub fn append(service: &str, name: &str, definition: &mut Value) -> Result<(), D
     let schemas: Schemas = serde_json::from_str(include_str!("search-datasets.json")).unwrap();
     let schema = schemas
         .get(service)
-        .ok_or_else(|| invalid("Unknown native search DataSet."))?;
+        .ok_or_else(|| invalid("Unknown Epicor search DataSet."))?;
     let mut text = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><{service}DataSet xmlns=\"http://www.epicor.com/Ice/300/BO/{service}/{service}\">"
     );
@@ -128,7 +128,7 @@ pub fn append(service: &str, name: &str, definition: &mut Value) -> Result<(), D
                     ("ulong", Value::String(text)) if text.parse::<u64>().is_ok() => text.clone(),
                     _ => {
                         return Err(invalid(&format!(
-                            "{table}.{field} does not match its native {kind} type."
+                            "{table}.{field} does not match its Epicor {kind} type."
                         )));
                     }
                 };

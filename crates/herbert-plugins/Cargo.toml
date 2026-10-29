@@ -6,11 +6,37 @@ license-file.workspace = true
 rust-version.workspace = true
 
 [features]
-# Optional C04 compiled UBAQ capture; only qualified matching packages may select it.
+# Optional BAQs and UBAQs compiled UBAQ capture; standard packages enable it.
 ubaq-compiled = []
-# Unqualified optional feature; ordinary package builds preserve the current C08.
+# Optional compiled Function capture; standard packages enable it.
 function-compiled = []
 ordinary-bpm-compiled = []
+# One no-op feature per release plugin (scripts/build.py standard_plugin_features). It gives each plugin's build of
+# this shared library its own fingerprint, so an unchanged plugin is not recompiled after another plugin's build.
+plugin-ud-codes = []
+plugin-ud-schema = []
+plugin-extended-properties = []
+plugin-baqs-and-ubaqs = []
+plugin-bpm-directives = []
+plugin-functions = []
+plugin-classic-customizations = []
+plugin-classic-personalizations = []
+plugin-classic-dashboards = []
+plugin-kinetic-applications-and-layers = []
+plugin-kinetic-personalizations = []
+plugin-searches-and-navigation = []
+plugin-menus-and-launch-definitions = []
+plugin-report-definitions = []
+plugin-report-styles-and-layouts = []
+plugin-report-behavior = []
+plugin-configurators = []
+plugin-business-rules-and-mappings = []
+plugin-custom-resources = []
+plugin-programs-and-extensions = []
+plugin-solutions-and-packages = []
+plugin-automation-and-integrations = []
+plugin-access-and-assignments = []
+plugin-configuration-references = []
 
 [dependencies]
 herbert-contract.workspace = true

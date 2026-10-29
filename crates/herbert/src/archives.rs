@@ -90,7 +90,7 @@ pub(crate) fn prepare_views(storage: &Storage, identity: &Identity, native: &[Fi
     let (_, diagnostics) = views_with(storage, identity, native, |name, input| {
         let mut bytes = Vec::new();
         input.read_to_end(&mut bytes).map_err(|_| Diagnostic::new(
-            "SOURCE_STREAM_FAILED", "Cannot read the complete native archive member."))?;
+            "SOURCE_STREAM_FAILED", "Cannot read the complete Epicor archive member."))?;
         let file = FileRef { path:name.into(), sha256:storage::sha256(&bytes),
             bytes:bytes.len() as u64, role:"derived".into() };
         sources.push(crate::processing::SourceFile { name:name.into(), bytes,
@@ -123,13 +123,13 @@ fn views_with(
             storage.verify(original)?;
             if !seen.insert(original.sha256.clone()) { return Ok(()); }
             let mut source = File::open(storage.confined(&original.path)?).map_err(|_| {
-                Diagnostic::new("RAW_UNAVAILABLE", "A native export package is unavailable.")
+                Diagnostic::new("RAW_UNAVAILABLE", "Epicor's export package is unavailable.")
             })?;
             let mut magic = [0; 4];
             if source.read(&mut magic).map_err(|_| {
                 Diagnostic::new(
                     "RAW_UNAVAILABLE",
-                    "Cannot inspect the native export package.",
+                    "Cannot inspect Epicor's export package.",
                 )
             })? != 4
                 || !matches!(&magic, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08")
@@ -137,12 +137,12 @@ fn views_with(
                 return Ok(());
             }
             source.seek(SeekFrom::Start(0)).map_err(|_| {
-                Diagnostic::new("RAW_UNAVAILABLE", "Cannot read the native export package.")
+                Diagnostic::new("RAW_UNAVAILABLE", "Cannot read Epicor's export package.")
             })?;
             let mut archive = zip::ZipArchive::new(source).map_err(|_| {
                 Diagnostic::new(
                     "ARCHIVE_INVALID",
-                    "The native ZIP directory is invalid; its original bytes remain preserved.",
+                    "The Epicor ZIP directory is invalid; its original bytes remain preserved.",
                 )
             })?;
             archive_number += 1;
@@ -151,13 +151,13 @@ fn views_with(
                 let mut file = match archive.by_index(entry) {
                     Ok(file) => file,
                     Err(_) => {
-                        diagnostics.push(Diagnostic::new("ARCHIVE_ENTRY_UNAVAILABLE","A native ZIP entry cannot be read without an additional capability or key. Original package bytes remain preserved."));
+                        diagnostics.push(Diagnostic::new("ARCHIVE_ENTRY_UNAVAILABLE","An Epicor ZIP entry cannot be read without an additional capability or key. Original package bytes remain preserved."));
                         continue;
                     }
                 };
                 let name = file.name().to_string();
                 if traverses(&name) {
-                    diagnostics.push(Diagnostic::new("UNSAFE_ARCHIVE_PATH","A native archive entry contains an absolute or traversing path; it was not extracted."));
+                    diagnostics.push(Diagnostic::new("UNSAFE_ARCHIVE_PATH","An Epicor archive entry contains an absolute or traversing path; it was not extracted."));
                     continue;
                 }
                 let collision = storage::collision_key(&name);
@@ -165,7 +165,7 @@ fn views_with(
                 *count += 1;
                 let duplicate = *count > 1;
                 if duplicate {
-                    diagnostics.push(Diagnostic::new("ARCHIVE_NAME_COLLISION","Native archive names collide under portable filesystem rules. Numbered folders preserve each readable entry."));
+                    diagnostics.push(Diagnostic::new("ARCHIVE_NAME_COLLISION","Epicor archive names collide under portable filesystem rules. Numbered folders preserve each readable entry."));
                 }
                 if file.is_dir() {
                     continue;
@@ -247,7 +247,7 @@ mod tests {
         .unwrap();
         let original = storage.preserve_raw(bytes, "baq").unwrap();
         let id = Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "BAQ".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([

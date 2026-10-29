@@ -36,14 +36,14 @@ fn policy_query(request: GuestRequest, state: Value) -> GuestReply {
             .is_some_and(|rows| !rows.is_empty())
         {
             let mut state = state;
-            state["content"]["nativeExportPolicy"] = json!({"withheld":true,"reason":"The native whole-application export and version service cannot exclude explicitly system-marked child content before retention. Eligible custom current file bodies are preserved independently."});
+            state["content"]["nativeExportPolicy"] = json!({"withheld":true,"reason":"The Epicor whole-application export and version service cannot exclude explicitly system-marked child content before retention. Eligible custom current file bodies are preserved independently."});
             state["versionInventory"] = json!({"withheldForSystemChildren":true});
             state["exportWithheldForSystemChildren"] = json!(true);
             push(
                 &mut state,
                 error(
                     "KINETIC_NATIVE_EXPORT_SYSTEM_CONTENT",
-                    "Native application export and retained-version reads were withheld because they include explicitly system-marked child content. Independently measured custom current files are preserved; native export/version completeness is not claimed.",
+                    "Epicor application export and retained-version reads were withheld because they include explicitly system-marked child content. Independently measured custom current files are preserved; Epicor's export/version completeness is not claimed.",
                 ),
             );
             return start(request, state);
@@ -153,7 +153,7 @@ pub fn policy_handle(request: GuestRequest) -> GuestReply {
         return GuestReply::Failure {
             diagnostic: error(
                 "PAGE_SIZE_REQUIRED",
-                "The ownership checkpoint has no configured page size.",
+                "The ownership saved progress has no configured page size.",
             ),
         };
     };
@@ -193,7 +193,7 @@ pub fn policy_handle(request: GuestRequest) -> GuestReply {
             return GuestReply::Failure {
                 diagnostic: error(
                     "PAGINATION_UNVERIFIED",
-                    "The ownership metadata cursor did not advance.",
+                    "The ownership metadata saved position did not advance.",
                 ),
             };
         }
@@ -252,7 +252,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             &mut state,
             error(
                 "KINETIC_FILES_UNVERIFIED",
-                "The independent file response omitted its native rows.",
+                "The independent file response omitted its Epicor rows.",
             ),
         );
         return next_branch(request, state);
@@ -261,7 +261,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         return GuestReply::Failure {
             diagnostic: error(
                 "PAGE_SIZE_REQUIRED",
-                "The persisted-file checkpoint has no configured page size.",
+                "The saved-file saved progress has no configured page size.",
             ),
         };
     };
@@ -313,7 +313,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 &mut state,
                 error(
                     "KINETIC_FILE_IDENTITY_UNVERIFIED",
-                    "An authored file lacks its native physical row identity.",
+                    "An authored file lacks its Epicor physical row identity.",
                 ),
             );
             continue;
@@ -339,7 +339,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 &mut state,
                 error(
                     "KINETIC_FILE_LENGTH_MISMATCH",
-                    "An authored file body is absent or differs from its native UTF-16 byte length.",
+                    "An authored file body is absent or differs from its Epicor UTF-16 byte length.",
                 ),
             );
         }
@@ -372,7 +372,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             &mut state,
             error(
                 "PAGINATION_UNVERIFIED",
-                "The independent file cursor did not advance; preserved pages remain available.",
+                "The independent file saved position did not advance; preserved pages remain available.",
             ),
         );
     }
@@ -391,7 +391,7 @@ fn reconcile(id: &Identity, state: &mut Value) -> Vec<Diagnostic> {
     let Some(rows) = state["persistedFiles"].as_array() else {
         return vec![error(
             "KINETIC_FILES_UNVERIFIED",
-            "The persisted file collection is absent.",
+            "The saved file collection is absent.",
         )];
     };
     let mut expected: BTreeMap<String, (&str, &Value)> = BTreeMap::new();
@@ -405,13 +405,13 @@ fn reconcile(id: &Identity, state: &mut Value) -> Vec<Diagnostic> {
         else {
             errors.push(error(
                 "KINETIC_FILE_PATH_UNVERIFIED",
-                "A persisted file does not have the native app-relative path prefix.",
+                "A saved file does not have the Epicor app-relative path prefix.",
             ));
             continue;
         };
         let normalized = path.to_ascii_lowercase();
         match expected.get(&normalized){
-            Some((_,old)) if old["Company"]==row["Company"]=>errors.push(error("KINETIC_FILE_PATH_COLLISION","Two persisted authored files have the same native case-insensitive path in one company.")),
+            Some((_,old)) if old["Company"]==row["Company"]=>errors.push(error("KINETIC_FILE_PATH_COLLISION","Two saved authored files have the same Epicor case-insensitive path in one company.")),
             Some((_,old)) if old["Company"]==""=>(), // Native export selects global content first.
             _=>{expected.insert(normalized,(row["Key2"].as_str().unwrap(),row));}
         }
@@ -430,7 +430,7 @@ fn reconcile(id: &Identity, state: &mut Value) -> Vec<Diagnostic> {
             {
                 errors.push(error(
                     "KINETIC_EXPORT_PATH_COLLISION",
-                    "The native export repeats a case-insensitive path.",
+                    "Epicor's export repeats a case-insensitive path.",
                 ));
             }
         }
@@ -453,7 +453,7 @@ mod tests {
     use super::*;
     fn id() -> Identity {
         Identity {
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             kind: "MetaFXApplication".into(),
             scope: Scope::Company {
                 company: "C".into(),
@@ -509,7 +509,7 @@ mod tests {
         let request = GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             company: "C".into(),
             identity: Some(id()),
             cursor: None,
@@ -548,7 +548,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             company: "C".into(),
             identity: Some(id()),
             cursor: None,
@@ -629,10 +629,10 @@ mod continuation_tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C12".into(),
+                category: "kinetic-applications-and-layers".into(),
                 kind: "MetaFXApplication".into(),
                 scope: Scope::Company {
                     company: "C".into(),

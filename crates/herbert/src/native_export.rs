@@ -15,7 +15,7 @@ pub fn decode_bytes(encoded: &Value) -> Result<Vec<u8>, Diagnostic> {
             .map_err(|_| {
                 Diagnostic::new(
                     "INVALID_NATIVE_BYTES",
-                    "A declared native byte field is not valid base64.",
+                    "A declared Epicor byte field is not valid base64.",
                 )
             }),
         Value::Array(values) => values
@@ -25,12 +25,12 @@ pub fn decode_bytes(encoded: &Value) -> Result<Vec<u8>, Diagnostic> {
             .ok_or_else(|| {
                 Diagnostic::new(
                     "INVALID_NATIVE_BYTES",
-                    "A native byte array contains a non-byte value.",
+                    "An Epicor byte array contains a non-byte value.",
                 )
             }),
         _ => Err(Diagnostic::new(
             "INVALID_NATIVE_BYTES",
-            "A declared native byte field has an unexpected representation.",
+            "A declared Epicor byte field has an unexpected representation.",
         )),
     }
 }
@@ -103,8 +103,8 @@ pub(crate) fn declared_blobs_where(
             if !retained(&pointer) { continue; }
             let bytes=match encoded{
                 Value::String(s)=>base64::engine::general_purpose::STANDARD.decode(s).map_err(|_|herbert_contract::Diagnostic::new("INVALID_NATIVE_BYTES","A declared native byte field is not valid base64. Its original response is preserved."))?,
-                Value::Array(values)=>values.into_iter().map(|v|v.as_u64().and_then(|n|u8::try_from(n).ok())).collect::<Option<Vec<_>>>().ok_or_else(||herbert_contract::Diagnostic::new("INVALID_NATIVE_BYTES","A native byte array contains a non-byte value."))?,
-                _=>return Err(herbert_contract::Diagnostic::new("INVALID_NATIVE_BYTES","A declared native byte field has an unexpected representation.")),
+                Value::Array(values)=>values.into_iter().map(|v|v.as_u64().and_then(|n|u8::try_from(n).ok())).collect::<Option<Vec<_>>>().ok_or_else(||herbert_contract::Diagnostic::new("INVALID_NATIVE_BYTES","An Epicor byte array contains a non-byte value."))?,
+                _=>return Err(herbert_contract::Diagnostic::new("INVALID_NATIVE_BYTES","A declared Epicor byte field has an unexpected representation.")),
             };
             let extension = if declaration.extension != "bin" {
                 declaration.extension.clone()
@@ -181,7 +181,7 @@ pub fn query_blobs(columns: &[String], value: &Value) -> Result<Vec<DeclaredBlob
     let mut blobs = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         for column in columns {
-            let encoded = row.get(column).ok_or_else(|| Diagnostic::new("QUERY_BINARY_FIELD_MISSING", "A native query omitted a selected binary column. Its raw response remains preserved."))?;
+            let encoded = row.get(column).ok_or_else(|| Diagnostic::new("QUERY_BINARY_FIELD_MISSING", "An Epicor query omitted a selected binary column. Its raw response remains preserved."))?;
             if encoded.is_null() {
                 continue;
             }

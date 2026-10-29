@@ -28,7 +28,7 @@ impl Credentials {
         if self.username.is_empty() {
             return Err(Diagnostic::new(
                 "CREDENTIALS_REQUIRED",
-                "Supply a username through the selected credential source. Native authentication determines whether the supplied password is valid.",
+                "Enter a user name for this connection. Epicor checks the password when Herbert connects.",
             ));
         }
         if mode == AuthMode::BasicApiKey && self.api_key.as_ref().is_none_or(|k| k.is_empty()) {
@@ -58,6 +58,14 @@ pub struct Profile {
     #[serde(default)]
     pub defaults: Defaults,
     pub user_file: Option<UserFileRef>,
+    /// Accept this endpoint's certificate when Windows does not trust its issuer
+    /// (self-signed or private CA). Name and dates are still checked. Off by default;
+    /// written only when on, so older profiles and hosts are unaffected.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_untrusted_certificate: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -76,6 +84,8 @@ pub struct FileEnvironment {
     pub credentials: Credentials,
     #[serde(default)]
     pub defaults: Defaults,
+    #[serde(default)]
+    pub allow_untrusted_certificate: bool,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -201,6 +211,7 @@ pub async fn environment_choices(path: &Path) -> Result<Vec<Profile>, Diagnostic
             auth_mode: environment.auth_mode,
             defaults: environment.defaults,
             user_file: None,
+            allow_untrusted_certificate: environment.allow_untrusted_certificate,
         })
         .collect())
 }
@@ -230,6 +241,9 @@ pub enum CredentialSource {
     },
     UserFile {
         path: String,
+        // The schema advertises environmentId; older clients' environment_id
+        // is accepted as an alias only.
+        #[serde(rename = "environmentId", alias = "environment_id")]
         environment_id: String,
     },
     SecureStore,
@@ -244,11 +258,38 @@ pub struct ConnectionInput {
     pub company: Option<String>,
     pub credential_source: CredentialSource,
     pub settings: Option<OperatingSettings>,
+    /// Overrides the saved profile's certificate option for this endpoint only.
+    #[serde(default)]
+    pub allow_untrusted_certificate: Option<bool>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn profile_option_defaults_off_and_round_trips() {
+        // A Release 1 profile has no field: it reads as off and stays byte-compatible.
+        let legacy: Profile = serde_json::from_value(serde_json::json!({"id":"test","url":"https://test.example.invalid/K","authMode":"session","defaults":{}})).unwrap();
+        assert!(!legacy.allow_untrusted_certificate);
+        assert!(serde_json::to_value(&legacy).unwrap().get("allowUntrustedCertificate").is_none(), "off is not written");
+        let mut on = legacy.clone();
+        on.allow_untrusted_certificate = true;
+        let saved = serde_json::to_value(&on).unwrap();
+        assert_eq!(saved["allowUntrustedCertificate"], true);
+        let read: Profile = serde_json::from_value(saved).unwrap();
+        assert!(read.allow_untrusted_certificate);
+        let file: FileEnvironment = serde_json::from_value(serde_json::json!({"id":"a","url":"https://x.test/","authMode":"session","credentials":{"username":"u","password":"p"}})).unwrap();
+        assert!(!file.allow_untrusted_certificate);
+    }
+    #[test]
+    fn user_file_environment_id_accepts_camel_case_alias() {
+        let schema = serde_json::to_string(&schemars::schema_for!(CredentialSource)).unwrap();
+        assert!(schema.contains("\"environmentId\"") && !schema.contains("\"environment_id\""), "the schema advertises environmentId only");
+        for key in ["environment_id", "environmentId"] {
+            let source: CredentialSource = serde_json::from_value(serde_json::json!({"type":"userFile","path":"p.json",(key):"test"})).unwrap();
+            assert!(matches!(source, CredentialSource::UserFile { environment_id, .. } if environment_id == "test"), "{key}");
+        }
+    }
     #[test]
     fn rejects_credential_urls_and_retains_instance_binding() {
         assert!(endpoint("https://user:secret@example.test/instance").is_err());

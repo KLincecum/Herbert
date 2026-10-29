@@ -6,6 +6,39 @@ use std::collections::{BTreeMap, BTreeSet};
 fn invalid(message: impl Into<String>) -> Diagnostic {
     Diagnostic::new("CONFIGURATOR_APP_INVALID", message)
 }
+/// Native ErpMetaFx.ExportApp spells app page paths (AppContent Files keys) with the server's
+/// own separator: 2024 (database version 11.x) keeps the stored backslash ("pages\X"), 2025.2
+/// and 2026.1 (12.x) use "/". Herbert keeps "/" internally and for local file names, and
+/// converts only the native AppContent it writes. An unknown version keeps "/".
+pub fn native_separator(server_version: Option<&str>) -> char {
+    match server_version.and_then(|version| version.split('.').next()?.parse::<u32>().ok()) {
+        Some(major) if major <= 11 => '\\',
+        _ => '/',
+    }
+}
+/// AppContent with Files keys spelled the way this server's native exporter writes them.
+pub fn with_native_keys(app: &Value, separator: char) -> Value {
+    let mut native = app.clone();
+    if let Some(files) = app["Files"].as_object() {
+        native["Files"] = Value::Object(files.iter().map(|(name, text)| (name.replace('/', &separator.to_string()), text.clone())).collect());
+    }
+    native
+}
+/// A native AppContent with "/" Files keys, for validation and local use. Refuses keys that only
+/// differ by separator, because they would name the same file.
+pub fn canonical(app: &Value) -> Result<Value, Diagnostic> {
+    let mut canonical = app.clone();
+    if let Some(files) = app["Files"].as_object() {
+        let mut out = serde_json::Map::new();
+        for (name, text) in files {
+            if out.insert(name.replace('\\', "/"), text.clone()).is_some() {
+                return Err(invalid("Two Epicor app files differ only by path separator."));
+            }
+        }
+        canonical["Files"] = Value::Object(out);
+    }
+    Ok(canonical)
+}
 /// Low-level projection. Production callers use from_visible to establish native
 /// file selection; signature applicability is checked separately.
 pub fn from_rows(company: &str, config: &str, rows: &[Value]) -> Result<Value, Diagnostic> {
@@ -48,7 +81,7 @@ pub fn from_rows(company: &str, config: &str, rows: &[Value]) -> Result<Value, D
             .as_u64()
             .or_else(|| row["HerbertContentBytes"].as_str()?.parse().ok());
         if bytes != Some(content.encode_utf16().count() as u64 * 2) {
-            return Err(invalid("App content failed its native length check."));
+            return Err(invalid("App content failed its Epicor length check."));
         }
         let country = row["CGCCode"]
             .as_str()
@@ -80,7 +113,7 @@ pub fn from_rows(company: &str, config: &str, rows: &[Value]) -> Result<Value, D
         let key = name.to_ascii_lowercase();
         if owner == "" {
             if global.insert(key, (name.into(), content.into())).is_some() {
-                return Err(invalid("Multiple global rows map to one native app path."));
+                return Err(invalid("Multiple global rows map to one Epicor app path."));
             }
         } else {
             company_paths.insert(key);
@@ -90,7 +123,7 @@ pub fn from_rows(company: &str, config: &str, rows: &[Value]) -> Result<Value, D
     // substitute company-only content.
     if company_paths.iter().any(|p| !global.contains_key(p)) {
         return Err(invalid(
-            "A company-only app file has no native global source; retain source and use native fallback.",
+            "A company-only app file has no Epicor global source; retain source and use Epicor fallback.",
         ));
     }
     Ok(
@@ -102,20 +135,20 @@ pub fn from_rows(company: &str, config: &str, rows: &[Value]) -> Result<Value, D
 /// retain their source and use the native fallback; no tenant identity is guessed.
 pub fn from_visible(company: &str, config: &str, source: &Value) -> Result<Value, Diagnostic> {
     if source["complete"] != true {
-        return Err(invalid("App acquisition is incomplete."));
+        return Err(invalid("App download is incomplete."));
     }
     let rows = source["rows"]
         .as_array()
         .ok_or_else(|| invalid("App source omitted rows."))?;
     let visible = source["visibleRows"]
         .as_array()
-        .ok_or_else(|| invalid("App source omitted native selection."))?;
+        .ok_or_else(|| invalid("App source omitted Epicor selection."))?;
     let system = source["systemRows"]
         .as_array()
         .ok_or_else(|| invalid("App source omitted System metadata."))?;
     if !system.is_empty() {
         return Err(invalid(
-            "System app metadata requires the filtered native path.",
+            "System app metadata requires the filtered Epicor path.",
         ));
     }
     let view = format!("Erp.UICfg.{config}_{company}");
@@ -134,15 +167,15 @@ pub fn from_visible(company: &str, config: &str, source: &Value) -> Result<Value
             || item.get("Content").is_some()
         {
             return Err(invalid(
-                "Native app selection requires an unresolved ownership or country path.",
+                "Epicor app selection requires an unresolved ownership or country path.",
             ));
         }
         let id = item["SysRowID"]
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| invalid("Native app selection omitted identity."))?;
+            .ok_or_else(|| invalid("Epicor app selection omitted identity."))?;
         if !seen.insert(id.to_ascii_lowercase()) {
-            return Err(invalid("Native app selection repeated an identity."));
+            return Err(invalid("Epicor app selection repeated an identity."));
         }
         let matches: Vec<_> = rows
             .iter()
@@ -154,7 +187,7 @@ pub fn from_visible(company: &str, config: &str, source: &Value) -> Result<Value
             .collect();
         if matches.len() != 1 {
             return Err(invalid(
-                "A native-selected file lacks a unique downloaded source.",
+                "An Epicor-selected file lacks a unique downloaded source.",
             ));
         }
         let row = matches[0];
@@ -171,14 +204,14 @@ pub fn from_visible(company: &str, config: &str, source: &Value) -> Result<Value
         ] {
             if item[key].is_null() || item[key] != row[key] {
                 return Err(invalid(
-                    "Native file selection changed after its body was read.",
+                    "Epicor file selection changed after its body was read.",
                 ));
             }
         }
         selected.push(row.clone());
     }
     if selected.is_empty() {
-        return Err(invalid("Native app selection contains no files."));
+        return Err(invalid("Epicor app selection contains no files."));
     }
     from_rows(company, config, &selected)
 }
@@ -203,6 +236,25 @@ mod tests {
         alternate["Key3"] = json!("history");
         rows.push(alternate);
         assert_eq!(from_rows("C", "Cfg", &rows).unwrap(), app);
+    }
+    #[test]
+    fn app_page_paths_use_each_versions_native_separator() {
+        // Database versions by release: 2024.2 11.3.200.39, 2025.2 12.1.100.x, 2026.1 12.2.100.9.
+        assert_eq!(native_separator(Some("11.3.200.39")), '\\');
+        assert_eq!(native_separator(Some("12.1.100.29")), '/');
+        assert_eq!(native_separator(Some("12.2.100.9")), '/');
+        assert_eq!(native_separator(None), '/');
+        assert_eq!(native_separator(Some("unknown")), '/');
+        // Herbert's projection is "/"; 2024's native ExportApp writes the stored backslash.
+        let app = from_rows("C", "Cfg", &[row("", "pages/Summary.layout.jsonc", "{}"), row("", "layout.jsonc", "{}")]).unwrap();
+        let native_2024 = with_native_keys(&app, '\\');
+        assert_eq!(serde_json::to_string(&native_2024["Files"]).unwrap(), r#"{"layout.jsonc":"{}","pages\\Summary.layout.jsonc":"{}"}"#);
+        assert_eq!(with_native_keys(&app, '/'), app);
+        // Reading a native app back gives the same local "/" names; collisions are refused.
+        assert_eq!(canonical(&native_2024).unwrap(), app);
+        let mut collision = native_2024.clone();
+        collision["Files"]["pages/Summary.layout.jsonc"] = json!("other");
+        assert!(canonical(&collision).is_err());
     }
     #[test]
     fn malformed_ambiguous_and_foreign_app_rows_do_not_make_packages() {
@@ -279,7 +331,7 @@ mod tests {
     }
     #[test]
     fn supplied_native_app_projection_matches_both_labs() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -300,6 +352,7 @@ mod tests {
                 &read("stored/kinetic/rows.json"),
                 &BTreeMap::new(),
                 &actual,
+                '/',
             )
             .unwrap();
             assert_eq!(

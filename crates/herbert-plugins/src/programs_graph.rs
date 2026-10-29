@@ -17,16 +17,16 @@ fn err(s: &str) -> Diagnostic {
 }
 fn payload(fs: &Value, alias: &str) -> Result<String, Diagnostic> {
     let mut cells = vec![];
-    for f in fs.as_array().ok_or_else(|| err("Invalid graph fields."))? {
+    for f in fs.as_array().ok_or_else(|| err("Epicor returned a definition in a form Herbert does not recognize, so it was not saved."))? {
         let name = f["FieldName"]
             .as_str()
-            .ok_or_else(|| err("Missing graph field name."))?;
+            .ok_or_else(|| err("Missing record set field name."))?;
         if !crate::report_query::identifier(name) {
-            return Err(err("Invalid graph field identifier."));
+            return Err(err("Invalid record set field identifier."));
         }
         let ty = f["DataType"]
             .as_str()
-            .ok_or_else(|| err("Missing graph field type."))?;
+            .ok_or_else(|| err("Missing record set field type."))?;
         let col = format!("{alias}.{name}");
         let value = match ty {
             "sysname" | "nvarchar" | "varchar" | "nchar" | "char" | "xml" | "uniqueidentifier"
@@ -47,7 +47,7 @@ fn payload(fs: &Value, alias: &str) -> Result<String, Diagnostic> {
             "float" | "real" => format!("CONVERT(nvarchar(max),{col},3)"),
             _ => {
                 return Err(err(
-                    "A native graph field type has no lossless JSON projection.",
+                    "An Epicor record set field type has no lossless JSON projection.",
                 ));
             }
         };
@@ -81,11 +81,11 @@ pub fn schema() -> Value {
 }
 pub fn metadata(r: &Value) -> Result<Value, Diagnostic> {
     if r["parameters"]["morePages"] != false {
-        return Err(err("Incomplete extension schema."));
+        return Err(err("Epicor returned an extension without its full field list, so it was not saved."));
     }
     let fs = r["returnObj"]["ZDataField"]
         .as_array()
-        .ok_or_else(|| err("Missing physical fields."))?;
+        .ok_or_else(|| err("Epicor did not return the database fields for this extension, so it was not saved."))?;
     let mut out = json!({});
     for t in TABLES {
         let rows: Vec<_> = fs
@@ -98,7 +98,7 @@ pub fn metadata(r: &Value) -> Result<Value, Diagnostic> {
             || rows.iter().any(|f| f["DBTableName"] != *physical)
             || !rows.iter().any(|f| f["FieldName"] == "SysRowID")
         {
-            return Err(err("Invalid native physical extension schema."));
+            return Err(err("Invalid Epicor physical extension schema."));
         }
         out[*t] = json!(rows);
     }
@@ -114,7 +114,7 @@ pub fn build(
         return Err(err("A company is required."));
     }
     if roots.as_array().is_none_or(Vec::is_empty) {
-        return Err(err("The extension graph requires selected native roots."));
+        return Err(err("The extension record set requires selected Epicor roots."));
     }
     let q = "HerbertProgramsGraph";
     let mut ds = json!({"DynamicQuery":[{"Company":company,"QueryID":q,"Description":"Unsaved complete selected extension graph","Updatable":false,"ExtQuery":false,"IsShared":false,"AllCompanies":false,"XCompany":true,"RowMod":"A"}],"QuerySubQuery":[],"QueryTable":[],"QueryField":[],"QueryWhereItem":[],"QuerySortBy":[],"QueryParameter":[],"QueryCtrl":[],"QueryRelation":[],"QueryRelationField":[]});
@@ -171,12 +171,12 @@ pub fn build(
             if ti < 4 {
                 let ids: Vec<_> = roots
                     .as_array()
-                    .ok_or_else(|| err("Invalid extension roots."))?
+                    .ok_or_else(|| err("Epicor returned extension definitions in a form Herbert does not recognize, so this page was not saved."))?
                     .iter()
                     .map(|r| {
                         r["ExtensionSetID"]
                             .as_str()
-                            .ok_or_else(|| err("Missing extension identity."))
+                            .ok_or_else(|| err("Epicor returned an extension without its ID, so it was not saved."))
                     })
                     .collect::<Result<_, _>>()?;
                 for (i, id) in ids.iter().enumerate() {
@@ -191,16 +191,16 @@ pub fn build(
             } else {
                 let pairs: BTreeSet<_> = refs
                     .as_array()
-                    .ok_or_else(|| err("Invalid extension references."))?
+                    .ok_or_else(|| err("Epicor returned extension references in a form Herbert does not recognize, so this extension was not saved."))?
                     .iter()
                     .map(|r| {
                         Ok((
                             r["SystemCode"]
                                 .as_str()
-                                .ok_or_else(|| err("Missing schema system."))?,
+                                .ok_or_else(|| err("Epicor did not say which system this extension table belongs to, so it was not saved."))?,
                             r["DataTableID"]
                                 .as_str()
-                                .ok_or_else(|| err("Missing schema table."))?,
+                                .ok_or_else(|| err("Epicor did not say which table this extension belongs to, so it was not saved."))?,
                         ))
                     })
                     .collect::<Result<_, Diagnostic>>()?;
@@ -243,11 +243,11 @@ pub fn decode(response: &Value, meta: &Value, company: &str) -> Result<Value, Di
         .as_array()
         .is_some_and(|v| !v.is_empty())
     {
-        return Err(err("The native program graph returned errors."));
+        return Err(err("The Epicor program record set returned errors."));
     }
     let rows = response["returnObj"]["Results"]
         .as_array()
-        .ok_or_else(|| err("The graph omitted Results."))?;
+        .ok_or_else(|| err("The record set omitted Results."))?;
     let mut graph = json!({});
     for t in TABLES {
         graph[*t] = json!([]);
@@ -258,30 +258,30 @@ pub fn decode(response: &Value, meta: &Value, company: &str) -> Result<Value, Di
         let table = wire["Kind"]
             .as_str()
             .filter(|t| TABLES.contains(t))
-            .ok_or_else(|| err("Unknown program graph table."))?;
+            .ok_or_else(|| err("Unknown program record set table."))?;
         let n = wire["Total"]
             .as_i64()
-            .ok_or_else(|| err("Missing program graph total."))?;
+            .ok_or_else(|| err("Missing program record set total."))?;
         if n >= 0 {
             if !wire["Payload"].is_null() || totals.insert(table, n as usize).is_some() {
-                return Err(err("Invalid graph count manifest."));
+                return Err(err("Invalid record set count manifest."));
             }
             continue;
         }
         if n != -1 {
-            return Err(err("Invalid graph row marker."));
+            return Err(err("Invalid record set row marker."));
         }
         let cells: Vec<Value> = serde_json::from_str(
             wire["Payload"]
                 .as_str()
-                .ok_or_else(|| err("Missing graph payload."))?,
+                .ok_or_else(|| err("Epicor's response did not include the definition data. Nothing was saved for this item."))?,
         )
-        .map_err(|_| err("Invalid graph JSON."))?;
+        .map_err(|_| err("Epicor returned a definition in a form Herbert does not recognize, so it was not saved."))?;
         let fs = meta[table]
             .as_array()
-            .ok_or_else(|| err("Missing graph schema."))?;
+            .ok_or_else(|| err("Epicor's response did not describe the definition's fields. Nothing was saved for this item."))?;
         if cells.len() != fs.len() {
-            return Err(err("Graph field count differs from native schema."));
+            return Err(err("Record set field count differs from Epicor schema."));
         }
         let mut row: Value = Value::Object(
             fs.iter()
@@ -303,23 +303,23 @@ pub fn decode(response: &Value, meta: &Value, company: &str) -> Result<Value, Di
         let id = row["SysRowID"]
             .as_str()
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| err("Missing physical graph identity."))?;
+            .ok_or_else(|| err("Missing physical record set identity."))?;
         if !seen.insert((table, id.to_ascii_lowercase())) {
-            return Err(err("Duplicate graph identity."));
+            return Err(err("Epicor returned the same record more than once, so Herbert cannot tell which copy is correct. This item was not saved."));
         }
         if table == "SolutionHeader" && row["Company"] != company {
-            return Err(err("Foreign program company."));
+            return Err(err("Epicor returned a program definition that belongs to a different company than the one selected. It was not saved."));
         }
         if table != "ExtensionSetMapping" && row["SystemFlag"] != false {
             return Err(err(
-                "The custom graph returned system content or omitted its ownership marker.",
+                "The custom record set returned system content or omitted its ownership marker.",
             ));
         }
         graph[table].as_array_mut().unwrap().push(row);
     }
     for t in TABLES {
         if totals.get(t) != Some(&graph[*t].as_array().unwrap().len()) {
-            return Err(err("The graph is missing rows or its count manifest."));
+            return Err(err("The record set is missing rows or its count manifest."));
         }
         graph[*t]
             .as_array_mut()

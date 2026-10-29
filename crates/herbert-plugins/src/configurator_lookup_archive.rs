@@ -88,7 +88,7 @@ pub fn xml(company: &str, lookup: &str, data: &Value) -> Result<String, Diagnost
                 _ => true,
             };
             if !unique {
-                return Err(invalid(format!("{table} repeats a native key.")));
+                return Err(invalid(format!("{table} repeats an Epicor key.")));
             }
         }
     }
@@ -138,7 +138,7 @@ pub fn xml(company: &str, lookup: &str, data: &Value) -> Result<String, Diagnost
                     ("decimal", Value::Number(n)) => n.to_string(),
                     _ => {
                         return Err(invalid(format!(
-                            "{table}.{} does not match native {}.",
+                            "{table}.{} does not match Epicor {}.",
                             field.name, field.kind
                         )));
                     }
@@ -276,7 +276,7 @@ mod tests {
     }
     #[test]
     fn supplied_native_lookup_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -304,7 +304,7 @@ mod tests {
             let request = herbert_contract::GuestRequest {
                 abi: herbert_contract::PLUGIN_ABI,
                 operation: "discover".into(),
-                category: "C19".into(),
+                category: "configurators".into(),
                 company: "TESTCO".into(),
                 identity: None,
                 cursor: Some(json!({"family":1,"page":1}).to_string()),

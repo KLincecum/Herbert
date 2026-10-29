@@ -28,13 +28,13 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Diagnostic> {
         .parent()
         .ok_or_else(|| io_error("INVALID_PATH", "Output needs a parent directory."))?;
     fs::create_dir_all(parent)
-        .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot create the output directory."))?;
+        .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot create the output directory.").with_cause(&e))?;
     // tempfile uses native Windows file APIs when it persists a file. Give
     // those APIs the extended absolute path returned by canonicalize so valid
     // deep output/state folders do not inherit the legacy MAX_PATH limit.
     #[cfg(target_os = "windows")]
     let parent = fs::canonicalize(parent)
-        .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot resolve the output directory."))?;
+        .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot resolve the output directory.").with_cause(&e))?;
     #[cfg(target_os = "windows")]
     let destination = parent.join(
         path.file_name()
@@ -97,14 +97,13 @@ fn commit_error(
 ) -> Diagnostic {
     io_error(
         "OUTPUT_COMMIT_FAILED",
-        &format!(
-            "Cannot {stage} for '{}'. Complete candidate retained at '{}'. Filesystem error: {} (code {:?}).",
-            destination.display(),
-            source.display(),
-            error,
-            error.raw_os_error()
-        ),
+        "Herbert could not move a finished file into the download folder. The completed copy was kept, so nothing was lost. Check that the folder is writable, not open in another program and has free space, then retry.",
     )
+    .with_context("stage", stage)
+    .with_context("destination", destination.display().to_string())
+    .with_context("retainedCopy", source.display().to_string())
+    .with_cause(error)
+    .with_context("osError", error.raw_os_error())
 }
 
 pub fn safe_relative(value: &str) -> Result<PathBuf, Diagnostic> {
@@ -120,7 +119,7 @@ pub fn safe_relative(value: &str) -> Result<PathBuf, Diagnostic> {
             Component::Normal(name) => {
                 let s = name
                     .to_str()
-                    .ok_or_else(|| io_error("UNSAFE_PATH", "Artifact names must be UTF-8."))?;
+                    .ok_or_else(|| io_error("UNSAFE_PATH", "A downloaded item has a name Herbert cannot use as a file name. The item was not saved under that name."))?;
                 let stem = s.split('.').next().unwrap_or("").to_uppercase();
                 if s.ends_with(['.', ' '])
                     || s.chars().any(|c| c.is_control() || "<>\"|?*".contains(c))
@@ -167,6 +166,9 @@ pub struct RunJournal {
     pub server_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<crate::input::AuthMode>,
+    /// How the server certificate was trusted when this run started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_trust: Option<crate::transport_trust::TransportTrust>,
     pub schema_version: u32,
     pub run_id: String,
     pub request_id: String,
@@ -239,6 +241,21 @@ pub struct RunJournal {
     pub collection_method: herbert_contract::CollectionMethod,
     #[serde(default)]
     pub access_leases: Vec<crate::access::AccessLease>,
+    /// Herbert helpers found on the server at completion that neither this run
+    /// nor a matching local journal owns. Reported read-only; never claimed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign_pending_helpers: Vec<ForeignPendingHelper>,
+}
+
+/// A discovered Herbert helper this run cannot attribute. Its activity is
+/// unknown, because no foreign host is called; only explicit recovery can act.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForeignPendingHelper {
+    pub library_id: String,
+    pub global_id: String,
+    pub role: String,
+    pub state: String,
 }
 
 pub struct Storage {
@@ -250,7 +267,20 @@ pub struct Storage {
     pub manifest: Manifest,
     checkpoints: std::sync::Mutex<Option<crate::checkpoint_log::Writer>>,
     output_directories: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    /// When saved progress last reached the log, for paced saves.
+    saved_at: std::sync::Mutex<std::time::Instant>,
+    /// Paced raw files written but not yet synchronized (see `sync_unsynced`).
+    unsynced: std::sync::Mutex<Vec<PathBuf>>,
+    /// Which reference entries each source occurs in (see `replace_references`).
+    pub(crate) reference_sources: crate::processing::ReferenceSources,
 }
+
+/// Collection loops that record one artifact at a time save progress at most
+/// this often (a large production run spent most of its local time saving after
+/// every record). Each loop still saves once when it finishes, and an artifact
+/// recorded since the last save is collected again on resume, where its files
+/// are reused by readback. Operating default, not a platform limit.
+pub(crate) const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
@@ -278,7 +308,7 @@ fn migrate_legacy_metadata(root: &Path) -> Result<(), Diagnostic> {
         return Ok(());
     }
     if fs::symlink_metadata(&old)
-        .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot read existing download data."))?
+        .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot read existing download data.").with_cause(&e))?
         .file_type()
         .is_symlink()
     {
@@ -300,7 +330,7 @@ fn migrate_legacy_metadata(root: &Path) -> Result<(), Diagnostic> {
         .create(true)
         .truncate(false)
         .open(old.join("destination.lock"))
-        .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot open existing download lock."))?;
+        .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot open existing download lock.").with_cause(&e))?;
     lock.try_lock_exclusive().map_err(|_| {
         io_error(
             "DESTINATION_BUSY",
@@ -314,10 +344,10 @@ fn migrate_legacy_metadata(root: &Path) -> Result<(), Diagnostic> {
     fs::rename(&old, &new).map_err(|error| {
         io_error(
             "OUTPUT_UNAVAILABLE",
-            &format!(
-                "Cannot rename the existing download data folder; all files are preserved. {error}"
-            ),
+            "Herbert could not rename the existing download data folder to its new layout. All files were left in place. Close any program using that folder, then retry.",
         )
+        .with_cause(&error)
+        .with_context("osError", error.raw_os_error())
     })?;
     Ok(())
 }
@@ -339,7 +369,7 @@ impl Storage {
                     "Cannot create the selected destination.",
                 )
             })?;
-            fs::create_dir(&chosen).map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot create a new download folder. Choose an unused destination and try again."))?;
+            fs::create_dir(&chosen).map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot create a new download folder. Choose an unused destination and try again.").with_cause(&e))?;
         }
         fs::create_dir_all(&chosen).map_err(|_| {
             io_error(
@@ -384,7 +414,7 @@ impl Storage {
             .create(true)
             .truncate(false)
             .open(lock_path)
-            .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot open the destination lock."))?;
+            .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot open the destination lock.").with_cause(&e))?;
         lock.try_lock_exclusive().map_err(|_|io_error("DESTINATION_BUSY","Another host owns this destination. Attach to that run or choose a different folder."))?;
         let internal_manifest = internal.join("manifest.json");
         let manifest_path = if internal_manifest.exists() || !root.join("manifest.json").exists() {
@@ -423,6 +453,17 @@ impl Storage {
             }
         };
         let mut manifest = crate::checkpoint_log::read_manifest(&root, manifest)?;
+        // A Release 1 destination keys artifacts by identities holding retired codes. Re-key them
+        // in memory so refresh recognizes existing artifacts; a current entry is never replaced.
+        let stored = std::mem::take(&mut manifest.artifacts);
+        let (legacy, current): (Vec<_>, Vec<_>) = stored.into_iter().partition(|(_, artifact)| {
+            crate::legacy_category_ids::current(&artifact.identity.category) != artifact.identity.category
+        });
+        manifest.artifacts = current.into_iter().collect();
+        for (_, mut artifact) in legacy {
+            crate::legacy_category_ids::normalize_identity(&mut artifact.identity);
+            manifest.artifacts.entry(identity_key(&artifact.identity)).or_insert(artifact);
+        }
         if manifest.schema_version != 1
             || manifest.endpoint != journal.endpoint
             || manifest.company != journal.company
@@ -430,7 +471,7 @@ impl Storage {
         {
             return Err(io_error(
                 "DESTINATION_SCOPE_MISMATCH",
-                "This destination belongs to another endpoint, caller or company. Select a matching connection or a separate backup folder.",
+                "This destination belongs to another endpoint, Epicor user or company. Select a matching connection or a separate backup folder.",
             ));
         }
         manifest.checkpoint = Some(crate::checkpoint_log::Marker::new(&journal.run_id));
@@ -443,6 +484,9 @@ impl Storage {
             manifest,
             checkpoints: std::sync::Mutex::new(None),
             output_directories: Default::default(),
+            saved_at: std::sync::Mutex::new(std::time::Instant::now()),
+            unsynced: Default::default(),
+            reference_sources: Default::default(),
         };
         if storage.journal.references.is_empty() {
             storage.journal.references = storage.manifest.references.clone();
@@ -478,7 +522,7 @@ impl Storage {
                 let must_resolve = false;
                 if must_resolve && !current
                     .canonicalize()
-                    .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot resolve output path."))?
+                    .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot resolve output path.").with_cause(&e))?
                     .starts_with(&self.root)
                 {
                     return Err(io_error(
@@ -490,13 +534,46 @@ impl Storage {
         }
         Ok(current)
     }
+    /// Synchronize every paced raw file written since the last save, then their
+    /// folders, so a save never records a file that a crash could still lose.
+    fn sync_unsynced(&self) -> Result<(), Diagnostic> {
+        let files = std::mem::take(&mut *self.unsynced.lock().unwrap_or_else(|e| e.into_inner()));
+        if files.is_empty() {
+            return Ok(());
+        }
+        let failed = || io_error("OUTPUT_WRITE_FAILED", "Herbert could not finish saving downloaded Epicor responses to disk. Check that the download folder is writable and has free space, then retry.");
+        // Flushes are independent; use the same number of threads as the output writers.
+        let chunk = files.len().div_ceil(crate::file_writers::WRITERS);
+        let results: Vec<Result<(), std::io::Error>> = std::thread::scope(|scope| {
+            files.chunks(chunk).map(|part| scope.spawn(move || {
+                for file in part {
+                    OpenOptions::new().write(true).open(file)?.sync_all()?;
+                }
+                Ok(())
+            })).collect::<Vec<_>>().into_iter()
+                .map(|handle| handle.join().unwrap_or_else(|_| Err(std::io::Error::other("flush worker stopped"))))
+                .collect()
+        });
+        if let Some(Err(error)) = results.into_iter().find(Result::is_err) {
+            // Keep them listed so the next save retries before recording anything.
+            self.unsynced.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
+            return Err(failed().with_cause(&error));
+        }
+        // Windows cannot open a directory for flushing; atomic_write skips this step there too.
+        #[cfg(not(target_os = "windows"))]
+        for folder in files.iter().filter_map(|file| file.parent()).collect::<std::collections::BTreeSet<_>>() {
+            File::open(folder).and_then(|f| f.sync_all()).map_err(|e| failed().with_cause(&e))?;
+        }
+        Ok(())
+    }
     pub fn checkpoint(&self) -> Result<(), Diagnostic> {
+        self.sync_unsynced()?;
         // Commit page naming before the journal acknowledges its output files.
         self.checkpoint_names()?;
         let mut writer = self.checkpoints.lock().map_err(|_| {
             io_error(
                 "CHECKPOINT_IO_UNCERTAIN",
-                "The checkpoint writer is unavailable; reopen for reconciliation.",
+                "The saved progress writer is unavailable; reopen for reconciliation.",
             )
         })?;
         let first = writer.is_none();
@@ -508,12 +585,35 @@ impl Storage {
             )?);
         }
         let writer = writer.as_mut().expect("writer initialized");
-        let phase_changed = writer.phase() != self.journal.phase;
+        // The run flips between discovering and acquiring on every page, and
+        // concurrent plugins overwrite each other's value, so those two phases
+        // are progress labels only. Rewriting the complete journal and manifest
+        // views on each flip made long runs quadratic. Any other phase change
+        // (completion, cancellation, cleanup) still refreshes the views, which
+        // recovery requires to be current for a terminal phase.
+        let phase_changed = writer.phase() != self.journal.phase
+            && !matches!(self.journal.phase.as_str(), "discovering" | "acquiring");
         writer.checkpoint(&self.journal, &self.manifest)?;
         if first || phase_changed {
             writer.materialize()?;
         }
+        *self.saved_at.lock().unwrap_or_else(|e| e.into_inner()) = std::time::Instant::now();
         Ok(())
+    }
+    /// Save only when the last save is older than `CHECKPOINT_INTERVAL`.
+    pub(crate) fn checkpoint_paced(&mut self) -> Result<(), Diagnostic> {
+        if self.saved_at.lock().unwrap_or_else(|e| e.into_inner()).elapsed() < CHECKPOINT_INTERVAL {
+            return Ok(());
+        }
+        self.checkpoint_all()
+    }
+    /// Unconditional save that also brings the manifest's mirror of the
+    /// references up to date (paced recording defers that clone).
+    pub(crate) fn checkpoint_all(&mut self) -> Result<(), Diagnostic> {
+        if self.manifest.references != self.journal.references {
+            self.manifest.references = self.journal.references.clone();
+        }
+        self.checkpoint()
     }
     fn materialize_checkpoint(&self) -> Result<(), Diagnostic> {
         self.checkpoints
@@ -521,19 +621,29 @@ impl Storage {
             .map_err(|_| {
                 io_error(
                     "CHECKPOINT_IO_UNCERTAIN",
-                    "The checkpoint writer is unavailable; reopen for reconciliation.",
+                    "The saved progress writer is unavailable; reopen for reconciliation.",
                 )
             })?
             .as_mut()
             .ok_or_else(|| {
                 io_error(
                     "CHECKPOINT_IO_UNCERTAIN",
-                    "The checkpoint writer was not initialized.",
+                    "The saved progress writer was not initialized.",
                 )
             })?
             .materialize()
     }
-    pub fn record_artifact(&mut self, mut artifact: Artifact) -> Result<(), Diagnostic> {
+    pub fn record_artifact(&mut self, artifact: Artifact) -> Result<(), Diagnostic> {
+        self.stage_artifact(artifact)?;
+        self.checkpoint_all()
+    }
+    /// Record an artifact and save on the paced schedule. The caller's loop must
+    /// end with `checkpoint_all` (or a run checkpoint).
+    pub(crate) fn record_artifact_paced(&mut self, artifact: Artifact) -> Result<(), Diagnostic> {
+        self.stage_artifact(artifact)?;
+        self.checkpoint_paced()
+    }
+    fn stage_artifact(&mut self, mut artifact: Artifact) -> Result<(), Diagnostic> {
         crate::processing_status::reconcile(&mut artifact);
         for reference in &artifact.files {
             self.verify(reference)?;
@@ -553,8 +663,7 @@ impl Storage {
             .artifacts
             .retain(|previous| previous.identity != artifact.identity);
         self.journal.artifacts.push(artifact);
-        self.manifest.references = self.journal.references.clone();
-        self.checkpoint()
+        Ok(())
     }
     /// A page writer reads stable receipts without holding the run mutex.
     /// The owner commits returned artifacts. This view must never checkpoint or
@@ -585,20 +694,47 @@ impl Storage {
         Self { root: self.root.clone(), _lock: self._lock.clone(),
             output_names: self.output_names.clone(), page_owns_derived_files: true,
             journal, manifest,
-            checkpoints: std::sync::Mutex::new(None), output_directories: Default::default() }
+            checkpoints: std::sync::Mutex::new(None), output_directories: Default::default(),
+            saved_at: std::sync::Mutex::new(std::time::Instant::now()), unsynced: Default::default(),
+            reference_sources: Default::default() }
     }
     pub fn release_destination(&mut self) -> Result<(), Diagnostic> {
-        self.checkpoint()?;
+        self.checkpoint_all()?;
+        // Leave one complete pages.json for readers that predate pages.log.
+        self.compact_names()?;
         self.materialize_checkpoint()?;
         FileExt::unlock(self._lock.as_ref()).map_err(|_| {
             io_error(
                 "DESTINATION_RELEASE_UNCERTAIN",
-                "The checkpoint was saved but releasing the destination lock failed.",
+                "The saved progress was saved but releasing the destination lock failed.",
             )
         })
     }
     pub fn preserve_raw(&mut self, bytes: &[u8], extension: &str) -> Result<FileRef, Diagnostic> {
         self.preserve_immutable(bytes, extension, "native")
+    }
+    /// `preserve_for` for each retained server response. A response is a
+    /// content-addressed raw file: once its bytes are synchronized under their
+    /// own hash, a crash before the record is saved leaves a file that the same
+    /// response finds and verifies on resume, so neither the write-ahead record
+    /// nor the completion record needs its own save. Three full saves per
+    /// response made a full 2024.2 backup spend 39-46 s retaining responses.
+    /// Progress is saved on the paced schedule instead.
+    pub(crate) fn preserve_for_paced(
+        &mut self,
+        identity: Option<&Identity>,
+        bytes: &[u8],
+        extension: &str,
+    ) -> Result<FileRef, Diagnostic> {
+        let file = self.retain_immutable(bytes, extension, "native", false)?;
+        if let Some(identity) = identity {
+            let owned = self.journal.artifact_acquisitions.entry(identity_key(identity)).or_default();
+            if !owned.iter().any(|previous| previous.path == file.path && previous.sha256 == file.sha256) {
+                owned.push(file.clone());
+            }
+        }
+        self.checkpoint_paced()?;
+        Ok(file)
     }
     pub fn preserve_for(
         &mut self,
@@ -653,7 +789,7 @@ impl Storage {
             {
                 return Err(io_error(
                     "PAYLOAD_OWNERSHIP_DENIED",
-                    "Payload assembly can read only native chunks acquired for this exact artifact.",
+                    "Payload assembly can read only Epicor chunks downloaded for this exact artifact.",
                 ));
             }
             self.verify(chunk)?;
@@ -666,7 +802,7 @@ impl Storage {
             )
         })?;
         let mut temporary = tempfile::NamedTempFile::new_in(&staging)
-            .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot create the assembled payload."))?;
+            .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot create the assembled payload.").with_cause(&e))?;
         let mut hash = Sha256::new();
         let mut total = 0u64;
         {
@@ -676,7 +812,7 @@ impl Storage {
             };
             for chunk in chunks {
                 let mut input = File::open(self.confined(&chunk.path)?)
-                    .map_err(|_| io_error("RAW_UNAVAILABLE", "A verified chunk is unavailable."))?;
+                    .map_err(|e| io_error("RAW_UNAVAILABLE", "A verified chunk is unavailable.").with_cause(&e))?;
                 total = total
                     .checked_add(std::io::copy(&mut input, &mut writer).map_err(|_| {
                         io_error(
@@ -687,7 +823,7 @@ impl Storage {
                     .ok_or_else(|| {
                         io_error(
                             "PAYLOAD_LENGTH_OVERFLOW",
-                            "The assembled byte count exceeds the native u64 representation.",
+                            "The pieces of a downloaded file add up to an impossible size. The file was not saved; retry the download.",
                         )
                     })?;
             }
@@ -696,13 +832,13 @@ impl Storage {
         if total != bytes || digest != expected {
             return Err(io_error(
                 "PAYLOAD_INTEGRITY_FAILED",
-                "The assembled payload length or SHA256 differs from its native transfer metadata.",
+                "A downloaded file did not match the size or checksum Epicor reported, so it was not saved. Retry the download.",
             ));
         }
         temporary.as_file().sync_all().map_err(|_| {
             io_error(
                 "OUTPUT_WRITE_FAILED",
-                "Cannot synchronize the assembled native payload.",
+                "Cannot synchronize the assembled Epicor payload.",
             )
         })?;
         let file = FileRef {
@@ -719,7 +855,7 @@ impl Storage {
                 .parent()
                 .ok_or_else(|| io_error("INVALID_PATH", "Payload has no parent directory."))?,
         )
-        .map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot create the payload directory."))?;
+        .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot create the payload directory.").with_cause(&e))?;
         if destination.exists() {
             self.verify(&file)?;
         } else if let Err(mut error) = temporary.into_temp_path().persist_noclobber(&destination) {
@@ -769,8 +905,18 @@ impl Storage {
         extension: &str,
         role: &str,
     ) -> Result<FileRef, Diagnostic> {
+        self.retain_immutable(bytes, extension, role, true)
+    }
+    /// `durable` saves progress before (write-ahead) and after the file.
+    fn retain_immutable(
+        &mut self,
+        bytes: &[u8],
+        extension: &str,
+        role: &str,
+        durable: bool,
+    ) -> Result<FileRef, Diagnostic> {
         if !extension.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(io_error("UNSAFE_PATH", "Native file extension is invalid."));
+            return Err(io_error("UNSAFE_PATH", "Epicor file extension is invalid."));
         }
         let digest = sha256(bytes);
         let relative = format!("Herbert Data/raw/{}/{}.{}", &digest[..2], digest, extension);
@@ -797,17 +943,32 @@ impl Storage {
             self.verify(&reference)?;
             return Ok(reference);
         }
-        self.journal.pending_files.push(reference.clone());
-        self.checkpoint()?;
-        if path.exists() {
-            self.verify(&reference)?;
-        } else {
-            atomic_write(&path, bytes)?;
-            self.verify(&reference)?;
+        if durable {
+            self.journal.pending_files.push(reference.clone());
+            self.checkpoint()?;
         }
-        self.journal
-            .pending_files
-            .retain(|r| r.path != reference.path);
+        // Reaching here, the file is not recorded. Herbert owns raw/ and names
+        // each file by its hash, so a file whose bytes differ (a write torn by a
+        // crash before its batch was synchronized) is rewritten, not refused.
+        if !(path.exists() && self.verify(&reference).is_ok()) {
+            if durable {
+                atomic_write(&path, bytes)?;
+                self.verify(&reference)?;
+            } else {
+                // No per-file flush or rename: the next save synchronizes every
+                // file written since the last one before it records them.
+                fs::create_dir_all(path.parent().ok_or_else(|| io_error("INVALID_PATH", "Output needs a parent directory."))?)
+                    .map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot create the output directory.").with_cause(&e))?;
+                fs::write(&path, bytes)
+                    .map_err(|e| io_error("OUTPUT_WRITE_FAILED", "Herbert could not save a downloaded Epicor response. Check that the download folder is writable and has free space, then retry.").with_cause(&e))?;
+                self.unsynced.lock().unwrap_or_else(|e| e.into_inner()).push(path.clone());
+            }
+        }
+        if durable {
+            self.journal
+                .pending_files
+                .retain(|r| r.path != reference.path);
+        }
         if !self
             .journal
             .acquisitions
@@ -819,7 +980,9 @@ impl Storage {
         self.manifest
             .retained_files
             .insert(sha256(relative.as_bytes()), reference.clone());
-        self.checkpoint()?;
+        if durable {
+            self.checkpoint()?;
+        }
         Ok(reference)
     }
     /// A guest may inspect its own preserved bytes, never an arbitrary path.
@@ -848,13 +1011,13 @@ impl Storage {
         if reference.role != "native" || !owned {
             return Err(io_error(
                 "PAYLOAD_OWNERSHIP_DENIED",
-                "Projection can read only native bytes acquired for this exact operation.",
+                "Projection can read only Epicor bytes downloaded for this exact operation.",
             ));
         }
         let bytes = fs::read(self.confined(&reference.path)?).map_err(|_| {
             io_error(
                 "RAW_UNAVAILABLE",
-                "The acquired native source is unavailable.",
+                "The downloaded Epicor source is unavailable.",
             )
         })?;
         // Verify the same buffer that is parsed, avoiding a second file read
@@ -862,7 +1025,7 @@ impl Storage {
         if bytes.len() as u64 != reference.bytes || sha256(&bytes) != reference.sha256 {
             return Err(io_error(
                 "INTEGRITY_FAILED",
-                "The acquired native source no longer matches its recorded length and SHA256.",
+                "A downloaded file changed on disk after it was checked. Herbert stopped using it. Download the item again.",
             ));
         }
         Ok(bytes)
@@ -911,18 +1074,18 @@ impl Storage {
     ) -> Result<serde_json::Value, Diagnostic> {
         let bytes = self.read_owned_native(identity, reference, issued)?;
         let view = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
-        serde_json::from_slice(view).map_err(|_| io_error("NATIVE_JSON_INVALID", "The verified native bytes are not a valid UTF-8 JSON document. Original bytes remain preserved."))
+        serde_json::from_slice(view).map_err(|e| io_error("NATIVE_JSON_INVALID", "Epicor returned data that is not valid JSON. Herbert kept the original bytes for investigation.").with_cause(&e))
     }
     pub fn verify(&self, reference: &FileRef) -> Result<(), Diagnostic> {
         let mut file = File::open(self.confined(&reference.path)?)
-            .map_err(|_| io_error("RAW_UNAVAILABLE", "A recorded native file is unavailable."))?;
+            .map_err(|e| io_error("RAW_UNAVAILABLE", "A recorded Epicor file is unavailable.").with_cause(&e))?;
         let mut hash = Sha256::new();
         let bytes = std::io::copy(&mut file, &mut HashWriter(&mut hash))
-            .map_err(|_| io_error("INTEGRITY_FAILED", "Cannot read the full native artifact."))?;
+            .map_err(|e| io_error("INTEGRITY_FAILED", "Cannot read the full Epicor artifact.").with_cause(&e))?;
         if bytes != reference.bytes || hex::encode(hash.finalize()) != reference.sha256 {
             return Err(io_error(
                 "INTEGRITY_FAILED",
-                "Native length or hash does not match its recorded evidence.",
+                "Epicor length or hash does not match its recorded evidence.",
             ));
         }
         Ok(())
@@ -978,7 +1141,7 @@ impl Storage {
                 file: temporary.as_file_mut(),
                 hash: &mut hash,
             };
-            std::io::copy(input,&mut writer).map_err(|_|io_error("SOURCE_STREAM_FAILED","Cannot read and preserve the complete source view; original native acquisitions remain available."))?
+            std::io::copy(input,&mut writer).map_err(|_|io_error("SOURCE_STREAM_FAILED","Cannot read and preserve the complete source view; original Epicor downloads remain available."))?
         };
         // Ordinary downloads use the OS write cache. Hash the bytes as they are
         // written; recovery verifies files before it reuses their receipts.
@@ -1033,7 +1196,7 @@ impl Storage {
             if edited {
                 fs::create_dir_all(destination.parent().ok_or_else(|| {
                     io_error("INVALID_PATH", "A conflict file has no parent directory.")
-                })?).map_err(|_| io_error("OUTPUT_UNAVAILABLE", "Cannot create the conflict directory."))?;
+                })?).map_err(|e| io_error("OUTPUT_UNAVAILABLE", "Cannot create the conflict directory.").with_cause(&e))?;
             }
             commit_temporary(temporary, &destination)?;
         }
@@ -1079,7 +1242,7 @@ impl Storage {
             } else {
                 self.journal.diagnostics.push(Diagnostic::new(
                     "RECOVERED_FILE",
-                    format!("Verified a committed native file: {}", file.path),
+                    format!("Verified a committed Epicor file: {}", file.path),
                 ));
             }
         }
@@ -1115,6 +1278,7 @@ pub fn new_journal(request_id: String) -> RunJournal {
     RunJournal {
         server_version: None,
         auth_mode: None,
+        transport_trust: None,
         schema_version: 1,
         run_id: Uuid::new_v4().to_string(),
         request_id,
@@ -1156,6 +1320,7 @@ pub fn new_journal(request_id: String) -> RunJournal {
         server_change_authority_history:vec![],
         collection_method: herbert_contract::CollectionMethod::default(),
         access_leases: vec![],
+        foreign_pending_helpers: vec![],
     }
 }
 
@@ -1165,7 +1330,7 @@ mod tests {
     use herbert_contract::Scope;
     fn id() -> Identity {
         Identity {
-            category: "C01".into(),
+            category: "ud-codes".into(),
             kind: "UDCodeType".into(),
             scope: Scope::Company {
                 company: "A".into(),
@@ -1226,7 +1391,8 @@ mod tests {
         fs::write(destination.join("sentinel"), b"original").unwrap();
         let error = atomic_write(&destination, b"recover this candidate").unwrap_err();
         assert_eq!(error.code, "OUTPUT_COMMIT_FAILED");
-        assert!(error.message.contains("replace destination"));
+        assert_eq!(error.context["stage"], "replace destination");
+        assert!(error.message.starts_with("Herbert could not move a finished file into the download folder."));
         assert_eq!(fs::read(destination.join("sentinel")).unwrap(), b"original");
         let candidates = fs::read_dir(dir.path())
             .unwrap()
@@ -1239,8 +1405,9 @@ mod tests {
             b"recover this candidate"
         );
         assert!(
-            error
-                .message
+            error.context["retainedCopy"]
+                .as_str()
+                .unwrap()
                 .contains(&candidates[0].file_name().to_string_lossy().to_string())
         );
     }
@@ -1443,5 +1610,74 @@ mod tests {
                 .code,
             "INTEGRITY_FAILED"
         );
+    }
+
+    /// A retained response is saved on the paced schedule. If the process stops
+    /// before that save, the next run's identical response finds the synchronized
+    /// content-addressed file, verifies it and records it without a conflict.
+    #[test]
+    fn paced_response_retention_recovers_an_unrecorded_file_by_its_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = new_journal("paced-retain".into());
+        let mut s = Storage::open(dir.path(), false, journal.clone()).unwrap();
+        let file = s.preserve_for_paced(Some(&id()), b"{\"response\":1}", "json").unwrap();
+        assert!(s.journal.pending_files.is_empty());
+        assert_eq!(s.journal.artifact_acquisitions[&identity_key(&id())], [file.clone()]);
+        drop(s); // no save: the record is lost, the synchronized file is not
+        let mut s = Storage::open(dir.path(), false, new_journal("paced-retain-resume".into())).unwrap();
+        assert!(!s.journal.acquisitions.contains(&file));
+        let again = s.preserve_for_paced(Some(&id()), b"{\"response\":1}", "json").unwrap();
+        assert_eq!(again, file);
+        s.checkpoint_all().unwrap();
+        s.verify(&again).unwrap();
+        assert!(s.journal.acquisitions.contains(&again));
+        // Durable callers keep their write-ahead and completion saves.
+        let durable = s.preserve_for(Some(&id()), b"{\"response\":2}", "json").unwrap();
+        assert!(s.journal.acquisitions.contains(&durable));
+    }
+
+    /// Paced files are written without a per-file flush and synchronized as a
+    /// batch by the next save, before it records them. A crash before that save
+    /// can leave a torn, unrecorded file; resume rewrites it from the response.
+    #[test]
+    fn a_crash_between_write_and_batch_sync_rewrites_the_torn_unrecorded_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Storage::open(dir.path(), false, new_journal("torn".into())).unwrap();
+        let files: Vec<_> = (0..20).map(|index| s.preserve_for_paced(Some(&id()), format!("{{\"r\":{index}}}").as_bytes(), "json").unwrap()).collect();
+        assert_eq!(s.unsynced.lock().unwrap().len(), 20);
+        s.checkpoint().unwrap();
+        assert!(s.unsynced.lock().unwrap().is_empty(), "a save synchronizes the batch first");
+        let torn = s.preserve_for_paced(Some(&id()), b"{\"r\":\"late\"}", "json").unwrap();
+        drop(s); // crash before the next save: `torn` is written but unsynchronized and unrecorded
+        fs::write(dir.path().join(&torn.path), b"{\"r\":").unwrap();
+        let mut s = Storage::open(dir.path(), false, new_journal("torn-resume".into())).unwrap();
+        let again = s.preserve_for_paced(Some(&id()), b"{\"r\":\"late\"}", "json").unwrap();
+        assert_eq!(again, torn);
+        s.checkpoint().unwrap();
+        s.verify(&again).unwrap();
+        for file in &files { s.verify(file).unwrap(); }
+        drop(s);
+        // The durable path repairs a torn unrecorded file the same way.
+        fs::write(dir.path().join(&files[0].path), b"torn").unwrap();
+        let mut fresh = Storage::open(dir.path(), false, new_journal("torn-durable".into())).unwrap();
+        fresh.preserve_for(Some(&id()), b"{\"r\":0}", "json").unwrap();
+        fresh.verify(&files[0]).unwrap();
+    }
+
+    #[test]
+    #[ignore = "Measurement: durable against paced retention of server responses"]
+    fn measure_response_retention() {
+        for (total, paced) in [(2_000, false), (2_000, true), (5_000, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut s = Storage::open(dir.path(), false, new_journal("measure-retain".into())).unwrap();
+            let started = std::time::Instant::now();
+            for index in 0..total {
+                let body = format!("{{\"response\":{index},\"rows\":\"{}\"}}", "x".repeat(2048));
+                if paced { s.preserve_for_paced(Some(&id()), body.as_bytes(), "json").unwrap(); }
+                else { s.preserve_for(Some(&id()), body.as_bytes(), "json").unwrap(); }
+            }
+            s.checkpoint_all().unwrap();
+            eprintln!("MEASURE retain responses={total} paced={paced} elapsedMs={}", started.elapsed().as_millis());
+        }
     }
 }

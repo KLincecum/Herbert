@@ -157,7 +157,7 @@ fn next(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
                         &mut r,
                         Diagnostic::new(
                             "CONFIGURATOR_SIGNATURE_UNVERIFIED",
-                            "Local XML and original source are retained; native signature applicability has not been established for this environment.",
+                            "Local XML and original source are retained; Epicor signature applicability has not been established for this environment.",
                         ),
                     );
                 }
@@ -171,7 +171,8 @@ fn next(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
                         ) {
                             Ok(app) => {
                                 r.state["supplements"]["ConfiguratorCurrentFiles"] = json!({"files":app["Files"],"rows":r.state["supplements"]["StoredApp"]["rows"]});
-                                r.state["supplements"]["LocalAppContent"] = app;
+                                // Saved as this server's native ExportApp would write it.
+                                r.state["supplements"]["LocalAppContent"] = crate::configurator_app::with_native_keys(&app, native_separator(&r));
                                 r.state["configuratorAppPolicyAllowed"] = json!(true);
                                 r.state["configuratorFilesComplete"] = json!(true);
                                 return finish_local_kinetic(r, spec);
@@ -214,6 +215,10 @@ fn next(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
         state: r.state,
     }
 }
+/// The host supplies the connected server's database version.
+fn native_separator(r: &GuestRequest) -> char {
+    crate::configurator_app::native_separator(r.state["_hostServerVersion"].as_str())
+}
 fn finish_local_kinetic(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
     if r.state["configuratorAppPolicyAllowed"] == true
         && r.state["configuratorFilesComplete"] == true
@@ -229,6 +234,7 @@ fn finish_local_kinetic(mut r: GuestRequest, spec: &super::Family) -> GuestReply
             &r.state["supplements"]["StoredConfigurator"],
             &BTreeMap::new(),
             &app,
+            native_separator(&r),
         ) {
             Ok(bytes) => {
                 r.state["localZip"] = json!({"name":format!("{}.zip",crate::bpm_code::label(&r.identity.as_ref().unwrap().keys["ConfigID"])),"bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes)),"base64":base64::engine::general_purpose::STANDARD.encode(&bytes)})
@@ -276,7 +282,15 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
             return finish(r, spec);
         }
         let response = r.response.take().unwrap_or(Value::Null);
-        let app = response["returnObj"].clone();
+        let native = response["returnObj"].clone();
+        // 2024 writes "pages\X"; use "/" names locally and keep the native response as received.
+        let app = match crate::configurator_app::canonical(&native) {
+            Ok(app) => app,
+            Err(error) => {
+                record(&mut r, error);
+                return finish(r, spec);
+            }
+        };
         // Validate the native envelope before accepting any filenames or bodies.
         if let Err(error) = crate::configurator_archive::validate_kinetic_app(
             &r.state["supplements"]["StoredConfigurator"],
@@ -288,7 +302,7 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
         r.state["nativeAppFiles"] = app["Files"].clone();
         r.state["supplements"]["ConfiguratorCurrentFiles"] =
             json!({"files":app["Files"],"rows":[]});
-        r.state["supplements"]["NativeAppContent"] = app;
+        r.state["supplements"]["NativeAppContent"] = native;
         if let Some(action) = super::configurator_export::files_start(&mut r, "configLocalFiles") {
             return GuestReply::Action {
                 action,
@@ -338,7 +352,7 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
         if let Some(stored) = &stored {
             let Some(stored_roots) = stored["PcStatus"].as_array().filter(|rows| rows.len() == 1)
             else {
-                return fail("The stored configurator graph omitted its unique root.");
+                return fail("The stored configurator record set omitted its unique root.");
             };
             if super::make_identity(spec, &stored_roots[0], &r.company)
                 .ok()
@@ -346,26 +360,19 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
                 != r.identity.as_ref()
                 || stored_roots[0]["SysRowID"] != rows[0]["SysRowID"]
             {
-                return fail("The stored configurator graph differs from its visible identity.");
+                return fail("The stored configurator record set differs from its visible identity.");
             }
         }
         let stored_app = r.state.pointer("/_inventory/storedApp").cloned();
-        r.state = json!({"phase":"configImages","definition":data,"supplements":{},"errors":[]});
+        r.state = json!({"phase":"configStart","definition":data,"supplements":{},"errors":[]});
         if let Some(stored) = stored {
             r.state["supplements"]["StoredConfigurator"] = stored;
         }
         if let Some(app) = stored_app {
             r.state["supplements"]["StoredApp"] = app;
         }
-        return GuestReply::Action {
-            action: HostAction::SharedNativeRead {
-                service: spec.service.clone(),
-                method: "RetrievePcLayeredImagesForExport".into(),
-                arguments: json!({"configID":r.identity.as_ref().unwrap().keys["ConfigID"],"configImportExportLayeredImageTableset":{"ConfigImportExportLayeredImage":[],"ExtensionTables":[]}}),
-                export: false,
-            },
-            state: r.state,
-        };
+        // The layered-image read belongs to the native-export fallback only (configurator_export::start).
+        return next(r, spec);
     }
     if phase == "configImages" {
         if let Some(d) = r.error.take() {
@@ -466,7 +473,15 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
             return fail("The parsed app differs from the downloaded package.");
         }
         let name = format!("{}.jsonc", r.identity.as_ref().unwrap().keys["ConfigID"]);
-        let app = &response["parsedJsonArchive"]["documents"][&name]["json"];
+        // 2024's native package writes "pages\X"; use "/" names locally.
+        let app = match crate::configurator_app::canonical(&response["parsedJsonArchive"]["documents"][&name]["json"]) {
+            Ok(app) => app,
+            Err(error) => {
+                record(&mut r, error);
+                return finish(r, spec);
+            }
+        };
+        let app = &app;
         let id = r.identity.as_ref().unwrap();
         let view = format!("Erp.UICfg.{}_{}", id.keys["ConfigID"], id.keys["Company"]);
         if !(app["ViewId"] == id.keys["ConfigID"] || app["ViewId"] == view)
@@ -571,7 +586,7 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
     if phase == "configExpressions" {
         return expressions(r, spec);
     }
-    fail("The configurator download checkpoint is invalid.")
+    fail("The configurator download saved progress is invalid.")
 }
 
 #[cfg(test)]
@@ -579,7 +594,7 @@ mod local_kinetic_tests {
     use super::*;
     #[test]
     fn supplied_kinetic_acquisition_builds_locally_and_preserves_partial_failures() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -598,7 +613,7 @@ mod local_kinetic_tests {
                 "bulk-stale",
             ] {
                 let identity = Identity {
-                    category: "C19".into(),
+                    category: "configurators".into(),
                     kind: "Configurator".into(),
                     scope: Scope::Company {
                         company: "TESTCO".into(),
@@ -611,7 +626,7 @@ mod local_kinetic_tests {
                 let mut r = GuestRequest {
                     abi: PLUGIN_ABI,
                     operation: "acquire".into(),
-                    category: "C19".into(),
+                    category: "configurators".into(),
                     company: "TESTCO".into(),
                     identity: Some(identity),
                     cursor: None,
@@ -704,7 +719,8 @@ mod local_kinetic_tests {
                                     crate::configurator_archive::kinetic_package(
                                         &stored,
                                         &BTreeMap::new(),
-                                        &app
+                                        &app,
+                                        '/'
                                     )
                                     .unwrap()
                                 );

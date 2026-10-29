@@ -36,9 +36,9 @@ impl AboutPanel {
         let about = crate::about::information();
         ui.vertical_centered(|ui| {
             ui.add_space(16.0);
-            ui.label(RichText::new(about.name).size(30.0).strong());
+            ui.label(RichText::new(about.name).size(super::TEXT_DISPLAY).strong());
             ui.label(RichText::new(format!("Version {}", about.version)).weak());
-            let time = ui.input(|input| input.time) as f32;
+            let time = super::animation_phase_time(ui);
             let (space, _) = ui.allocate_exact_size(egui::vec2(160.0, 120.0), egui::Sense::hover());
             let center = space.center() + egui::vec2((time * 1.5).sin() * 20.0, (time * 3.0).sin() * 3.0);
             ui.put(egui::Rect::from_center_size(center, egui::vec2(106.0, 106.0)),
@@ -61,7 +61,7 @@ impl AboutPanel {
             ui.add_space(8.0);
             ui.label("Creator of Herbert");
             ui.add_space(20.0);
-            ui.label(RichText::new(about.dedication).size(18.0));
+            ui.label(RichText::new(about.dedication).size(super::TEXT_LEAD));
             ui.add_space(16.0);
             for profile in about.profiles {
                 ui.hyperlink_to(profile.label, profile.url);
@@ -70,6 +70,6 @@ impl AboutPanel {
             ui.label(RichText::new(about.copyright).small().weak());
             ui.add_space(16.0);
         });
-        ui.ctx().request_repaint();
+        super::request_animation_frame(ui.ctx(), super::ABOUT_ANIMATION_FRAME);
     }
 }

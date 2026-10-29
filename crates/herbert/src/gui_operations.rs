@@ -104,6 +104,7 @@ impl Gui {
                 } else {
                     None
                 },
+                allow_untrusted_certificate: self.allow_untrusted_certificate,
             };
             crate::input::validate_profile(&profile)?;
             let credentials = if self.source == Source::Entered {
@@ -169,7 +170,7 @@ impl Gui {
         let source = match self.source {
             Source::File => {
                 self.check_file_selection()?;
-                json!({"type":"userFile","path":self.input_file,"environment_id":self.file_environment})
+                json!({"type":"userFile","path":self.input_file,"environmentId":self.file_environment})
             }
             Source::Saved => {
                 self.check_saved_endpoint()?;
@@ -185,8 +186,14 @@ impl Gui {
             "url":if self.source==Source::File{None}else{Some(&self.url)},
             "authMode":if self.source==Source::File{None}else{Some(self.mode)},
             "company":if self.source==Source::File&&!self.file_company_override{None}else{Some(&self.company)},
-            "settings":settings,"credentialSource":source
+            "settings":settings,"credentialSource":source,
+            "allowUntrustedCertificate":self.allow_untrusted_certificate
         }))
+    }
+    /// A download needs a company; the Connection screen explains how to choose one.
+    pub(super) fn company_missing(&self) -> bool {
+        self.company.trim().is_empty() && !(self.source == Source::File && !self.file_company_override
+            && self.file_choices.iter().any(|p| p.id == self.file_environment && p.defaults.company.as_deref().is_some_and(|c| !c.is_empty())))
     }
     pub(super) fn start_download(&mut self, ctx: &egui::Context) {
         if !self.editable() {
@@ -220,7 +227,8 @@ impl Gui {
                         "Choose Separate folder or Refresh existing folder.",
                     )
                 })?;
-                let request = json!({"requestId":uuid::Uuid::new_v4().to_string(),"destination":self.destination,"outputMode":if separate{"separate"}else{"refresh"},"collectionMethod":self.collection_method,"categories":categories,"pageSize":settings.page_size,"temporaryAccess":self.temporary_access,"pluginSettings":self.plugin_settings});
+                let mut request = json!({"requestId":uuid::Uuid::new_v4().to_string(),"destination":self.destination,"outputMode":if separate{"separate"}else{"refresh"},"collectionMethod":self.collection_method,"categories":categories,"pageSize":settings.page_size,"temporaryAccess":self.temporary_access,"pluginSettings":self.plugin_settings});
+                if self.authorization_choice == super::gui_server_changes::AuthorizationChoice::Workflow && !self.authorization_workflow.trim().is_empty() { request["workflowId"] = json!(self.authorization_workflow); }
                 Ok((connection, request, settings))
             })();
         let (connection, request, settings) = match preparation {
@@ -230,42 +238,36 @@ impl Gui {
                 return;
             }
         };
-        self.run_id.clear();
-        self.journal = None;
-        self.output_root.clear();
-        self.working = true;
-        self.notice = "Preparing download…".into();
-        self.diagnostic = None;
-        let host = self.host.clone();
-        let sender = self.sender.clone();
-        let connected = cleanup_before_login(self.connected, self.cleanup_pending);
-        let ctx = ctx.clone();
+        let readiness_key = self.account_key().ok();
+        let connection_key = super::gui_server_changes::connection_key(&connection, true);
+        let reuse = self.connected && !self.cleanup_pending && self.connected_key.as_deref() == Some(connection_key.as_str());
+        self.run_id.clear();self.journal=None;self.output_root.clear();self.selected_authorization=None;
+        self.working=true;self.notice="Preparing read-only preview…".into();self.diagnostic=None;
+        let host=self.host.clone();let sender=self.sender.clone();
+        let connected=cleanup_before_login(self.connected,self.cleanup_pending);let ctx=ctx.clone();
         self.runtime.spawn(async move {
-            let result = async {
-                let settings = execute(&host, "settings.update", json!(settings)).await;
-                if !settings.ok {
-                    return settings;
-                }
-                if connected {
-                    let disconnected = execute(&host, "connection.disconnect", json!({})).await;
-                    if !disconnected.ok {
-                        return disconnected;
+            let result=async {
+                let settings=execute(&host,"settings.update",json!(settings)).await;
+                if !settings.ok {return Some(settings);}
+                if !reuse {
+                    if connected {
+                        let disconnected=execute(&host,"connection.disconnect",json!({})).await;
+                        if !disconnected.ok {return Some(disconnected);}
+                        let _=sender.send(Event::Connection{active:false,key:None});
                     }
-                    let _ = sender.send(Event::Connection(false));
+                    let _=sender.send(Event::Stage("Connecting to Epicor…"));ctx.request_repaint();
+                    let connected=execute(&host,"connection.connect",connection).await;
+                    if let Some(key)=readiness_key {
+                        let reply=Reply{schema_version:connected.schema_version,ok:connected.ok,result:connected.result.clone(),error:connected.error.clone()};
+                        let _=sender.send(Event::AccountReadiness{key,reply,testing:false});
+                    }
+                    if !connected.ok {return Some(connected);}
+                    let _=sender.send(Event::Connection{active:true,key:Some(connection_key.clone())});
                 }
-                let _ = sender.send(Event::Stage("Connecting to Epicor…"));
-                ctx.request_repaint();
-                let connected = execute(&host, "connection.connect", connection).await;
-                if !connected.ok {
-                    return connected;
-                }
-                let _ = sender.send(Event::Connection(true));
-                let _ = sender.send(Event::Stage("Starting download…"));
-                ctx.request_repaint();
-                execute(&host, "backup.start", request).await
-            }
-            .await;
-            let _ = sender.send(Event::Started(result));
+                let _=sender.send(Event::Stage("Preparing read-only preview…"));ctx.request_repaint();
+                Self::preview_or_start(&host,&sender,request,connection_key).await
+            }.await;
+            if let Some(reply)=result {let _=sender.send(Event::Started(reply));}
             ctx.request_repaint();
         });
     }

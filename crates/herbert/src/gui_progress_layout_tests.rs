@@ -24,7 +24,7 @@ fn icon(ctx: &egui::Context) -> egui::TextureHandle {
     ctx.load_texture("layout-vacuum",egui::ColorImage::from_rgba_unmultiplied([icon.width as usize,icon.height as usize],&icon.rgba),egui::TextureOptions::LINEAR)
 }
 
-fn app(ctx: &egui::Context, runtime: &tokio::runtime::Runtime, active: bool) -> Gui {
+pub(super) fn app(ctx: &egui::Context, runtime: &tokio::runtime::Runtime, active: bool) -> Gui {
     let root = std::env::temp_dir().join(format!("herbert-layout-{}", std::process::id()));
     let (sender, receiver) = mpsc::channel();
     let brand_icon = icon(ctx);
@@ -46,6 +46,7 @@ fn app(ctx: &egui::Context, runtime: &tokio::runtime::Runtime, active: bool) -> 
                 generation: 0,
                 notice: String::new(),
                 diagnostic: None,
+                error_detail: None,
                 profiles: vec![],
                 profile_id: String::new(),
                 name: String::new(),
@@ -75,6 +76,16 @@ fn app(ctx: &egui::Context, runtime: &tokio::runtime::Runtime, active: bool) -> 
                 destination: String::new(),
                 output_mode: Some(true),
                 temporary_access: crate::application::default_temporary_access(),
+                account_readiness: None,
+                allow_untrusted_certificate: false,
+                company_choices: None,
+                testing_connection: false,
+                selected_authorization: None,
+                connected_key: None,
+                pending_download: None,
+                authorization_choice: Default::default(),
+                authorization_workflow: String::new(),
+                saved_authorizations: Default::default(),
                 connected: false,
                 cleanup_pending: false,
                 run_id: "synthetic-layout".into(),
@@ -83,9 +94,21 @@ fn app(ctx: &egui::Context, runtime: &tokio::runtime::Runtime, active: bool) -> 
                 journal: Some(fixture(active)),
                 poll_pending: false,
                 last_poll: Instant::now(),
+                launch_stage: LaunchStage::Requested,
             };
 
     app
+}
+#[test]
+fn launch_requests_capabilities_only_after_first_visible_frame() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(&ctx, &runtime, false);
+    app.launch_stage = LaunchStage::FirstFrame;
+    // eframe shows the window after painting this frame; nothing may load during it.
+    assert!(app.launch_requests(&ctx).is_empty());
+    assert_eq!(app.launch_requests(&ctx), ["profiles.list", "settings.inspect", "capabilities"]);
+    assert!(app.launch_requests(&ctx).is_empty());
 }
 fn panel(ui: &mut egui::Ui, app: &mut Gui) -> (egui::Vec2, egui::Rect) {
     app.navigation(ui);
@@ -346,7 +369,7 @@ fn retained_session_error_event_routes_next_download_to_cleanup() {
     app.username = "synthetic".into();
     app.password = "synthetic".into();
     app.destination = root.path().join("output").to_string_lossy().into_owned();
-    app.categories.insert("C01".into(), true);
+    app.categories.insert("ud-codes".into(), true);
     let mut error = Diagnostic::new("ADMISSION_FAILED", "Admission failed.");
     error.context.insert("connectionRetained".into(), json!(true));
     error.context.insert("cleanup".into(), json!(Diagnostic::new("LOGOUT_FAILED", "Logout failed.")));
@@ -355,7 +378,7 @@ fn retained_session_error_event_routes_next_download_to_cleanup() {
     assert!(!app.connected);
     assert!(app.cleanup_pending);
     assert!(app.notice.contains("Admission failed."));
-    assert!(app.notice.contains("LOGOUT_FAILED: Logout failed."));
+    assert!(app.notice.contains("Signing out of Epicor also failed: Logout failed."));
     app.start_download(&ctx);
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.working && Instant::now() < deadline {
@@ -382,7 +405,7 @@ fn gui_user_file_request_survives_shared_decoder_and_dispatcher() {
     let root = tempfile::tempdir().unwrap();
     let mut app = app(&ctx, &runtime, false);
     app.host = Host::with_roots(root.path().join("state"), root.path().join("plugins"), Some(root.path().join("coordination")));
-    let profile = Profile { id:"selected-environment".into(), name:None, url:"https://example.invalid/fixture/".into(), auth_mode:AuthMode::Session, defaults:Defaults::default(), user_file:None };
+    let profile = Profile { id:"selected-environment".into(), name:None, url:"https://example.invalid/fixture/".into(), auth_mode:AuthMode::Session, defaults:Defaults::default(), user_file:None, allow_untrusted_certificate:false };
     app.source = Source::File;
     app.input_file = root.path().join("absent.json").to_string_lossy().into_owned();
     app.file_choices_path = app.input_file.clone();

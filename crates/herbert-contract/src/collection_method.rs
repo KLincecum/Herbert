@@ -46,7 +46,7 @@ impl CollectionMethod {
     pub fn label(self) -> &'static str {
         match self {
             Self::DirectOnly => "Direct only",
-            Self::ServerAssisted => "Server Assisted",
+            Self::ServerAssisted => "Server-assisted",
         }
     }
     pub fn description(self) -> &'static str {
@@ -59,7 +59,7 @@ impl CollectionMethod {
             }
         }
     }
-    /// Kevin merged both helper-enabled modes into Server Assisted on 2026-10-21.
+    /// Both helper-enabled modes were merged into Server Assisted on 2026-10-21.
     /// Historical helper-enabled selections remain readable under that policy.
     pub fn legacy() -> Self {
         Self::ServerAssisted

@@ -1,4 +1,4 @@
-//! C21 direct resource collection. Read whole exposed streams, then construct locally.
+//! Custom resources direct resource collection. Read whole exposed streams, then construct locally.
 use base64::Engine;
 use herbert_contract::*;
 use serde_json::{Value, json};
@@ -65,7 +65,7 @@ pub fn policies() -> Vec<NativeResponsePolicy> {
 fn id(kind: &str, row: &Value, keys: &[&str]) -> Result<Identity, Diagnostic> {
     let company = row
         .get("Company")
-        .map(|v| v.as_str().ok_or_else(|| err("Missing company.")))
+        .map(|v| v.as_str().ok_or_else(|| err("Epicor did not say which company these records belong to, so they were not saved.")))
         .transpose()?
         .unwrap_or("");
     let mut result = BTreeMap::new();
@@ -73,7 +73,7 @@ fn id(kind: &str, row: &Value, keys: &[&str]) -> Result<Identity, Diagnostic> {
         let v = row
             .get(*k)
             .filter(|v| v.is_string() || v.is_number())
-            .ok_or_else(|| err("Missing native resource key."))?;
+            .ok_or_else(|| err("Missing Epicor resource key."))?;
         result.insert(
             (*k).into(),
             v.as_str()
@@ -82,7 +82,7 @@ fn id(kind: &str, row: &Value, keys: &[&str]) -> Result<Identity, Diagnostic> {
         );
     }
     Ok(Identity {
-        category: "C21".into(),
+        category: "custom-resources".into(),
         kind: kind.into(),
         scope: if company.is_empty()
             || (kind == "FileStoreCustomizationResource" && company == "All")
@@ -106,7 +106,7 @@ fn scoped(row: &Value, company: &str) -> Result<(), Diagnostic> {
 }
 fn rows<'a>(v: &'a Value, t: &str) -> Result<&'a Vec<Value>, Diagnostic> {
     v[t].as_array()
-        .ok_or_else(|| err("Native resource response omitted a required table."))
+        .ok_or_else(|| err("Epicor resource response omitted a required table."))
 }
 fn binary(name: String, encoded: &str) -> Result<Value, Diagnostic> {
     let bytes = base64::engine::general_purpose::STANDARD
@@ -212,7 +212,46 @@ fn safe_id(row: &Value) -> Result<&str, Diagnostic> {
                     }
                 })
         })
-        .ok_or_else(|| err("Resource has no native GUID."))
+        .ok_or_else(|| err("Resource has no Epicor GUID."))
+}
+/// Map each lowercase file ID to its (image, role) uses, in image order then role order.
+fn image_index(images: &[Value], keys: &[&str]) -> BTreeMap<String, Vec<(usize, usize)>> {
+    let mut index: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
+    for (i, image) in images.iter().enumerate() {
+        for (role, key) in keys.iter().enumerate() {
+            if let Some(id) = image[*key].as_str() {
+                index.entry(id.to_ascii_lowercase()).or_default().push((i, role));
+            }
+        }
+    }
+    index
+}
+/// Group translations by (Company, LangNameID, OrgTextID) once: the first blank-program row and
+/// whether any row names a program. Scalar JSON text is equal exactly when the values are equal.
+fn sibling_index(translations: &[Value]) -> BTreeMap<String, (Option<usize>, bool)> {
+    let mut index: BTreeMap<String, (Option<usize>, bool)> = BTreeMap::new();
+    for (i, row) in translations.iter().enumerate() {
+        let entry = index.entry(sibling_key(row)).or_insert((None, false));
+        if row["ProgramID"] == "" {
+            entry.0.get_or_insert(i);
+        } else {
+            entry.1 = true;
+        }
+    }
+    index
+}
+fn sibling_key(row: &Value) -> String {
+    json!([row["Company"], row["LangNameID"], row["OrgTextID"]]).to_string()
+}
+/// First row per (Company, OrgTextID), optionally only rows that name a program.
+fn first_by_text<'a>(rows: &'a [Value], program: bool) -> BTreeMap<String, &'a Value> {
+    let mut index = BTreeMap::new();
+    for row in rows {
+        if !program || row["ProgramID"] != "" {
+            index.entry(json!([row["Company"], row["OrgTextID"]]).to_string()).or_insert(row);
+        }
+    }
+    index
 }
 fn recovery(ds: &Value) -> Value {
     let mut ds = ds.clone();
@@ -295,7 +334,7 @@ fn query(
     fields: Vec<QueryField>,
     criteria: Vec<(&str, Value)>,
     mut state: Value,
-) -> GuestReply {
+) -> Result<GuestReply, Diagnostic> {
     let mut parameters = BTreeMap::new();
     let mut filters = vec![];
     for (field, value) in criteria {
@@ -309,28 +348,54 @@ fn query(
         parameters.insert(p, value);
     }
     state["phase"] = json!(phase);
-    let _ = r;
-    GuestReply::Action {
-        action: HostAction::SharedQuery {
-            query: QuerySpec {
-                tables: vec![QueryTable {
-                    schema: schema.into(),
-                    table: table.into(),
-                    alias: "R".into(),
-                    company_field: None,
-                    metadata: vec![],
-                }],
-                fields,
-                joins: vec![],
-                criteria: filters,
-                parameters,
-                order: vec![],
-                page_size: None,
-                page: 1,
-            },
+    paged_query(
+        r,
+        QuerySpec {
+            tables: vec![QueryTable {
+                schema: schema.into(),
+                table: table.into(),
+                alias: "R".into(),
+                company_field: None,
+                metadata: vec![],
+            }],
+            fields,
+            joins: vec![],
+            criteria: filters,
+            parameters,
+            order: vec![],
+            page_size: None,
+            page: 1,
         },
         state,
+    )
+}
+/// The request's page size (the host's Fallback page size setting) bounds every group read: native
+/// GetRows pages and resource queries. When the setting is cleared, the host's documented default
+/// (OperatingSettings, 500 from its dictionary measurements) still pages every read.
+fn size(r: &GuestRequest) -> Result<Option<u32>, Diagnostic> {
+    match r.page_size.or(OperatingSettings::default().page_size) {
+        None => Ok(None),
+        Some(n) if n > 0 && n <= i32::MAX as u32 => Ok(Some(n)),
+        Some(_) => Err(err("The page size must be a whole number from 1 to 2147483647.")),
     }
+}
+/// Resource queries read keyset pages in SysRowID order (the host query builder refuses offset
+/// paging). A full page means another may follow; drive() accumulates the pages before the phase.
+fn paged_query(r: &GuestRequest, mut spec: QuerySpec, mut state: Value) -> Result<GuestReply, Diagnostic> {
+    spec.page_size = size(r)?;
+    spec.page = 1;
+    spec.order = vec![QueryOrder { field: "SysRowID".into(), descending: false }];
+    state["query"] = json!(spec);
+    state["queryRows"] = json!([]);
+    state["queryAfter"] = Value::Null;
+    Ok(query_page(spec, state))
+}
+fn query_page(mut spec: QuerySpec, state: Value) -> GuestReply {
+    if let Some(after) = state["queryAfter"].as_str() {
+        spec.criteria.push(QueryCriterion {table:"R".into(),field:"SysRowID".into(),operator:">".into(),parameter:"after".into()});
+        spec.parameters.insert("after".into(), json!(after));
+    }
+    GuestReply::Action { action: HostAction::SharedQuery { query: spec }, state }
 }
 fn all() -> Vec<QueryField> {
     vec![QueryField {
@@ -340,7 +405,7 @@ fn all() -> Vec<QueryField> {
         expression: None,
     }]
 }
-fn standalone_theme_metadata(mut r: GuestRequest) -> GuestReply {
+fn standalone_theme_metadata(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     let mut fields: Vec<_> = [
         "ThemeID",
         "ResourceType",
@@ -370,9 +435,10 @@ fn standalone_theme_metadata(mut r: GuestRequest) -> GuestReply {
         });
     }
     r.state["phase"] = json!("standalone-theme-metadata");
-    GuestReply::Action {
-        action: HostAction::SharedQuery {
-            query: QuerySpec {
+    let state = r.state.clone();
+    paged_query(
+        &r,
+        QuerySpec {
                 tables: vec![
                     QueryTable {
                         schema: "Ice".into(),
@@ -407,10 +473,9 @@ fn standalone_theme_metadata(mut r: GuestRequest) -> GuestReply {
                 order: vec![],
                 page_size: None,
                 page: 1,
-            },
         },
-        state: r.state,
-    }
+        state,
+    )
 }
 fn action(mut r: GuestRequest, phase: &str, service: &str, args: Value) -> GuestReply {
     r.state["phase"] = json!(phase);
@@ -423,13 +488,111 @@ fn response(r: &GuestRequest) -> Result<&Value, Diagnostic> {
     let v = r
         .response
         .as_ref()
-        .ok_or_else(|| err("Missing resource response."))?;
-    if matches!(r.state["phase"].as_str(), Some("themes" | "translations" | "languages" | "originals" | "images" | "layers" | "categories"))
-        && v["parameters"]["morePages"].as_bool() != Some(false)
-    {
-        return Err(err("The unpaged native resource read did not explicitly confirm complete paging."));
+        .ok_or_else(|| err("Epicor's response did not include the resource data. Nothing was saved for this group."))?;
+    // Native group reads are paged; each page must state whether another follows.
+    let phase = r.state["phase"].as_str().unwrap_or("");
+    if (phase == "translations" || group(phase).is_some()) && v["parameters"]["morePages"].as_bool().is_none() {
+        return Err(err("The Epicor resource page did not state whether more pages follow."));
     }
     Ok(v)
+}
+/// Native GetRows group reads: service and the tables kept from each page, primary table first.
+/// Pages accumulate per table in state.groupRows; the phase then sees one combined returnObj.
+fn group(phase: &str) -> Option<(&'static str, &'static [&'static str])> {
+    let read: (&'static str, &'static [&'static str]) = match phase {
+        "themes" => ("Ice.BO.ThemeSvc", &["Theme", "ThemeResource"]),
+        "languages" => ("Ice.BO.LangNameSvc", &["LangName"]),
+        "originals" => ("Ice.BO.LangOrgSvc", &["LangOrg"]),
+        "images" => ("Erp.BO.ImageSvc", &["Image"]),
+        "layers" => ("Erp.BO.ImageLayerSvc", &["ImageLayerHeader", "ImageLayerDetail"]),
+        "categories" => ("Erp.BO.ImageCategorySvc", &["ImageCategory", "ImageSubCategory"]),
+        _ => return None,
+    };
+    Some(read)
+}
+fn page_args(r: &GuestRequest, mut args: Value, page: u64) -> Result<Value, Diagnostic> {
+    let size = size(r)?;
+    if page == 0 || page > i32::MAX as u64 {
+        return Err(err("Herbert could not continue this download from its saved progress (resource page). Start the download again."));
+    }
+    // Zero is native GetRows' documented "no maximum".
+    args["pageSize"] = json!(size.unwrap_or(0));
+    args["absolutePage"] = json!(page);
+    Ok(args)
+}
+fn group_action(mut r: GuestRequest, phase: &str, args: Value) -> Result<GuestReply, Diagnostic> {
+    let (service, _) = group(phase).unwrap();
+    let first = page_args(&r, args.clone(), 1)?;
+    r.state["groupArgs"] = args;
+    r.state["groupPage"] = json!(1);
+    r.state["groupRows"] = json!({});
+    Ok(action(r, phase, service, first))
+}
+/// LangTran is read in pages of the request's page size like every other group read.
+fn translation_page(r: &GuestRequest, page: u64) -> Result<Value, Diagnostic> {
+    let scope = format!("(Company = '{}' OR Company = '')", r.company.replace('\'', "''"));
+    page_args(r, json!({"whereClauseLangTran":format!("{scope} AND (SystemFlag = false OR CustomTrans = true OR OrgTextID < 0)")}), page)
+}
+/// Accumulate one page of a paged group read. Ok(Some) requests the next page; Ok(None) leaves
+/// the combined response in `v` for the phase, exactly as one unpaged response would have been.
+fn accumulate(r: &mut GuestRequest, v: &mut Value) -> Result<Option<GuestReply>, Diagnostic> {
+    let phase = r.state["phase"].as_str().unwrap_or("").to_owned();
+    let resume = || err("Herbert could not continue this download from its saved progress (resource page). Start the download again.");
+    if let Some((service, tables)) = group(&phase) {
+        let more = v["parameters"]["morePages"].as_bool() == Some(true);
+        if more && rows(&v["returnObj"], tables[0])?.is_empty() {
+            return Err(err("An Epicor resource page said more pages follow but carried no rows."));
+        }
+        if !r.state["groupRows"].is_object() {
+            r.state["groupRows"] = json!({});
+        }
+        for t in tables {
+            let rs = rows(&v["returnObj"], t)?;
+            let acc = &mut r.state["groupRows"][*t];
+            if !acc.is_array() {
+                *acc = json!([]);
+            }
+            acc.as_array_mut().unwrap().extend(rs.iter().cloned());
+        }
+        if more {
+            let page = r.state["groupPage"].as_u64().unwrap_or(1) + 1;
+            if !r.state["groupArgs"].is_object() {
+                return Err(resume());
+            }
+            let args = page_args(r, r.state["groupArgs"].clone(), page)?;
+            r.state["groupPage"] = json!(page);
+            let mut state = r.state.take();
+            state["phase"] = json!(phase);
+            return Ok(Some(crate::native(service, "GetRows", args, false, state)));
+        }
+        *v = json!({"returnObj":r.state["groupRows"].take(),"parameters":{"morePages":false}});
+        for k in ["groupRows", "groupArgs", "groupPage"] {
+            r.state.as_object_mut().unwrap().remove(k);
+        }
+    } else if matches!(phase.as_str(), "files" | "links" | "image-bytes" | "owner" | "bytes" | "standalone-theme-metadata" | "standalone-theme-bytes") {
+        // A phase reports its own message for a response without rows.
+        let Some(rs) = v["rows"].as_array() else { return Ok(None) };
+        let more = size(r)?.is_some_and(|size| rs.len() == size as usize);
+        if !r.state["queryRows"].is_array() {
+            r.state["queryRows"] = json!([]);
+        }
+        r.state["queryRows"].as_array_mut().unwrap().extend(rs.iter().cloned());
+        if more {
+            let after = rs.last().and_then(|row| row["SysRowID"].as_str())
+                .ok_or_else(|| err("A full Epicor resource page carried no Epicor ID to continue from."))?;
+            if r.state["queryAfter"].as_str() == Some(after) {
+                return Err(err("The Epicor resource page did not advance."));
+            }
+            let spec: QuerySpec = serde_json::from_value(r.state["query"].clone()).map_err(|_| resume())?;
+            r.state["queryAfter"] = json!(after);
+            return Ok(Some(query_page(spec, r.state.take())));
+        }
+        *v = json!({"rows":r.state["queryRows"].take()});
+        for k in ["query", "queryRows", "queryAfter"] {
+            r.state.as_object_mut().unwrap().remove(k);
+        }
+    }
+    Ok(None)
 }
 fn theme(r: &GuestRequest, body: &Value) -> Result<Vec<(Identity, Value)>, Diagnostic> {
     let roots = rows(body, "Theme")?;
@@ -449,7 +612,7 @@ fn theme(r: &GuestRequest, body: &Value) -> Result<Vec<(Identity, Value)>, Diagn
         let mut files = vec![
             json!({"name":"RestoreTheme.request.json","text":serde_json::to_string_pretty(&recovery(&ds)).unwrap()}),
         ];
-        files.push(json!({"name":"Theme.xml","text":root["ThemeXML"].as_str().ok_or_else(||err("Theme XML missing."))?}));
+        files.push(json!({"name":"Theme.xml","text":root["ThemeXML"].as_str().ok_or_else(||err("Epicor returned a theme without its content, so it was not saved."))?}));
         let mut binaries = vec![];
         for child in &resources {
             if child["SystemFlag"] != false {
@@ -507,7 +670,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     }
     if r.operation != "discover" && r.operation != "materialize" {
         return Err(err(
-            "C21 collects complete resource streams; restart discovery to select resources.",
+            "Custom resources are downloaded as complete groups. Start the download again to choose resources.",
         ));
     }
     if r.company.is_empty() {
@@ -521,7 +684,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         .as_deref()
         .map(str::parse::<u64>)
         .transpose()
-        .map_err(|_| err("Invalid resource stream cursor."))?
+        .map_err(|_| err("Invalid resource stream saved position."))?
         .unwrap_or(0);
     if r.state["phase"].is_null()&&r.response.is_none()&&r.error.is_none() {
         let family=family(&r.state)?;
@@ -538,24 +701,18 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             r.company.replace('\'', "''")
         );
         return Ok(match stream {
-            0 => action(
+            0 => group_action(
                 r,
                 "themes",
-                "Ice.BO.ThemeSvc",
-                json!({"whereClauseTheme":"SystemFlag = false","whereClauseThemeResource":"SystemFlag = false","pageSize":0,"absolutePage":1}),
-            ),
-            1 => action(
-                r,
-                "translations",
-                "Ice.BO.LangTranSvc",
-                json!({"whereClauseLangTran":format!("{scope} AND (SystemFlag = false OR CustomTrans = true OR OrgTextID < 0)"),"pageSize":0,"absolutePage":1}),
-            ),
-            2 => action(
-                r,
-                "images",
-                "Erp.BO.ImageSvc",
-                json!({"whereClauseImage":scope,"pageSize":0,"absolutePage":1}),
-            ),
+                json!({"whereClauseTheme":"SystemFlag = false","whereClauseThemeResource":"SystemFlag = false"}),
+            )?,
+            1 => {
+                let args = translation_page(&r, 1)?;
+                r.state["translationPage"] = json!(1);
+                r.state["graph"] = json!({"LangTran":[]});
+                action(r, "translations", "Ice.BO.LangTranSvc", args)
+            }
+            2 => group_action(r, "images", json!({"whereClauseImage":scope}))?,
             3 => {
                 let fields = [
                     "SysRowID",
@@ -591,13 +748,16 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     fields,
                     vec![("Company", json!([r.company, "", "All"]))],
                     state,
-                )
+                )?
             }
-            4 => standalone_theme_metadata(r),
-            _ => return Err(err("Unknown resource stream.")),
+            4 => standalone_theme_metadata(r)?,
+            _ => return Err(err("Herbert could not continue this download from its saved progress (resource group). Start the download again.")),
         });
     }
-    let v = response(&r)?.clone();
+    let mut v = response(&r)?.clone();
+    if let Some(next) = accumulate(&mut r, &mut v)? {
+        return Ok(next);
+    }
     match r.state["phase"].as_str().unwrap_or("") {
         "themes" => {
             return Ok(finish(
@@ -608,7 +768,11 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             ));
         }
         "translations" => {
+            let more = v["parameters"]["morePages"].as_bool() == Some(true);
             let trs = rows(&v["returnObj"], "LangTran")?;
+            if more && trs.is_empty() {
+                return Err(err("The translation page did not advance."));
+            }
             for t in trs {
                 scoped(t, &r.company)?;
                 if !(t["SystemFlag"] == false
@@ -618,17 +782,26 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     return Err(err("Translation is not authored."));
                 }
             }
-            r.state["graph"] = json!({"LangTran":trs});
+            // Pages accumulate into the one translation library graph built below.
+            if !r.state["graph"]["LangTran"].is_array() {
+                r.state["graph"] = json!({"LangTran":[]});
+            }
+            r.state["graph"]["LangTran"].as_array_mut().unwrap().extend(trs.iter().cloned());
+            if more {
+                let page = r.state["translationPage"].as_u64().unwrap_or(1) + 1;
+                let args = translation_page(&r, page)?;
+                r.state["translationPage"] = json!(page);
+                return Ok(action(r, "translations", "Ice.BO.LangTranSvc", args));
+            }
             let scope = format!(
                 "(Company = '{}' OR Company = '')",
                 r.company.replace('\'', "''")
             );
-            return Ok(action(
+            return group_action(
                 r,
                 "languages",
-                "Ice.BO.LangNameSvc",
-                json!({"whereClauseLangName":scope,"whereClauseCulture":"","whereClauseNomenclatureModule":"","pageSize":0,"absolutePage":1}),
-            ));
+                json!({"whereClauseLangName":scope,"whereClauseCulture":"","whereClauseNomenclatureModule":""}),
+            );
         }
         "languages" => {
             let names = rows(&v["returnObj"], "LangName")?;
@@ -647,12 +820,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 "(Company = '{}' OR Company = '') AND SystemFlag = false",
                 r.company.replace('\'', "''")
             );
-            return Ok(action(
-                r,
-                "originals",
-                "Ice.BO.LangOrgSvc",
-                json!({"whereClauseLangOrg":scope,"pageSize":0,"absolutePage":1}),
-            ));
+            return group_action(r, "originals", json!({"whereClauseLangOrg":scope}));
         }
         "originals" => {
             r.state["graph"]["CustomLangOrg"] = json!(rows(&v["returnObj"], "LangOrg")?);
@@ -680,12 +848,11 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 "(Company = '{}' OR Company = '')",
                 r.company.replace('\'', "''")
             );
-            return Ok(action(
+            return group_action(
                 r,
                 "layers",
-                "Erp.BO.ImageLayerSvc",
-                json!({"whereClauseImageLayerHeader":scope,"whereClauseImageLayerDetail":"","pageSize":0,"absolutePage":1}),
-            ));
+                json!({"whereClauseImageLayerHeader":scope,"whereClauseImageLayerDetail":""}),
+            );
         }
         "layers" => {
             for t in ["ImageLayerHeader", "ImageLayerDetail"] {
@@ -699,12 +866,11 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 "(Company = '{}' OR Company = '')",
                 r.company.replace('\'', "''")
             );
-            return Ok(action(
+            return group_action(
                 r,
                 "categories",
-                "Erp.BO.ImageCategorySvc",
-                json!({"whereClauseImageCategory":scope,"whereClauseImageSubCategory":"","pageSize":0,"absolutePage":1}),
-            ));
+                json!({"whereClauseImageCategory":scope,"whereClauseImageSubCategory":""}),
+            );
         }
         "categories" => {
             for t in ["ImageCategory", "ImageSubCategory"] {
@@ -725,7 +891,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .collect();
             if !ids.is_empty() {
                 r.state["imageFileIDs"] = json!(ids);
-                return Ok(query(
+                return query(
                     &r,
                     "image-bytes",
                     "Ice",
@@ -736,7 +902,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                         ("Company", json!([r.company, "", "All"])),
                     ],
                     r.state.clone(),
-                ));
+                );
             }
             return image_finish(r);
         }
@@ -745,11 +911,26 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .as_array()
                 .ok_or_else(|| err("Image resource read omitted rows."))?;
             let ids: BTreeSet<String> = serde_json::from_value(r.state["imageFileIDs"].clone())
-                .map_err(|_| err("Invalid image selection."))?;
+                .map_err(|_| err("Herbert could not continue this download from its saved progress (selected images). Start the download again."))?;
             let mut seen = BTreeSet::new();
             let mut files = vec![];
             let mut ordered = rs.iter().collect::<Vec<_>>();
             ordered.sort_by(|a, b| a["SysRowID"].as_str().cmp(&b["SysRowID"].as_str()));
+            // Sort images once and index each image role by its lowercase file ID, in image then
+            // role order: the same matches, in the same order, as scanning every image per file.
+            let mut images = r.state["graph"]["Image"].as_array().cloned().unwrap_or_default();
+            images.sort_by(|a, b| {
+                a["ImageID"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["ImageID"].as_str().unwrap_or(""))
+            });
+            let roles = [
+                ("ImageSysRowID", "ImageFileName", "Original"),
+                ("ThumbnailSysRowID", "ImageFileThumbnail", "Thumbnails"),
+            ];
+            let index = image_index(&images, &roles.map(|(key, _, _)| key));
+            let mut names = BTreeSet::new();
             for row in ordered {
                 scoped(row, &r.company)?;
                 let rid = safe_id(row)?;
@@ -761,24 +942,10 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 let encoded = row["Content"]
                     .as_str()
                     .ok_or_else(|| err("Image original content missing."))?;
-                let mut images = r.state["graph"]["Image"].as_array().unwrap().clone();
-                images.sort_by(|a, b| {
-                    a["ImageID"]
-                        .as_str()
-                        .unwrap_or("")
-                        .cmp(b["ImageID"].as_str().unwrap_or(""))
-                });
-                for image in images {
-                    for (key, filename, folder) in [
-                        ("ImageSysRowID", "ImageFileName", "Original"),
-                        ("ThumbnailSysRowID", "ImageFileThumbnail", "Thumbnails"),
-                    ] {
-                        if !image[key]
-                            .as_str()
-                            .is_some_and(|id| id.eq_ignore_ascii_case(rid))
-                        {
-                            continue;
-                        }
+                for &(i, role) in index.get(&rid.to_ascii_lowercase()).into_iter().flatten() {
+                    let image = &images[i];
+                    let (_, filename, folder) = roles[role];
+                    {
                         let original = image[filename]
                             .as_str()
                             .filter(|s| !s.is_empty())
@@ -793,17 +960,14 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                             "{folder}/{}/{name}",
                             readable_component(image["ImageID"].as_str().unwrap_or("Unnamed"))
                         );
-                        if files.iter().any(|file: &Value| {
-                            file["name"]
-                                .as_str()
-                                .is_some_and(|p| p.to_lowercase() == path.to_lowercase())
-                        }) {
+                        if names.contains(&path.to_lowercase()) {
                             path = format!(
                                 "{folder}/{} - {}/{name}",
                                 readable_component(image["ImageID"].as_str().unwrap_or("Unnamed")),
-                                safe_id(&image)?
+                                safe_id(image)?
                             );
                         }
+                        names.insert(path.to_lowercase());
                         files.push(binary(path.clone(), encoded)?);
                         if !r.state["graph"]["BinaryFileIndex"].is_array() {
                             r.state["graph"]["BinaryFileIndex"] = json!([]);
@@ -831,7 +995,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 scoped(row, &r.company)?;
                 let rid = safe_id(row)?;
                 if !seen.insert(rid.to_ascii_lowercase()) {
-                    return Err(err("Duplicate FileStore row."));
+                    return Err(err("Epicor returned the same stored file more than once, so Herbert cannot tell which copy is correct. It was not saved."));
                 }
                 if owners.iter().any(|o| {
                     row["RelatedToSchemaName"]
@@ -863,7 +1027,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         "owner-schema" => {
             let fs = rows(&v["returnObj"], "TableFieldList")?;
             if !fs.iter().any(|f| f["FieldName"] == "SysRowID") {
-                return Err(err("Declared resource owner has no native identity."));
+                return Err(err("Declared resource owner has no Epicor ID."));
             }
             r.state["ownerHasSystemFlag"] =
                 json!(fs.iter().any(|f| f["FieldName"] == "SystemFlag"));
@@ -892,7 +1056,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     expression: None,
                 })
                 .collect();
-            return Ok(query(
+            return query(
                 &r,
                 "owner",
                 o[0].as_str().unwrap(),
@@ -900,7 +1064,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 fields,
                 vec![("SysRowID", json!(ids))],
                 r.state.clone(),
-            ));
+            );
         }
         "owner" => {
             let rs = v["rows"]
@@ -1017,7 +1181,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             }
             let ids: Vec<_> = selected.iter().map(|r| r["SysRowID"].clone()).collect();
             r.state["themeResources"] = json!(selected);
-            return Ok(query(
+            return query(
                 &r,
                 "standalone-theme-bytes",
                 "Ice",
@@ -1025,7 +1189,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 all(),
                 vec![("SysRowID", json!(ids)), ("SystemFlag", json!(false))],
                 r.state.clone(),
-            ));
+            );
         }
         "standalone-theme-bytes" => {
             let rs = v["rows"]
@@ -1083,7 +1247,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 r.state["independent"] == true,
             ));
         }
-        _ => return Err(err("Unknown custom-resource continuation.")),
+        _ => return Err(err("Unknown custom-resource resume point.")),
     }
 }
 fn image_finish(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
@@ -1201,44 +1365,31 @@ fn links(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 let mut translation = vec![];
                 let mut unavailable = vec![];
                 let source_translations = graph["LangTran"].as_array().unwrap();
+                // Index once instead of scanning every translation, link and original per row.
+                let siblings = sibling_index(source_translations);
+                let xrefs = graph["LangXref"].as_array().map(|rows| first_by_text(rows, true));
+                let originals = graph["LangOrg"].as_array().map(|rows| first_by_text(rows, false));
                 for row in source_translations {
-                    let siblings: Vec<_> = source_translations
-                        .iter()
-                        .filter(|v| {
-                            v["Company"] == row["Company"]
-                                && v["LangNameID"] == row["LangNameID"]
-                                && v["OrgTextID"] == row["OrgTextID"]
-                        })
-                        .collect();
-                    let general = siblings.iter().find(|v| v["ProgramID"] == "");
+                    let (general, programs) = siblings[&sibling_key(row)];
+                    let general = general.map(|i| &source_translations[i]);
                     // TranText carries general and program text in two fields.
                     // A separate blank-program row cannot create custom text.
-                    if row["ProgramID"] == "" && siblings.iter().any(|v| v["ProgramID"] != "") {
+                    if row["ProgramID"] == "" && programs {
                         continue;
                     }
+                    let text = json!([row["Company"], row["OrgTextID"]]).to_string();
                     let program = if row["ProgramID"] != "" {
                         Some(row["ProgramID"].clone())
                     } else {
-                        graph["LangXref"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|v| {
-                                v["Company"] == row["Company"]
-                                    && v["OrgTextID"] == row["OrgTextID"]
-                                    && v["ProgramID"] != ""
-                            })
-                            .map(|v| v["ProgramID"].clone())
+                        xrefs.as_ref().unwrap().get(&text).map(|v| v["ProgramID"].clone())
                     };
-                    let original = graph["LangOrg"].as_array().unwrap().iter().find(|o| {
-                        o["Company"] == row["Company"] && o["OrgTextID"] == row["OrgTextID"]
-                    });
+                    let original = originals.as_ref().unwrap().get(&text).copied();
                     let (Some(program), Some(original)) = (program, original) else {
                         unavailable.push(json!({"SysRowID":row["SysRowID"],"reason":"native-import-requires-original-text-and-program-relationship","sourcePreserved":true}));
                         continue;
                     };
                     // The stored GUID is nullable, but native TranText's input
-                    // setter throws on JSON null in both qualified versions.
+                    // setter throws on JSON null in both tested versions.
                     // Use its empty-GUID default in the import projection only.
                     let nomenclature = row["NomenclatureID"]
                         .as_str()
@@ -1287,7 +1438,7 @@ fn links(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     } else {
         table
     });
-    Ok(query(
+    query(
         &r,
         "links",
         "Ice",
@@ -1295,7 +1446,7 @@ fn links(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         all(),
         vec![(field, json!(ids)), ("Company", json!([r.company, ""]))],
         r.state.clone(),
-    ))
+    )
 }
 fn next_owner(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     let i = r.state["ownerIndex"].as_u64().unwrap() as usize;
@@ -1354,7 +1505,7 @@ fn next_owner(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     }
     let ids: Vec<_> = selected.iter().map(|r| r["SysRowID"].clone()).collect();
     r.state["selected"] = json!(selected);
-    Ok(query(
+    query(
         &r,
         "bytes",
         "Ice",
@@ -1365,7 +1516,7 @@ fn next_owner(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             ("Company", json!([r.company, "", "All"])),
         ],
         r.state.clone(),
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -1395,7 +1546,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C21".into(),
+            category: "custom-resources".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1424,7 +1575,7 @@ mod tests {
         assert_eq!(diagnostics[0].code, "DENIED");
     }
     #[test]
-    fn native_unpaged_streams_and_metadata_only_filestore_do_not_invent_caps() {
+    fn native_streams_and_metadata_only_filestore_are_paged_at_items_per_page() {
         let GuestReply::Action {
             action: HostAction::NativeRead { arguments, .. },
             ..
@@ -1432,7 +1583,7 @@ mod tests {
         else {
             panic!()
         };
-        assert_eq!(arguments["pageSize"], 0);
+        assert_eq!((arguments["pageSize"].clone(), arguments["absolutePage"].clone()), (json!(100), json!(1)));
         let mut r = request();
         r.cursor = Some("3".into());
         let GuestReply::Action {
@@ -1442,7 +1593,7 @@ mod tests {
         else {
             panic!()
         };
-        assert_eq!(query.page_size, None);
+        assert_eq!((query.page_size, query.page, query.order[0].field.as_str(), query.order[0].descending), (Some(100), 1, "SysRowID", false));
         assert!(
             query
                 .fields
@@ -1529,19 +1680,152 @@ mod tests {
     }
 
     #[test]
+    fn translations_are_read_in_pages_of_items_per_page() {
+        let mut r=request();r.cursor=Some("1".into());r.page_size=Some(2);
+        let GuestReply::Action {action:HostAction::NativeRead {arguments,..},state}=handle(r.clone())else{panic!()};
+        assert_eq!((arguments["pageSize"].clone(),arguments["absolutePage"].clone()),(json!(2),json!(1)));
+        let row=|id:i64|json!({"Company":"C","LangNameID":"de","OrgTextID":-id,"SystemFlag":false,"CustomTrans":true});
+        r.state=state;r.response=Some(json!({"returnObj":{"LangTran":[row(1),row(2)]},"parameters":{"morePages":true}}));
+        let GuestReply::Action {action:HostAction::NativeRead {service,arguments,..},state}=handle(r.clone())else{panic!()};
+        assert_eq!(service,"Ice.BO.LangTranSvc");assert_eq!((arguments["pageSize"].clone(),arguments["absolutePage"].clone()),(json!(2),json!(2)));
+        r.state=state;r.response=Some(json!({"returnObj":{"LangTran":[row(3)]},"parameters":{"morePages":false}}));
+        let GuestReply::Action {action:HostAction::NativeRead {service,..},state}=handle(r.clone())else{panic!()};
+        assert_eq!(service,"Ice.BO.LangNameSvc");assert_eq!(state["graph"]["LangTran"].as_array().unwrap().len(),3);
+        // A page that claims more but carries nothing, or omits the flag, is refused.
+        let mut stuck=r.clone();stuck.state=json!({"phase":"translations","translationPage":1});stuck.response=Some(json!({"returnObj":{"LangTran":[]},"parameters":{"morePages":true}}));
+        assert!(matches!(handle(stuck.clone()),GuestReply::Inventory {authoritative:false,..}));
+        stuck.response=Some(json!({"returnObj":{"LangTran":[row(1)]}}));assert!(response(&stuck).is_err());
+        // A cleared Fallback page size still pages, at the host's documented default.
+        let mut unsized_request=request();unsized_request.cursor=Some("1".into());unsized_request.page_size=None;
+        let GuestReply::Action {action:HostAction::NativeRead {arguments,..},..}=handle(unsized_request.clone())else{panic!()};
+        assert_eq!((arguments["pageSize"].clone(),arguments["absolutePage"].clone()),(json!(OperatingSettings::default().page_size.unwrap()),json!(1)));
+        unsized_request.page_size=Some(0);assert!(matches!(handle(unsized_request),GuestReply::Inventory {authoritative:false,..}));
+    }
+    #[test]
+    fn resource_reads_use_the_request_page_size_and_custom_resources_declares_no_page_setting() {
+        assert!(crate::response_policy::settings("custom-resources",false).iter().all(|setting|!matches!(setting,PluginSetting::Integer{..})));
+        // Every read is paged: the request's size, else the host's documented default.
+        assert_eq!(OperatingSettings::default().page_size,Some(500));
+        let mut r=request();r.page_size=None;
+        assert_eq!(size(&r).unwrap(),Some(500));
+        r.page_size=Some(7);assert_eq!(size(&r).unwrap(),Some(7));
+        r.page_size=Some(0);assert!(size(&r).is_err());
+    }
+    #[test]
     fn wave1_native_resources_require_explicit_completion_but_queries_do_not() {
-        for phase in ["themes","translations","languages","originals","images","layers","categories"] {
-            for flag in [Value::Null,json!(true),json!("false"),json!(0)] {
+        // Native group pages must state morePages as a boolean; true now continues paging.
+        for phase in ["themes","languages","originals","images","layers","categories"] {
+            for flag in [Value::Null,json!("false"),json!(0)] {
                 let mut r=request();r.state=json!({"phase":phase});r.response=Some(json!({"parameters":{"morePages":flag}}));assert!(response(&r).is_err());
             }
             let mut r=request();r.state=json!({"phase":phase});r.response=Some(json!({}));assert!(response(&r).is_err());
-            r.response=Some(json!({"parameters":{"morePages":false}}));assert!(response(&r).is_ok());
+            for flag in [true,false] {r.response=Some(json!({"parameters":{"morePages":flag}}));assert!(response(&r).is_ok());}
         }
-        for phase in ["files","links","image-bytes","standalone-theme-metadata"] {
+        // Query pages carry no flag: a full keyset page means another may follow.
+        for phase in ["files","links","image-bytes","owner","bytes","standalone-theme-metadata","standalone-theme-bytes"] {
             let mut r=request();r.state=json!({"phase":phase});r.response=Some(json!({"rows":[]}));assert!(response(&r).is_ok());
         }
         let mut r=request();r.state=json!({"phase":"themes"});r.response=Some(json!({"returnObj":{"Theme":[],"ThemeResource":[]}}));
         assert!(matches!(handle(r),GuestReply::Inventory{authoritative:false,next_cursor:Some(next),..} if next=="1"));
+    }
+    #[test]
+    fn every_native_group_read_is_paged_and_accumulated_unchanged() {
+        for phase in ["themes","languages","originals","images","layers","categories"] {
+            let (service,tables)=group(phase).unwrap();
+            let mut r=request();r.page_size=Some(2);
+            r.state=json!({"phase":phase,"groupArgs":{"whereClauseX":"w"},"groupPage":1,"groupRows":{}});
+            let page=|n:i64|json!({"returnObj":tables.iter().map(|t|(t.to_string(),json!([{"n":n}]))).collect::<serde_json::Map<_,_>>(),"parameters":{"morePages":n==1}});
+            let mut v=page(1);
+            let Some(GuestReply::Action{action:HostAction::NativeRead{service:s,arguments,..},state})=accumulate(&mut r,&mut v).unwrap() else{panic!("{phase}")};
+            assert_eq!(s,service);assert_eq!((arguments["pageSize"].clone(),arguments["absolutePage"].clone(),arguments["whereClauseX"].clone()),(json!(2),json!(2),json!("w")));
+            assert_eq!(state["phase"],phase);
+            r.state=state;let mut v=page(2);
+            assert!(accumulate(&mut r,&mut v).unwrap().is_none());
+            for t in tables {assert_eq!(v["returnObj"][*t],json!([{"n":1},{"n":2}]));}
+            assert_eq!(v["parameters"]["morePages"],false);
+            assert!(r.state.get("groupRows").is_none()&&r.state.get("groupArgs").is_none());
+            // A page that claims more but carries no rows is refused.
+            let mut r=request();r.state=json!({"phase":phase,"groupArgs":{},"groupPage":1});
+            let mut v=json!({"returnObj":tables.iter().map(|t|(t.to_string(),json!([]))).collect::<serde_json::Map<_,_>>(),"parameters":{"morePages":true}});
+            assert!(accumulate(&mut r,&mut v).is_err());
+        }
+        // Every group starts at page 1 of the request's page size, or the host default without one.
+        for stream in ["0","2"] {
+            let mut r=request();r.cursor=Some(stream.into());r.page_size=Some(7);
+            let GuestReply::Action{action:HostAction::NativeRead{arguments,..},..}=handle(r.clone())else{panic!()};
+            assert_eq!((arguments["pageSize"].clone(),arguments["absolutePage"].clone()),(json!(7),json!(1)));
+            r.page_size=None;let GuestReply::Action{action:HostAction::NativeRead{arguments,..},..}=handle(r)else{panic!()};
+            assert_eq!(arguments["pageSize"],json!(500));
+        }
+    }
+    #[test]
+    fn themes_continue_across_pages_and_build_the_same_records() {
+        let mut r=request();r.page_size=Some(1);
+        let GuestReply::Action{state,..}=handle(r.clone())else{panic!()};
+        let child=json!({"ThemeID":"A","SystemFlag":false,"SysRowID":"11111111-1111-1111-1111-111111111111","Resource":"r"});
+        r.state=state;r.response=Some(json!({"returnObj":{"Theme":[{"ThemeID":"A","SystemFlag":false,"ThemeXML":"<A/>"}],"ThemeResource":[child]},"parameters":{"morePages":true}}));
+        let GuestReply::Action{action:HostAction::NativeRead{service,arguments,..},state}=handle(r.clone())else{panic!()};
+        assert_eq!(service,"Ice.BO.ThemeSvc");assert_eq!((arguments["absolutePage"].clone(),arguments["whereClauseTheme"].clone()),(json!(2),json!("SystemFlag = false")));
+        r.state=state;r.response=Some(json!({"returnObj":{"Theme":[{"ThemeID":"B","SystemFlag":false,"ThemeXML":"<B/>"}],"ThemeResource":[]},"parameters":{"morePages":false}}));
+        let GuestReply::ReadyRecords{records,state}=handle(r)else{panic!()};
+        assert_eq!(records[0].0.keys["ThemeID"],"A");assert_eq!(records[0].1["ThemeResource"].as_array().unwrap().len(),1);
+        assert_eq!(state["records"].as_array().unwrap().len(),2);assert_eq!(state["next"],"1");
+    }
+    #[test]
+    fn every_resource_query_is_keyset_paged_and_accumulated_unchanged() {
+        let mut r=request();r.cursor=Some("3".into());r.page_size=Some(2);
+        let GuestReply::Action{action:HostAction::SharedQuery{query},state}=handle(r.clone())else{panic!()};
+        assert_eq!((query.page_size,query.order[0].field.as_str()),(Some(2),"SysRowID"));
+        assert!(query.criteria.iter().all(|c|c.operator!=">"));
+        let id=|n:u8|format!("{n}{n}{n}{n}{n}{n}{n}{n}-1111-1111-1111-111111111111");
+        r.state=state;let mut v=json!({"rows":[{"SysRowID":id(1)},{"SysRowID":id(2)}]});
+        let Some(GuestReply::Action{action:HostAction::SharedQuery{query},state})=accumulate(&mut r,&mut v).unwrap()else{panic!()};
+        assert_eq!((query.page_size,query.parameters["after"].clone()),(Some(2),json!(id(2))));
+        assert!(query.criteria.iter().any(|c|c.table=="R"&&c.field=="SysRowID"&&c.operator==">"&&c.parameter=="after"));
+        assert_eq!(query.parameters["p0"],json!(["C","","All"]));
+        // A repeated keyset position cannot loop, and a full page needs an ID to continue from.
+        let mut stuck=r.clone();stuck.state=state.clone();let mut v=json!({"rows":[{"SysRowID":id(3)},{"SysRowID":id(2)}]});
+        assert!(accumulate(&mut stuck,&mut v).is_err());
+        let mut v=json!({"rows":[{"SysRowID":id(3)},{"Other":1}]});stuck.state=state.clone();assert!(accumulate(&mut stuck,&mut v).is_err());
+        r.state=state;let mut v=json!({"rows":[{"SysRowID":id(3)}]});
+        assert!(accumulate(&mut r,&mut v).unwrap().is_none());
+        assert_eq!(v,json!({"rows":[{"SysRowID":id(1)},{"SysRowID":id(2)},{"SysRowID":id(3)}]}));
+        assert!(r.state.get("query").is_none()&&r.state.get("queryRows").is_none());
+        // Every query phase pages, including image bytes, file bytes and theme metadata.
+        let mut r=request();r.page_size=Some(5);r.state=json!({"graph":{"Image":[{"ImageSysRowID":id(1)}],"ImageCategory":[],"ImageSubCategory":[]},"phase":"categories"});
+        r.response=Some(json!({"returnObj":{"ImageCategory":[],"ImageSubCategory":[]},"parameters":{"morePages":false}}));
+        let GuestReply::Action{action:HostAction::SharedQuery{query},state}=handle(r)else{panic!()};
+        assert_eq!((query.page_size,state["phase"].clone()),(Some(5),json!("image-bytes")));
+        let mut r=request();r.cursor=Some("4".into());
+        let GuestReply::Action{action:HostAction::SharedQuery{query},..}=handle(r.clone())else{panic!()};
+        assert_eq!((query.page_size,query.order[0].field.as_str()),(Some(100),"SysRowID"));
+        r.state=json!({"phase":"owner","ownerIndex":0,"owners":[["Ice","XXXDef"]],"ownerRows":{},"files":[{"SysRowID":id(1),"ForeignSysRowID":id(2),"RelatedToSchemaName":"Ice","RelatedToTable":"XXXDef"}]});
+        r.page_size=Some(3);r.response=Some(json!({"rows":[]}));
+        let GuestReply::Action{action:HostAction::SharedQuery{query},state}=handle(r)else{panic!()};
+        assert_eq!((query.page_size,state["phase"].clone()),(Some(3),json!("bytes")));
+    }
+    #[test]
+    fn image_and_translation_indexes_match_the_full_scans_with_duplicates() {
+        let images=vec![json!({"ImageSysRowID":"AB","ThumbnailSysRowID":"ab"}),json!({"ImageSysRowID":"cd","ThumbnailSysRowID":"AB"}),json!({"ImageSysRowID":"ab","ThumbnailSysRowID":null}),json!({})];
+        let keys=["ImageSysRowID","ThumbnailSysRowID"];let index=image_index(&images,&keys);
+        for rid in ["ab","AB","Ab","cd","CD","ef"] {
+            let mut scan=vec![];for (i,image) in images.iter().enumerate(){for (role,key) in keys.iter().enumerate(){if image[*key].as_str().is_some_and(|id|id.eq_ignore_ascii_case(rid)){scan.push((i,role));}}}
+            assert_eq!(index.get(&rid.to_ascii_lowercase()).cloned().unwrap_or_default(),scan,"{rid}");
+        }
+        let t=|c:&str,l:&str,o:Value,p:Value,n:u8|json!({"Company":c,"LangNameID":l,"OrgTextID":o,"ProgramID":p,"n":n});
+        let rows=vec![t("C","L",json!(1),json!(""),0),t("C","L",json!(1),json!("P"),1),t("C","L",json!(1),json!(""),2),t("C","L",json!(2),json!(""),3),t("C","M",json!(1),json!("Q"),4),t("","L",json!(1),json!(""),5),t("C","L",json!("1"),json!(""),6),t("C","L",json!(1.0),Value::Null,7),t("C","L",json!(2),json!("P"),8)];
+        let siblings=sibling_index(&rows);
+        for row in &rows {
+            let scan:Vec<_>=rows.iter().filter(|v|v["Company"]==row["Company"]&&v["LangNameID"]==row["LangNameID"]&&v["OrgTextID"]==row["OrgTextID"]).collect();
+            let (general,programs)=siblings[&sibling_key(row)];
+            assert_eq!(general.map(|i|&rows[i]),scan.iter().find(|v|v["ProgramID"]=="").copied(),"{row}");
+            assert_eq!(programs,scan.iter().any(|v|v["ProgramID"]!=""),"{row}");
+            let text=json!([row["Company"],row["OrgTextID"]]).to_string();
+            for program in [true,false] {
+                let found=rows.iter().find(|v|v["Company"]==row["Company"]&&v["OrgTextID"]==row["OrgTextID"]&&(!program||v["ProgramID"]!=""));
+                assert_eq!(first_by_text(&rows,program).get(&text).copied(),found,"{row}/{program}");
+            }
+        }
     }
 
 }
@@ -1549,8 +1833,8 @@ mod tests {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
-    fn request(state:Value)->GuestRequest {GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"C21".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None}}
-    fn owner(kind:&str)->(Identity,Value){(Identity{category:"C21".into(),kind:kind.into(),scope:Scope::Global,keys:BTreeMap::from([("ID".into(),kind.into())])},json!({"original":"Ω","bytes":[0,255]}))}
+    fn request(state:Value)->GuestRequest {GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"custom-resources".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None}}
+    fn owner(kind:&str)->(Identity,Value){(Identity{category:"custom-resources".into(),kind:kind.into(),scope:Scope::Global,keys:BTreeMap::from([("ID".into(),kind.into())])},json!({"original":"Ω","bytes":[0,255]}))}
     #[test]
     fn families_skip_only_unacquired_streams_and_themes_include_overrides(){
         for (family,streams) in [("all",vec![0,1,2,3,4]),("themes",vec![0,4]),("translations",vec![1]),("images",vec![2]),("fileStore",vec![3])] {
@@ -1564,7 +1848,7 @@ mod selection_tests {
         let settings=json!({"resourceFamily":"images"});let error=json!(Diagnostic::new("ACQUIRED","retained error"));let from=json!({"_pluginSettings":settings,"diagnostics":[error]});
         for independent in [false,true] {let reply=selected_reply(finish(vec![owner("Theme")],Some("1".into()),true,independent),&from).unwrap();let GuestReply::PreparedPage{state,next_state,..}=reply else{panic!()};assert_eq!(next_state["_pluginSettings"],settings);if !independent{assert!(state.get("_hostWorkItems").is_none());}let items=if independent {state["_hostWorkItems"].as_array().unwrap().clone()}else{vec![state]};for item in items{assert_eq!(item["_pluginSettings"],settings);assert!(matches!(handle(GuestRequest{operation:"materialize".into(),..request(item)}),GuestReply::Inventory{authoritative:false,diagnostics,..}if diagnostics.len()==1&&diagnostics[0].code=="ACQUIRED"));}}
         let GuestReply::ReadyRecords{records,state}=selected_reply(finish(vec![owner("ImageLibrary")],None,false,false),&from).unwrap()else{panic!()};assert_eq!(records,vec![owner("ImageLibrary")]);assert_eq!(state["_pluginSettings"],settings);assert!(matches!(handle(GuestRequest{operation:"materialize".into(),..request(state)}),GuestReply::Inventory{authoritative:false,diagnostics,..}if diagnostics.len()==1));
-        let mut r=request(from);r.operation="acquire".into();assert!(matches!(handle(r),GuestReply::Failure{diagnostic}if diagnostic.message.contains("complete resource streams")));
+        let mut r=request(from);r.operation="acquire".into();assert!(matches!(handle(r),GuestReply::Failure{diagnostic}if diagnostic.message.contains("downloaded as complete groups")));
     }
     #[test]
     fn family_output_keeps_whole_aggregate_and_validates_acquired_theme_before_exclusion(){

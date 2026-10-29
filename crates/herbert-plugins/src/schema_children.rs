@@ -34,7 +34,7 @@ pub fn complete(mut request: GuestRequest) -> GuestReply {
     else {
         return failure(
             "INVALID_PLUGIN_STATE",
-            "The custom schema child checkpoint is invalid.",
+            "The custom schema child saved progress is invalid.",
         );
     };
     let id = request.identity.as_ref().unwrap();
@@ -69,13 +69,13 @@ pub fn complete(mut request: GuestRequest) -> GuestReply {
             let Some(row_id) = row["SysRowID"].as_str().filter(|v| !v.is_empty()) else {
                 return failure(
                     "SCHEMA_CHILD_IDENTITY_MISSING",
-                    "A custom schema row omitted its native row identity.",
+                    "A custom schema row omitted its Epicor row identity.",
                 );
             };
             if !seen.insert(row_id) {
                 return failure(
                     "SCHEMA_CHILD_DUPLICATE",
-                    "The custom schema query repeated a native row.",
+                    "The custom schema query repeated an Epicor row.",
                 );
             }
             if ["SystemCode", "DataTableID"].iter().all(|key| {
@@ -178,10 +178,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C02".into(),
+            category: "ud-schema".into(),
             company: "Example".into(),
             identity: Some(Identity {
-                category: "C02".into(),
+                category: "ud-schema".into(),
                 kind: "UDTableSchema".into(),
                 scope: Scope::Global,
                 keys: BTreeMap::from([

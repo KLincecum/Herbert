@@ -1,7 +1,7 @@
-"""Regenerate ordinary BPM readers while preserving qualified package formatting.
+"""Regenerate ordinary BPM readers while preserving established package formatting.
 
 The packager copies these helper assets into plugins/BPM directives/artifacts.
-No separate packages/c06 source mirror or production host embedding is used.
+No separate packages/bpm-directives source mirror or production host embedding is used.
 """
 from pathlib import Path
 import json
@@ -20,7 +20,7 @@ def build():
         if len(functions) != 1 or functions[0]["FunctionID"] != "ReadCompiled":
             raise ValueError("The shipping ordinary BPM reader must contain only ReadCompiled.")
         functions[0]["Body"] = json.dumps({"Code": code, "Usings": ""}, separators=(",", ":"), ensure_ascii=False)
-        # 4.3 retains its exact compact native-qualified bytes. The later
+        # 4.3 retains its exact compact native-tested bytes. The later
         # packages retain their established indentation and no final newline.
         options = {"separators": (",", ":")} if version == "4.3.200" else {"indent": 2}
         payload = json.dumps(package, ensure_ascii=False, **options)

@@ -18,13 +18,13 @@ pub(crate) fn rid()->Option<&'static str> {
 impl Engine {
     pub(crate) fn open(plugin_root:&Path)->Result<Self,Diagnostic> {let engine=Self::descriptor(plugin_root)?;engine.verify()?;Ok(engine)}
     pub(crate) fn descriptor(plugin_root:&Path)->Result<Self,Diagnostic> {
-        let rid=rid().ok_or_else(||issue("MANAGED_ENGINE_UNAVAILABLE","This platform has no qualified optional companion."))?;
+        let rid=rid().ok_or_else(||issue("MANAGED_ENGINE_UNAVAILABLE","Decompiling compiled code is not available on this operating system. The compiled files were still saved."))?;
         let root=plugin_root.parent().ok_or_else(||failure("Plugin package root is unavailable."))?.join("companions/managed-decompiler").join(rid);
-        let data=fs::read(root.join("companion.json")).map_err(|_|issue("MANAGED_ENGINE_UNAVAILABLE","The pinned decompiler companion is absent. Captured binaries remain available."))?;
-        let manifest:EngineManifest=serde_json::from_slice(&data).map_err(|_|failure("The companion manifest is invalid."))?;
-        if manifest.protocol_version!=MANAGED_DECOMPILATION_PROTOCOL || manifest.engine_id!=MANAGED_ENGINE_ID || manifest.target_rid!=rid { return Err(failure("The companion has an unsupported engine, protocol or target RID.")); }
+        let data=fs::read(root.join("companion.json")).map_err(|_|issue("MANAGED_ENGINE_UNAVAILABLE","The pinned decompiler decompiler add-on is absent. Captured binaries remain available."))?;
+        let manifest:EngineManifest=serde_json::from_slice(&data).map_err(|_|failure("The decompiler add-on manifest is invalid."))?;
+        if manifest.protocol_version!=MANAGED_DECOMPILATION_PROTOCOL || manifest.engine_id!=MANAGED_ENGINE_ID || manifest.target_rid!=rid { return Err(failure("The installed decompiler does not match this Herbert version or this computer. Reinstall Herbert's optional decompiler from this release. Compiled files were still saved.")); }
         let relative=storage::safe_relative(&manifest.executable)?;
-        if relative.components().count()!=1 {return Err(failure("The companion executable must be a package leaf."));}
+        if relative.components().count()!=1 {return Err(failure("The decompiler add-on executable must be a package leaf."));}
         let path=root.join(relative);
         Ok(Self {manifest,path})
     }
@@ -33,19 +33,19 @@ impl Engine {
         self.verify()?;
         let mut command=tokio::process::Command::new(&self.path);command.arg("--protocol").current_dir(worker_directory()).env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
         #[cfg(windows)]{command.env("SystemRoot",std::env::var_os("SystemRoot").unwrap_or_else(||r"C:\Windows".into())).creation_flags(0x08000000);}
-        let child=command.spawn().map_err(|_|failure("Cannot start the verified companion protocol check."))?;
-        let output=tokio::select!{_ = cancel.cancelled()=>return Err(issue("MANAGED_JOB_CANCELLED","Companion negotiation was cancelled.")),output=child.wait_with_output()=>output.map_err(|_|failure("Cannot reap the companion protocol check."))?};
-        let protocol:Value=serde_json::from_slice(&output.stdout).map_err(|_|failure("The companion protocol handshake is invalid."))?;
-        if !output.status.success() || protocol["protocolVersion"]!=1 || protocol["engineId"]!=MANAGED_ENGINE_ID || protocol["resolverPolicy"]!="target-only-v1" || protocol["aot"]!=true || protocol["controlChannel"]!="line-or-eof-v1" || protocol["generationLeases"]!="os-lock-token-v1" || protocol["symbolModes"]!=json!(["none","externalPortable","embeddedPortable"]) {return Err(failure("The companion does not implement the required AOT, resolver, cancellation, generation or symbol protocol."));}
+        let child=command.spawn().map_err(|_|failure("Cannot start the verified decompiler add-on protocol check."))?;
+        let output=tokio::select!{_ = cancel.cancelled()=>return Err(issue("MANAGED_JOB_CANCELLED","Decompiler add-on negotiation was cancelled.")),output=child.wait_with_output()=>output.map_err(|_|failure("Cannot reap the decompiler add-on protocol check."))?};
+        let protocol:Value=serde_json::from_slice(&output.stdout).map_err(|_|failure("The decompiler add-on protocol handshake is invalid."))?;
+        if !output.status.success() || protocol["protocolVersion"]!=1 || protocol["engineId"]!=MANAGED_ENGINE_ID || protocol["resolverPolicy"]!="target-only-v1" || protocol["aot"]!=true || protocol["controlChannel"]!="line-or-eof-v1" || protocol["generationLeases"]!="os-lock-token-v1" || protocol["symbolModes"]!=json!(["none","externalPortable","embeddedPortable"]) {return Err(failure("The decompiler add-on does not implement the required AOT, resolver, cancellation, generation or symbol protocol."));}
         Ok(())
     }
     pub(crate) fn verify(&self)->Result<(),Diagnostic> {
-        let metadata=fs::symlink_metadata(&self.path).map_err(|_|failure("The companion executable is missing."))?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len()!=self.manifest.bytes {return Err(failure("The companion file type/length is invalid."));}
-        let mut file=fs::File::open(&self.path).map_err(|_|failure("Cannot read the companion executable."))?;
+        let metadata=fs::symlink_metadata(&self.path).map_err(|_|failure("The decompiler add-on executable is missing."))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len()!=self.manifest.bytes {return Err(failure("The decompiler add-on file type/length is invalid."));}
+        let mut file=fs::File::open(&self.path).map_err(|_|failure("Cannot read the decompiler add-on executable."))?;
         use sha2::{Digest,Sha256};let mut digest=Sha256::new();let mut buffer=[0_u8;65536];
-        loop {let read=file.read(&mut buffer).map_err(|_|failure("Cannot hash the companion executable."))?;if read==0 {break;}digest.update(&buffer[..read]);}
-        if hex::encode(digest.finalize())!=self.manifest.sha256 {return Err(failure("The companion executable hash does not match its pinned manifest."));}Ok(())
+        loop {let read=file.read(&mut buffer).map_err(|_|failure("Cannot hash the decompiler add-on executable."))?;if read==0 {break;}digest.update(&buffer[..read]);}
+        if hex::encode(digest.finalize())!=self.manifest.sha256 {return Err(failure("The decompiler add-on executable hash does not match its pinned manifest."));}Ok(())
     }
 }
 pub(crate) fn worker_directory()->PathBuf{
@@ -71,7 +71,7 @@ pub(crate) async fn execute(engine:&Engine, request_path:&Path, attempt:&Path, c
     let stderr=fs::File::create(attempt.join("stderr.txt")).map_err(|_|failure("Cannot create worker diagnostic log."))?;
     let mut command=tokio::process::Command::new(&engine.path);command.arg(&request_path).current_dir(worker_directory()).env_clear().env("TEMP",&attempt).env("TMP",&attempt).env("TMPDIR",&attempt).env("HOME",&attempt).stdin(Stdio::piped()).stdout(stdout).stderr(stderr).kill_on_drop(true);
     #[cfg(windows)]{command.env("SystemRoot",std::env::var_os("SystemRoot").unwrap_or_else(||r"C:\Windows".into())).creation_flags(0x08000000);}
-    let mut child=command.spawn().map_err(|error|failure(format!("Cannot start the verified native companion: {error}")))?;
+    let mut child=command.spawn().map_err(|error|failure("Herbert could not start its decompiler program. Check that security software is not blocking files in the Herbert folder, then retry. The downloaded files are unaffected.").with_cause(&error).with_context("osError",error.raw_os_error()))?;
     qualification_boundary("after-worker-spawn")?;
     #[cfg(test)] if std::env::var("HERBERT_MANAGED_FORCE_CANCEL").as_deref()==Ok("1"){cancel.cancel();}
     // Tokio Child::wait closes its owned stdin. Keep the control pipe separate so
@@ -88,7 +88,7 @@ pub(crate) async fn execute(engine:&Engine, request_path:&Path, attempt:&Path, c
         let forced=match cooperative{Ok(Ok(_))=>false,Ok(Err(_))=>return Err(issue("MANAGED_WORKER_RECONCILIATION_REQUIRED","Cannot reap the owned worker after cancellation; its exact attempt is preserved.")),Err(_)=>{child.kill().await.map_err(|_|issue("MANAGED_WORKER_RECONCILIATION_REQUIRED","Cannot kill/reap the owned worker; its exact attempt remains available."))?;true}};
         return Err(issue("MANAGED_JOB_CANCELLED",if forced{"Local work exceeded the measured cancellation grace; its owned worker was killed and reaped. Verified originals and staging were preserved; explicit retry is available."}else{"Local work was cancelled cooperatively; verified originals and staging were preserved. Explicit retry is available."}));
     }}};
-    if !status.success(){return Err(failure(format!("The companion failed. Detailed diagnostics remain in {}.",attempt.join("stderr.txt").display())));}
+    if !status.success(){return Err(failure(format!("The decompiler add-on failed. Detailed diagnostics remain in {}.",attempt.join("stderr.txt").display())));}
     activity.meaningful_work("decompilerFinished",1);
     Ok(())
 }
@@ -106,8 +106,8 @@ pub(crate) fn validate_result(out:&Path,id:&str,input_hash:&str,symbol_hash:Opti
     let result:GeneratedResult=serde_json::from_slice(&bytes).map_err(|_|failure("The worker result schema is invalid."))?;
     if result.protocol_version!=1||result.job_id!=id||result.engine_id!=MANAGED_ENGINE_ID||result.input_sha256!=input_hash||!matches!(result.outcome.as_str(),"complete"|"partial") {return Err(failure("The worker result identity/outcome does not match the job."));}
     if result.outcome=="complete"&&(!result.unresolved_references.is_empty()||!result.diagnostics.is_empty()||result.coverage.iter().any(|c|matches!(c["outcome"].as_str(),Some("failed"|"partial"|"unavailable")))) {return Err(failure("The worker claimed complete despite unresolved coverage."));}
-    if symbol_hash.is_some_and(|symbols| result.symbol_disposition!="matched-used" || result.symbol_sha256.as_deref()!=Some(symbols)) {return Err(failure("The companion did not validate/use the exact selected external symbols; the original pair and diagnostics were preserved."));}
-    if symbol_hash.is_none() && (result.symbol_disposition=="matched-used" || result.symbol_sha256.is_some()) {return Err(failure("The companion reported unapproved external symbols."));}
+    if symbol_hash.is_some_and(|symbols| result.symbol_disposition!="matched-used" || result.symbol_sha256.as_deref()!=Some(symbols)) {return Err(failure("The decompiler add-on did not validate/use the exact selected external symbols; the original pair and diagnostics were preserved."));}
+    if symbol_hash.is_none() && (result.symbol_disposition=="matched-used" || result.symbol_sha256.is_some()) {return Err(failure("The decompiler add-on reported unapproved external symbols."));}
     let mut names=BTreeSet::from([storage::collision_key("result.json")]);
     for file in &result.files {
         if !matches!(file.kind.as_str(),"source"|"project"|"raw-resource"|"notice") || (file.kind=="raw-resource" && file.logical_name.is_none()) {return Err(failure("The generated file kind/logical-name coverage is invalid."));}

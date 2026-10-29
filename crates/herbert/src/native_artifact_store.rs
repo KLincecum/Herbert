@@ -66,6 +66,34 @@ mod tests {
         assert!(pending_operations(root.path(), &scope()).unwrap().is_empty());
     }
     #[test]
+    fn release_1_operation_reopens_under_its_slug_without_a_duplicate() {
+        // Release 1 stored plugin "C03" in a directory keyed by (run, "C03").
+        let root = tempfile::tempdir().unwrap();
+        let mut source = snapshot(b"source");
+        source.declaration.lifetime = NativeArtifactLifetime::Temporary;
+        source.declaration.target = None;
+        let legacy = OperationFile::open(root.path(), "run", "C03", scope(), vec![source.clone()]).unwrap();
+        let (legacy_directory, legacy_target) = (legacy.directory.clone(), legacy.record.artifacts[0].target.clone());
+        let mut legacy = legacy;
+        legacy.phase(0, "deletePending").unwrap();
+        drop(legacy);
+        let mut reopened = OperationFile::open(root.path(), "run", "extended-properties", scope(), vec![source]).unwrap();
+        assert_eq!(reopened.directory, legacy_directory, "the Release 1 operation is reopened");
+        assert_eq!(reopened.record.artifacts[0].target, legacy_target, "ownership is not reissued");
+        assert_eq!(reopened.record.plugin, "C03", "the stored value keeps its bytes");
+        assert_eq!(fs::read_dir(root.path().join("native-artifacts").join("operations")).unwrap().count(), 1, "no second operation");
+        reopened.phase(0, "deletePending").unwrap();
+        let saved: OperationRecord = serde_json::from_slice(&fs::read(reopened.directory.join("operation.json")).unwrap()).unwrap();
+        assert_eq!(saved.plugin, "C03", "a checkpoint does not rewrite the stored owner");
+        let pending = pending_operations(root.path(), &scope()).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(crate::legacy_category_ids::same(&pending[0].plugin, "extended-properties"));
+        drop(reopened);
+        // A different plugin's operation for the same run never borrows the Release 1 directory.
+        let other = OperationFile::open(root.path(), "run", "baqs-and-ubaqs", scope(), vec![]).unwrap();
+        assert_ne!(other.directory, legacy_directory);
+    }
+    #[test]
     fn operation_retains_sources_and_locks_until_finished() {
         let root = tempfile::tempdir().unwrap();
         let first = OperationFile::open(
@@ -304,17 +332,17 @@ fn state_error(message: impl Into<String>) -> Diagnostic {
 fn reject_link(path: &Path) -> Result<(), Diagnostic> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => Err(state_error(
-            "Native artifact state must not use a link or junction.",
+            "Epicor artifact state must not use a link or junction.",
         )),
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(state_error("Cannot inspect native artifact state.")),
+        Err(_) => Err(state_error("Cannot inspect Epicor artifact state.")),
     }
 }
 fn checked_dir(path: &Path) -> Result<(), Diagnostic> {
     reject_link(path)?;
     fs::create_dir_all(path)
-        .map_err(|_| state_error("Cannot create native artifact state directory."))
+        .map_err(|_| state_error("Cannot create Epicor artifact state directory."))
 }
 fn key(value: &impl Serialize) -> Result<String, Diagnostic> {
     Ok(storage::sha256(&serde_json::to_vec(value).map_err(
@@ -329,8 +357,8 @@ fn lock(path: &Path) -> Result<File, Diagnostic> {
         .create(true)
         .truncate(false)
         .open(path)
-        .map_err(|_| state_error("Cannot open native artifact ownership lock."))?;
-    file.try_lock_exclusive().map_err(|_|Diagnostic::new("NATIVE_ARTIFACT_IN_USE","Another operation owns this native installation. Let that operation finish before updating or removing it."))?;
+        .map_err(|_| state_error("Cannot open Epicor artifact ownership lock."))?;
+    file.try_lock_exclusive().map_err(|_|Diagnostic::new("NATIVE_ARTIFACT_IN_USE","Another operation owns this Epicor installation. Let that operation finish before updating or removing it."))?;
     Ok(file)
 }
 impl OperationFile {
@@ -347,7 +375,16 @@ impl OperationFile {
         checked_dir(&operations)?;
         let registry_root = base.join("installed");
         checked_dir(&registry_root)?;
-        let directory = operations.join(key(&(run_id, plugin))?);
+        let current_directory = operations.join(key(&(run_id, plugin))?);
+        // A Release 1 operation is keyed by the retired code. Reopen it rather than creating a
+        // second, empty operation for the same run; its stored plugin value stays as written.
+        let directory = match crate::legacy_category_ids::retired(plugin) {
+            Some(code) if !current_directory.exists() => {
+                let legacy = operations.join(key(&(run_id, code))?);
+                if legacy.is_dir() { legacy } else { current_directory }
+            }
+            _ => current_directory,
+        };
         checked_dir(&directory)?;
         let operation_lock = lock(&directory.join("operation.lock"))?;
         let record_path = directory.join("operation.json");
@@ -358,12 +395,12 @@ impl OperationFile {
                     .map_err(|_| state_error("The saved artifact operation is malformed."))?;
                 if record.schema_version != 1
                     || record.run_id != run_id
-                    || record.plugin != plugin
+                    || !crate::legacy_category_ids::same(&record.plugin, plugin)
                     || record.scope != scope
                 {
                     return Err(Diagnostic::new(
                         "NATIVE_ARTIFACT_OWNER_MISMATCH",
-                        "The saved artifact operation belongs to a different run, plugin or admitted caller.",
+                        "The saved artifact operation belongs to a different run, plugin or allowed to start Epicor user.",
                     ));
                 }
                 record
@@ -373,7 +410,7 @@ impl OperationFile {
                 for (index, snapshot) in snapshots.into_iter().enumerate() {
                     let owner = uuid::Uuid::new_v4();
                     // EFX library IDs have a native 30-character constraint on the
-                    // qualified runtime. Keep the full UUID as ownership metadata.
+                    // tested runtime. Keep the full UUID as ownership metadata.
                     let target = snapshot
                         .declaration
                         .target
@@ -481,11 +518,11 @@ impl OperationFile {
         let record = &self.record.artifacts[index];
         let name = record.declaration.file_for_version(version);
         let relative = record.files.get(name).ok_or_else(|| {
-            state_error("The operation has no frozen source for this native version.")
+            state_error("The operation has no frozen source for this Epicor version.")
         })?;
         let path = self.directory.join(storage::safe_relative(relative)?);
         reject_link(&path)?;
-        Ok(Arc::new(fs::read(path).map_err(|_|state_error("The retained native source is unavailable. Preserve the operation and reconnect after restoring its source file."))?))
+        Ok(Arc::new(fs::read(path).map_err(|_|state_error("The retained Epicor source is unavailable. Preserve the operation and reconnect after restoring its source file."))?))
     }
     pub fn backup(&mut self, index: usize, bytes: &[u8]) -> Result<(), Diagnostic> {
         let relative = format!("backup-{index}-{}.bin", uuid::Uuid::new_v4());
@@ -501,7 +538,7 @@ impl OperationFile {
         let path = self.directory.join(storage::safe_relative(relative)?);
         reject_link(&path)?;
         fs::read(path)
-            .map_err(|_| state_error("Cannot read the preserved native replacement backup."))
+            .map_err(|_| state_error("Cannot read the preserved Epicor replacement backup."))
     }
     pub fn phase(&mut self, index: usize, phase: &str) -> Result<(), Diagnostic> {
         self.record.artifacts[index].phase = phase.into();
@@ -526,9 +563,9 @@ impl OperationFile {
         match fs::read(path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map(Some)
-                .map_err(|_| state_error("The native installation ownership record is malformed.")),
+                .map_err(|_| state_error("The Epicor installation ownership record is malformed.")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(_) => Err(state_error("Cannot read native installation ownership.")),
+            Err(_) => Err(state_error("Cannot read Epicor installation ownership.")),
         }
     }
     pub fn retain_installation(&self, index: usize) -> Result<(), Diagnostic> {
@@ -556,7 +593,7 @@ impl OperationFile {
         storage::atomic_write(
             &path,
             &serde_json::to_vec_pretty(&installed)
-                .map_err(|_| state_error("Cannot serialize native installation ownership."))?,
+                .map_err(|_| state_error("Cannot serialize Epicor installation ownership."))?,
         )
     }
 }

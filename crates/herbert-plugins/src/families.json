@@ -1,6 +1,6 @@
 [
   {
-    "category": "C02",
+    "category": "ud-schema",
     "kind": "UDTableSchema",
     "service": "Ice.BO.ZDataTableSvc",
     "root": "ZDataTable",
@@ -35,7 +35,7 @@
     "coverage": []
   },
   {
-    "category": "C02",
+    "category": "ud-schema",
     "kind": "UDMapping",
     "service": "Ice.BO.UDMapSvc",
     "root": "UDMapTable",
@@ -68,7 +68,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C03",
+    "category": "extended-properties",
     "kind": "ExtendedTableProperties",
     "service": "Ice.BO.ZDataTableSvc",
     "root": "ZDataTable",
@@ -106,7 +106,7 @@
     "coverage": []
   },
   {
-    "category": "C04",
+    "category": "baqs-and-ubaqs",
     "kind": "BAQ",
     "service": "Ice.BO.BAQDesignerSvc",
     "root": "DynamicQueryDesigner",
@@ -137,7 +137,7 @@
     "coverage": []
   },
   {
-    "category": "C05",
+    "category": "ubaqs",
     "kind": "UBAQ",
     "service": "Ice.BO.BAQDesignerSvc",
     "root": "DynamicQueryDesigner",
@@ -168,7 +168,7 @@
     "coverage": []
   },
   {
-    "category": "C06",
+    "category": "bpm-directives",
     "kind": "MethodDirectiveGroup",
     "service": "Ice.BO.BpMethodSvc",
     "root": "BpMethod",
@@ -205,7 +205,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C06",
+    "category": "bpm-directives",
     "kind": "DataDirectiveGroup",
     "service": "Ice.BO.BpMethodSvc",
     "root": "BpMethod",
@@ -242,7 +242,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "kind": "PredictiveSearch",
     "service": "Ice.BO.PredictiveSearchSvc",
     "root": "PredictiveSearch",
@@ -272,7 +272,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C16",
+    "category": "report-definitions",
     "kind": "ReportDataDefinition",
     "service": "Ice.BO.RptDataDefSvc",
     "root": "RptDataDef",
@@ -326,7 +326,7 @@
     "coverage": []
   },
   {
-    "category": "C16",
+    "category": "report-definitions",
     "kind": "BAQReport",
     "service": "Ice.BO.DynamicReportSvc",
     "root": "BAQReport",
@@ -358,7 +358,7 @@
     "coverage": []
   },
   {
-    "category": "C17",
+    "category": "report-styles-and-layouts",
     "kind": "ReportStyles",
     "service": "Ice.BO.ReportSvc",
     "root": "ReportStyle",
@@ -427,7 +427,7 @@
     "coverage": []
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "kind": "Configurator",
     "service": "Erp.BO.ConfiguratorDefSvc",
     "root": "PcStatus",
@@ -440,7 +440,7 @@
       "service": "Erp.BO.ConfiguratorDefSvc",
       "method": "GetRows",
       "arguments": {
-        "whereClausePcStatus": "(Company = '@companyLiteral' OR Company = '')",
+        "whereClausePcStatus": "(Company = '@companyLiteral' OR Company = '')@idPrefixLike(ConfigID)",
         "whereClausePcStatusAttch": "",
         "whereClausePcAudit": "1 = 0",
         "pageSize": "@size",
@@ -486,7 +486,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "kind": "ConfiguratorLookup",
     "service": "Erp.BO.PcLookupTblSvc",
     "root": "PcLookupTblHed",
@@ -501,7 +501,7 @@
       "arguments": {
         "pageSize": "@size",
         "absolutePage": "@page",
-        "whereClausePcLookupTblHed": "(Company = '@companyLiteral' OR Company = '')",
+        "whereClausePcLookupTblHed": "(Company = '@companyLiteral' OR Company = '')@idPrefixLike(LookupTblID)",
         "whereClausePcLookupTblHedAttch": "",
         "whereClausePcLookupColSetHed": "",
         "whereClausePcLookupColSetDtl": "",
@@ -526,7 +526,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C20",
+    "category": "business-rules-and-mappings",
     "kind": "BPMDataForm",
     "service": "Ice.BO.InfoPromptFormSvc",
     "root": "IPForm",
@@ -563,7 +563,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C21",
+    "category": "custom-resources",
     "kind": "Theme",
     "service": "Ice.BO.ThemeSvc",
     "root": "Theme",
@@ -594,7 +594,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C21",
+    "category": "custom-resources",
     "kind": "Translation",
     "service": "Ice.BO.LangTranSvc",
     "root": "LangTran",
@@ -625,7 +625,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C21",
+    "category": "custom-resources",
     "kind": "Language",
     "service": "Ice.BO.LangNameSvc",
     "root": "LangName",
@@ -659,7 +659,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C22",
+    "category": "programs-and-extensions",
     "kind": "ExtensionSet",
     "service": "Ice.BO.ExtensionSvc",
     "root": "Extension",
@@ -702,7 +702,7 @@
     "coverage": []
   },
   {
-    "category": "C22",
+    "category": "programs-and-extensions",
     "kind": "ServiceDefinition",
     "service": "Ice.BO.ZBODefSvc",
     "root": "ZBODef",
@@ -742,7 +742,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C22",
+    "category": "programs-and-extensions",
     "kind": "DatasetDefinition",
     "service": "Ice.BO.ZDataSetSvc",
     "root": "ZDataSet",
@@ -785,7 +785,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C25",
+    "category": "automation-and-integrations",
     "kind": "SystemAgent",
     "service": "Ice.BO.SysAgentSvc",
     "root": "SysAgent",
@@ -822,7 +822,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C25",
+    "category": "automation-and-integrations",
     "kind": "ProcessSet",
     "service": "Ice.BO.ProcessSetSvc",
     "root": "ProcessSet",
@@ -855,7 +855,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C25",
+    "category": "automation-and-integrations",
     "kind": "MessageTemplate",
     "service": "Ice.BO.MessageTemplateSvc",
     "root": "MessageTemplate",
@@ -895,7 +895,7 @@
     "coverage": []
   },
   {
-    "category": "C25",
+    "category": "automation-and-integrations",
     "kind": "GlobalAlert",
     "service": "Erp.BO.GlbAlertSvc",
     "root": "GlbAlert",
@@ -926,7 +926,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C26",
+    "category": "access-and-assignments",
     "kind": "SecurityDefinition",
     "service": "Ice.BO.SecuritySvc",
     "root": "Security",
@@ -955,7 +955,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C26",
+    "category": "access-and-assignments",
     "kind": "ObjectSecurity",
     "service": "Ice.BO.ObjectSecuritySvc",
     "root": "Security",
@@ -987,7 +987,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C26",
+    "category": "access-and-assignments",
     "kind": "SecurityGroup",
     "service": "Ice.BO.SecGroupSvc",
     "root": "SecGroup",
@@ -1016,7 +1016,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C26",
+    "category": "access-and-assignments",
     "kind": "ColumnSecurity",
     "service": "Ice.BO.SecColumnSvc",
     "root": "SecColumn",
@@ -1054,7 +1054,7 @@
     "inventory_definition": true
   },
   {
-    "category": "C26",
+    "category": "access-and-assignments",
     "kind": "AccessScope",
     "service": "Ice.BO.AccessScopeSvc",
     "root": "AccessScope",

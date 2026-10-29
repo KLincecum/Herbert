@@ -91,12 +91,8 @@ impl AccessStore {
                 }
                 let legacy = decode_registry(&bytes, endpoint, caller)?;
                 let merged = merge(&current.registry, &legacy).map_err(|mut diagnostic| {
-                    diagnostic.message = format!(
-                        "{} Shared evidence: '{}'. Legacy evidence: '{}'.",
-                        diagnostic.message,
-                        source_path(&root, &key).display(),
-                        source.display()
-                    );
+                    diagnostic.context.insert("sharedRecord".into(), serde_json::Value::String(source_path(&root, &key).display().to_string()));
+                    diagnostic.context.insert("legacyRecord".into(), serde_json::Value::String(source.display().to_string()));
                     diagnostic
                 })?;
                 let source_hash = sha256(&bytes);
@@ -276,7 +272,7 @@ fn decode_registry(
     })?;
     if registry.schema_version != 1 || registry.endpoint != endpoint || registry.caller != caller {
         return Err(conflict(
-            "Legacy access ownership does not match this endpoint and caller.",
+            "Legacy access ownership does not match this endpoint and Epicor user.",
         ));
     }
     Ok(registry)
@@ -465,7 +461,7 @@ fn finish_locked(
     } else {
         if sha256(&bytes) != pending.source_sha256 {
             return Err(conflict(
-                "Legacy ownership changed during the interrupted migration. Preserve both records; no native write is authorized.",
+                "Legacy ownership changed during the interrupted migration. Preserve both records; no change in Epicor is authorized.",
             ));
         }
         false
@@ -474,7 +470,7 @@ fn finish_locked(
     if actual_hash != pending.target_after_sha256 {
         if already_redirected || actual_hash != pending.target_before_sha256 {
             return Err(conflict(
-                "Shared ownership changed during the interrupted migration. Preserve both records; no native write is authorized.",
+                "Shared ownership changed during the interrupted migration. Preserve both records; no change in Epicor is authorized.",
             ));
         }
         current.registry = pending.target_after.clone();

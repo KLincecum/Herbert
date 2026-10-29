@@ -21,7 +21,7 @@ impl NativeArtifactSnapshot {
             problem(
                 "PLUGIN_ARTIFACT_SNAPSHOT_INVALID",
                 format!(
-                    "Artifact {} has no snapshotted file for the selected native version.",
+                    "Artifact {} has no snapshotted file for the selected Epicor version.",
                     self.declaration.alias
                 ),
             )
@@ -99,7 +99,7 @@ pub(crate) async fn manifest(module: &Path) -> Result<PluginManifest, Diagnostic
     let manifest: PluginManifest = serde_json::from_slice(&bytes).map_err(|_| {
         problem(
             "PLUGIN_ARTIFACT_MANIFEST_INVALID",
-            "The plugin.json manifest does not match the native artifact declaration format.",
+            "The plugin.json manifest does not match the Epicor artifact declaration format.",
         )
     })?;
     manifest.ordered_artifacts()?;

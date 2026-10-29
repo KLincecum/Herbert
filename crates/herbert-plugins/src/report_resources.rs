@@ -9,6 +9,35 @@ fn push(state: &mut Value, error: Diagnostic) {
     state["rdlFailed"] = json!(true);
     state["errors"].as_array_mut().unwrap().push(json!(error));
 }
+/// Diagnostics that tell the user something without making the record or its
+/// inventory incomplete: Herbert already holds everything Epicor holds for it.
+pub const WARNINGS: [&str; 2] = ["REPORT_STORED_ZIP_INVALID", "REPORT_LABEL_TEMPLATE_EXTERNAL"];
+pub fn is_warning(diagnostic: &Diagnostic) -> bool {
+    WARNINGS.contains(&diagnostic.code.as_str())
+}
+/// A BarTender ("Labels") style. Epicor stores only the label template's path
+/// (PrintProgram, a .btw on the BarTender machine) and the folder it writes
+/// label data to (OutputLocation); ReportSvc has no route that reads or stores
+/// the template itself (Update only checks both paths, CopyBartenderStyle copies
+/// the row). The style row is the whole Epicor-side definition.
+fn label_template(style: &Value) -> Option<Diagnostic> {
+    style["RptTypeID"]
+        .as_str()
+        .filter(|kind| kind.eq_ignore_ascii_case("Labels"))?;
+    Some(
+        issue(
+            "REPORT_LABEL_TEMPLATE_EXTERNAL",
+            "This is a BarTender label style. Epicor keeps only the location of its label template, not the template itself, so Herbert saved the style and that location. Back up the label template (.btw) from the BarTender machine.",
+        )
+        .with_context("report", style["ReportID"].clone())
+        .with_context("style", style["StyleNum"].clone())
+        .with_context("labelTemplate", style["PrintProgram"].clone())
+        .with_context("labelDataFolder", style["OutputLocation"].clone()),
+    )
+}
+fn warn(state: &mut Value, warning: Diagnostic) {
+    state["errors"].as_array_mut().unwrap().push(json!(warning));
+}
 fn file(response: &Value) -> Option<FileRef> {
     response
         .pointer("/returnObj/nativeFile")
@@ -26,7 +55,7 @@ fn display(path: &str) -> Result<String, Diagnostic> {
     {
         return Err(issue(
             "REPORT_RDL_PATH_UNVERIFIED",
-            "A report path is outside the native display-path contract.",
+            "A report path is outside the Epicor display-path contract.",
         ));
     }
     let path = path
@@ -38,7 +67,7 @@ fn display(path: &str) -> Result<String, Diagnostic> {
     if path.ends_with('/') || !path.contains('/') {
         return Err(issue(
             "REPORT_RDL_PATH_UNVERIFIED",
-            "A report reference does not name a complete native report path.",
+            "A report reference does not name a complete Epicor report path.",
         ));
     }
     Ok(path)
@@ -53,7 +82,7 @@ pub fn report_path(path: &str) -> Result<String, Diagnostic> {
             if parts.pop().is_none() {
                 return Err(issue(
                     "REPORT_LAYOUT_OWNERSHIP_UNVERIFIED",
-                    "The report path escapes its native root.",
+                    "The report path escapes its Epicor root.",
                 ));
             }
         } else {
@@ -66,7 +95,7 @@ pub fn report_path(path: &str) -> Result<String, Diagnostic> {
     {
         return Err(issue(
             "REPORT_LAYOUT_OWNERSHIP_UNVERIFIED",
-            "The reference is outside Epicor's native report root.",
+            "The reference is outside Epicor's Epicor report root.",
         ));
     }
     Ok(parts.join("/"))
@@ -105,7 +134,7 @@ fn subreport_path(parent: &str, child: &str) -> Result<String, Diagnostic> {
                 if parts.pop().is_none() {
                     return Err(issue(
                         "REPORT_RDL_PATH_UNVERIFIED",
-                        "A subreport path escapes its native report root.",
+                        "A subreport path escapes its Epicor report root.",
                     ));
                 }
             } else {
@@ -144,11 +173,37 @@ fn child_text(node: &Value, name: &str, ns: &Value) -> Option<String> {
     }
     text(candidates[0])
 }
+/// Epicor's standard platform references, which every deployed report on an
+/// instance uses: the shared data source at `/<SSRS root>/reports/SharedReportDataSource`
+/// (SaaS `/SaaS583SSRS_67964`, on-prem e.g. `/Epicor2024`) and the `CLSEpicor`
+/// report code assembly. They are known dependencies of the instance, not
+/// report-owned bodies to acquire. The SSRS root is read only in the package
+/// pass, so the reference is recognized by its fixed shape under any one root.
+fn platform_reference(kind: &str, value: Option<&str>) -> Option<Value> {
+    let value = value?.trim();
+    match kind {
+        "DataSourceReference" => {
+            let parts: Vec<_> = value.strip_prefix('/')?.split('/').collect();
+            (parts.len() == 3
+                && !parts[0].trim().is_empty()
+                && parts[1].eq_ignore_ascii_case("reports")
+                && parts[2].eq_ignore_ascii_case("SharedReportDataSource"))
+            .then(|| json!({"kind":kind,"value":value,"platform":"EpicorSharedReportDataSource","ssrsRoot":parts[0]}))
+        }
+        "CodeModule" => value
+            .split(',')
+            .next()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case("CLSEpicor"))
+            .then(|| json!({"kind":kind,"value":value,"platform":"EpicorReportCodeModule"})),
+        _ => None,
+    }
+}
 fn walk(
     node: &Value,
     ns: &Value,
     subreports: &mut Vec<String>,
     unresolved: &mut Vec<Value>,
+    platform: &mut Vec<Value>,
     errors: &mut Vec<Diagnostic>,
 ) {
     if &node["namespace"] != ns {
@@ -164,8 +219,13 @@ fn walk(
         },
         "DataSourceReference" | "SharedDataSetReference" => {
             let kind = node["name"].as_str().unwrap();
-            unresolved.push(json!({"kind":kind,"value":text(node)}));
-            errors.push(issue("REPORT_RDL_SHARED_RESOURCE_UNVERIFIED",format!("The RDL contains {kind}; its referenced source body has no established read contract.")));
+            let value = text(node);
+            if let Some(known) = platform_reference(kind, value.as_deref()) {
+                platform.push(known);
+            } else {
+                unresolved.push(json!({"kind":kind,"value":value}));
+                errors.push(issue("REPORT_RDL_SHARED_RESOURCE_UNVERIFIED",format!("The RDL contains {kind}; its referenced source body has no established read contract.")));
+            }
         }
         "Image" if child_text(node, "Source", ns).as_deref() == Some("External") => {
             unresolved.push(json!({"kind":"ExternalImage","value":child_text(node,"Value",ns)}));
@@ -175,19 +235,27 @@ fn walk(
             ));
         }
         "CodeModule" => {
-            unresolved.push(json!({"kind":"CodeModule","value":text(node)}));
-            errors.push(issue("REPORT_RDL_CODE_MODULE_UNVERIFIED","The RDL names an external code module whose original bytes have not been acquired."));
+            let value = text(node);
+            if let Some(known) = platform_reference("CodeModule", value.as_deref()) {
+                platform.push(known);
+            } else {
+                unresolved.push(json!({"kind":"CodeModule","value":value}));
+                errors.push(issue("REPORT_RDL_CODE_MODULE_UNVERIFIED","The RDL names an external code module whose original bytes have not been acquired."));
+            }
         }
         _ => (),
     }
     for child in children(node) {
-        walk(child, ns, subreports, unresolved, errors)
+        walk(child, ns, subreports, unresolved, platform, errors)
     }
 }
-fn dependencies(xml: &Value, path: &str) -> (Vec<(String, String)>, Vec<Value>, Vec<Diagnostic>) {
+type Dependencies = (Vec<(String, String)>, Vec<Value>, Vec<Value>, Vec<Diagnostic>);
+/// Subreport edges, unresolved references, known platform dependencies, and errors.
+fn dependencies(xml: &Value, path: &str) -> Dependencies {
     let mut errors = vec![];
     let mut names = vec![];
     let mut unresolved = vec![];
+    let mut platform = vec![];
     let ns = &xml["namespace"];
     if xml["name"] != "Report"
         || !ns.as_str().is_some_and(|ns| {
@@ -198,13 +266,14 @@ fn dependencies(xml: &Value, path: &str) -> (Vec<(String, String)>, Vec<Value>, 
         return (
             vec![],
             vec![],
+            vec![],
             vec![issue(
                 "REPORT_RDL_DOCUMENT_UNVERIFIED",
-                "The acquired XML is not a native SQL Server report definition document.",
+                "The downloaded XML is not an Epicor SQL Server report definition document.",
             )],
         );
     }
-    walk(xml, ns, &mut names, &mut unresolved, &mut errors);
+    walk(xml, ns, &mut names, &mut unresolved, &mut platform, &mut errors);
     let mut edges = vec![];
     for name in names {
         match subreport_path(path, &name) {
@@ -221,7 +290,7 @@ fn dependencies(xml: &Value, path: &str) -> (Vec<(String, String)>, Vec<Value>, 
             }
         }
     }
-    (edges, unresolved, errors)
+    (edges, unresolved, platform, errors)
 }
 pub fn start(request: &mut GuestRequest) -> Option<HostAction> {
     request.state["rdlQueue"] = json!([]);
@@ -243,6 +312,10 @@ pub fn start(request: &mut GuestRequest) -> Option<HostAction> {
         return next(request);
     };
     for (index, style) in styles.iter().enumerate() {
+        if let Some(warning) = label_template(style) {
+            warn(&mut request.state, warning);
+            continue;
+        }
         if style["RptTypeID"] != "SSRS" {
             push(
                 &mut request.state,
@@ -293,7 +366,7 @@ pub fn start(request: &mut GuestRequest) -> Option<HostAction> {
                     issue(
                         "REPORT_RDL_SOURCE_MISSING",
                         format!(
-                            "Style {} has no preserved native RDL for {path}.",
+                            "Style {} has no preserved Epicor RDL for {path}.",
                             style["StyleNum"]
                         ),
                     ),
@@ -343,16 +416,20 @@ pub fn start_page(request: &mut GuestRequest, styles: &[Value]) -> Option<HostAc
     request.state["rdlIndex"] = json!(0);
     request.state["rdlFailed"] = json!(false);
     for style in styles {
+        if let Some(warning) = label_template(style) {
+            warn(&mut request.state, warning);
+            continue;
+        }
         if style["RptTypeID"] != "SSRS" {
             push(
                 &mut request.state,
                 issue(
                     "REPORT_LAYOUT_TYPE_UNVERIFIED",
-                    format!(
-                        "Report {} style {} uses {}; its stored settings are preserved, but its layout reader is not qualified.",
-                        style["ReportID"], style["StyleNum"], style["RptTypeID"]
-                    ),
-                ),
+                    "This report style uses a layout type Herbert cannot read yet. Its settings were saved; the layout itself was not.",
+                )
+                .with_context("report", style["ReportID"].clone())
+                .with_context("style", style["StyleNum"].clone())
+                .with_context("layoutType", style["RptTypeID"].clone()),
             );
             continue;
         }
@@ -501,7 +578,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
                     &mut request.state,
                     issue(
                         "REPORT_RDL_SOURCE_MISSING",
-                        "The subreport read omitted its preserved native file.",
+                        "The subreport read omitted its preserved Epicor file.",
                     ),
                 );
             }
@@ -510,13 +587,13 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
                 &mut request.state,
                 issue(
                     "REPORT_RDL_SOURCE_MISMATCH",
-                    "The XML projection does not belong to this report's recorded native file.",
+                    "The XML projection does not belong to this report's recorded Epicor file.",
                 ),
             );
         } else {
             let path = entry["path"].as_str().unwrap_or("");
-            let (edges, unresolved, errors) = dependencies(&response["parsedXml"], path);
-            let document = json!({"path":path,"file":entry["file"],"unresolved":unresolved,
+            let (edges, unresolved, platform, errors) = dependencies(&response["parsedXml"], path);
+            let document = json!({"path":path,"file":entry["file"],"unresolved":unresolved,"platformDependencies":platform,
                 "embeddedCode":child_text(&response["parsedXml"],"Code",&response["parsedXml"]["namespace"])});
             if !request.state["resolvedLayouts"].is_object() {
                 request.state["resolvedLayouts"] = json!({});
@@ -600,10 +677,10 @@ mod tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C17".into(),
+                category: "report-styles-and-layouts".into(),
                 kind: "ReportStyles".into(),
                 scope: Scope::Global,
                 keys: BTreeMap::from([("ReportID".into(), "R".into())]),
@@ -674,15 +751,99 @@ mod tests {
                 vec![json!({"text":"/reports/Shared"})],
             ))],
         );
-        let (_, unresolved, errors) = dependencies(&xml, "reports/A/Main");
+        let (_, unresolved, platform, errors) = dependencies(&xml, "reports/A/Main");
         assert_eq!(unresolved.len(), 1);
+        assert!(platform.is_empty());
         assert_eq!(errors[0].code, "REPORT_RDL_SHARED_RESOURCE_UNVERIFIED");
         let mut xml = report(None);
         xml["namespace"] = json!("unrelated");
         assert_eq!(
-            dependencies(&xml, "reports/A/Main").2[0].code,
+            dependencies(&xml, "reports/A/Main").3[0].code,
             "REPORT_RDL_DOCUMENT_UNVERIFIED"
         );
+    }
+    fn with(kind: &str, value: &str) -> Value {
+        node("Report", vec![element(node(kind, vec![json!({"text":value})]))])
+    }
+    #[test]
+    fn epicor_platform_references_are_known_dependencies() {
+        // Values from a SaaS 2026.1 tenant's RDLs, plus an on-prem root.
+        for (kind, value, platform) in [
+            ("DataSourceReference", "/SaaS583SSRS_67964/reports/SharedReportDataSource", "EpicorSharedReportDataSource"),
+            ("DataSourceReference", "/Epicor2024/reports/SharedReportDataSource", "EpicorSharedReportDataSource"),
+            ("DataSourceReference", " /epicor2024/Reports/sharedreportdatasource ", "EpicorSharedReportDataSource"),
+            ("CodeModule", "CLSEpicor, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null", "EpicorReportCodeModule"),
+            ("CodeModule", "CLSEpicor", "EpicorReportCodeModule"),
+        ] {
+            let (_, unresolved, known, errors) = dependencies(&with(kind, value), "reports/A/Main");
+            assert!(errors.is_empty() && unresolved.is_empty(), "{value}");
+            assert_eq!(known.len(), 1, "{value}");
+            assert_eq!(known[0]["platform"], platform);
+            assert_eq!(known[0]["value"], value.trim());
+        }
+        assert_eq!(
+            dependencies(&with("DataSourceReference", "/SaaS583SSRS_67964/reports/SharedReportDataSource"), "reports/A/Main").2[0]["ssrsRoot"],
+            "SaaS583SSRS_67964"
+        );
+    }
+    #[test]
+    fn other_shared_resources_and_code_modules_stay_flagged() {
+        for (kind, value, code) in [
+            ("DataSourceReference", "/Epicor2024/reports/OtherDataSource", "REPORT_RDL_SHARED_RESOURCE_UNVERIFIED"),
+            ("DataSourceReference", "/reports/SharedReportDataSource", "REPORT_RDL_SHARED_RESOURCE_UNVERIFIED"),
+            ("DataSourceReference", "/A/B/reports/SharedReportDataSource", "REPORT_RDL_SHARED_RESOURCE_UNVERIFIED"),
+            ("DataSourceReference", "Epicor2024/reports/SharedReportDataSource", "REPORT_RDL_SHARED_RESOURCE_UNVERIFIED"),
+            ("SharedDataSetReference", "/Epicor2024/reports/SharedReportDataSource", "REPORT_RDL_SHARED_RESOURCE_UNVERIFIED"),
+            ("CodeModule", "CLSEpicorExtra, Version=1.0.0.0", "REPORT_RDL_CODE_MODULE_UNVERIFIED"),
+            ("CodeModule", "Custom.Code, Version=1.0.0.0", "REPORT_RDL_CODE_MODULE_UNVERIFIED"),
+        ] {
+            let (_, unresolved, known, errors) = dependencies(&with(kind, value), "reports/A/Main");
+            assert!(known.is_empty(), "{value}");
+            assert_eq!(unresolved.len(), 1, "{value}");
+            assert_eq!(errors[0].code, code, "{value}");
+        }
+    }
+    #[test]
+    fn label_styles_are_a_warning_naming_the_external_template() {
+        // The shape of a SaaS tenant's BarTender style (GenRcpt 1001): a drive-letter .btw and a UNC data folder.
+        let label = json!({"ReportID":"R","StyleNum":1001,"RptTypeID":"Labels","PrintProgram":"D:\\Labels\\Receipts\\Receipt.btw","OutputLocation":"\\\\server.example\\share\\BarTender\\In"});
+        let other = json!({"ReportID":"R","StyleNum":2,"RptTypeID":"Crystal","PrintProgram":"reports/X"});
+        let mut r = request();
+        assert!(start_page(&mut r, &[label.clone(), other]).is_none());
+        let errors: Vec<Diagnostic> = serde_json::from_value(r.state["errors"].clone()).unwrap();
+        assert_eq!(errors.iter().map(|e| e.code.as_str()).collect::<Vec<_>>(), ["REPORT_LABEL_TEMPLATE_EXTERNAL", "REPORT_LAYOUT_TYPE_UNVERIFIED"]);
+        assert!(is_warning(&errors[0]) && !is_warning(&errors[1]));
+        assert_eq!(errors[0].context["labelTemplate"], label["PrintProgram"]);
+        assert_eq!(errors[0].context["labelDataFolder"], label["OutputLocation"]);
+        assert!(errors[0].message.contains("BarTender"));
+        // A labels-only page reads nothing from Epicor and is not marked failed.
+        let mut r = request();
+        assert!(start_page(&mut r, &[label.clone()]).is_none());
+        assert_eq!(r.state["rdlFailed"], false);
+        assert_eq!(r.state["supplements"]["reportDependencyReconciliation"]["complete"], true);
+        // The legacy per-definition path treats a label style the same way.
+        let mut r = request();
+        r.state["definition"]["ReportStyle"] = json!([label]);
+        assert!(start(&mut r).is_none());
+        assert_eq!(r.state["errors"][0]["code"], "REPORT_LABEL_TEMPLATE_EXTERNAL");
+        assert_eq!(r.state["rdlFailed"], false);
+    }
+    #[test]
+    fn platform_references_leave_the_layout_complete() {
+        let mut r = request();
+        start(&mut r);
+        let xml = node("Report", vec![
+            element(node("DataSourceReference", vec![json!({"text":"/SaaS583SSRS_67964/reports/SharedReportDataSource"})])),
+            element(node("CodeModule", vec![json!({"text":"CLSEpicor, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"})])),
+        ]);
+        r.response = Some(json!({"sourceFile":file_ref("main"),"parsedXml":xml}));
+        assert!(complete(&mut r).is_none());
+        assert!(r.state["errors"].as_array().unwrap().is_empty());
+        let reconciliation = &r.state["supplements"]["reportDependencyReconciliation"];
+        assert_eq!(reconciliation["complete"], true);
+        let document = &reconciliation["documents"][0];
+        assert!(document["unresolved"].as_array().unwrap().is_empty());
+        assert_eq!(document["platformDependencies"].as_array().unwrap().len(), 2);
     }
     #[test]
     fn child_bytes_are_acquired_and_cycle_terminates() {

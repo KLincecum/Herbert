@@ -14,7 +14,7 @@ pub(crate) fn independent_work(request: &mut GuestRequest)
         return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "Each independent work item must be a non-nested materialization state."));
     }
     let next = request.state.get("_hostWorkNextCursor").cloned().unwrap_or(Value::Null);
-    if !next.is_null() && !next.is_string() { return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "The independent work continuation must be a cursor or null.")); }
+    if !next.is_null() && !next.is_string() { return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "The independent work resume point must be a saved position or null.")); }
     Ok(Some((items, next.as_str().map(str::to_owned))))
 }
 
@@ -22,14 +22,14 @@ pub(crate) fn independent_work(request: &mut GuestRequest)
 mod independent_work_tests {
     use super::*;
     fn owner(name: &str) -> Identity {
-        Identity { category:"C06".into(),kind:"MethodDirectiveGroup".into(),scope:Scope::Global,
+        Identity { category:"bpm-directives".into(),kind:"MethodDirectiveGroup".into(),scope:Scope::Global,
             keys:std::collections::BTreeMap::from([("Source".into(),"BO".into()),("BpMethodCode".into(),name.into())]) }
     }
     #[test]
     fn later_work_item_can_use_only_records_validated_in_this_page() {
         let accepted = ValidatedPageOwners::default();
         let first = owner("Ice.BO.A.Update"); let second = owner("Ice.BO.B.Update");
-        let mut request=GuestRequest{abi:PLUGIN_ABI,operation:"materialize".into(),category:"C06".into(),company:"C".into(),identity:None,cursor:None,page_size:None,state:json!({"_hostValidatedOwners":[second]}),response:None,error:None};
+        let mut request=GuestRequest{abi:PLUGIN_ABI,operation:"materialize".into(),category:"bpm-directives".into(),company:"C".into(),identity:None,cursor:None,page_size:None,state:json!({"_hostValidatedOwners":[second]}),response:None,error:None};
         assert!(accepted.find(&second).unwrap().is_none());
         // An inventory-only sentinel and arbitrary guest state grant no ownership.
         validate_inventory_records(&request,"C",&[],&[second.clone()],Some(&accepted)).unwrap();
@@ -49,7 +49,7 @@ mod independent_work_tests {
             assert!(validate_inventory_records(&request,"C",&records,&ids,Some(&accepted)).is_err());
             assert!(accepted.find(&second).unwrap().is_none());
         }
-        let mut other_category=second.clone();other_category.category="C08".into();
+        let mut other_category=second.clone();other_category.category="functions".into();
         assert!(validate_inventory_records(&request,"C",&[(other_category.clone(),json!({}))],&[other_category],Some(&accepted)).is_err());
         request.operation="acquire".into();request.identity=Some(first.clone());
         assert!(validate_inventory_records(&request,"C",&[(second.clone(),json!({}))],&[second.clone()],Some(&accepted)).is_err());
@@ -65,6 +65,23 @@ mod independent_work_tests {
         request.state=json!({"_hostWorkItems":[{"one":1},{"two":2}],"_hostWorkNextCursor":"next","_progress":{"pageRecords":2}});
         let(items,next)=independent_work(&mut request).unwrap().unwrap();assert_eq!(items,vec![json!({"one":1}),json!({"two":2})]);assert_eq!(next.as_deref(),Some("next"));assert_eq!(request.state["_progress"]["pageRecords"],2);assert!(request.state.get("_hostWorkItems").is_none());
     }
+}
+
+/// Ready groups save progress at most this often, and always once the page's
+/// writer drains. Saving after every record made a large personalization
+/// run spend as long saving progress as writing files, and rewrote the
+/// growing name registry each time. Files written since the last save are
+/// recovered by readback after a crash (`write_derived_stream` reuses an
+/// unrecorded file whose bytes match), so this bounds repeated work, not
+/// correctness. Operating default, not a platform limit.
+const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+/// Merge queued groups up to one full chunk for every writer.
+const MERGED_RECORDS: usize = crate::file_writers::WRITERS * crate::file_writers::FILES_PER_CHUNK;
+
+async fn save(run: &Arc<Run>) -> Result<(), Diagnostic> {
+    let storage = run.storage.clone();
+    blocking(move || storage.lock().map_err(|_| Diagnostic::new(
+        "RUN_STATE_FAILED", "Run state is unavailable."))?.checkpoint()).await
 }
 
 pub(super) struct OutputQueue {
@@ -200,18 +217,44 @@ impl Host {
             result
         };
         let consume = async {
-            let result: Result<usize, Diagnostic> = async {
-                let mut written = 0;
-                let mut write_total = 0;
-                let mut checkpoint_total = 0;
-                while let Some(buffered) = receiver.recv().await {
-                    let bytes = buffered.bytes;
-                    let spilled = buffered.spilled;
-                    let loaded = blocking(move || buffered.load()).await?;
-                    run.activity.buffer_page(&plugin.category.id, bytes, spilled, false);
-                    let GuestReply::InventoryData { records, .. } = loaded.page.reply else {
-                        return Err(Diagnostic::new("OUTPUT_QUEUE_INVALID", "The output queue contains an invalid record group."));
+            let load = |buffered: BufferedPage| async move {
+                let bytes = buffered.bytes;
+                let spilled = buffered.spilled;
+                let loaded = blocking(move || buffered.load()).await?;
+                run.activity.buffer_page(&plugin.category.id, bytes, spilled, false);
+                let GuestReply::InventoryData { records, .. } = loaded.page.reply else {
+                    return Err(Diagnostic::new("OUTPUT_QUEUE_INVALID", "The output queue contains an invalid record group."));
+                };
+                Ok(records)
+            };
+            let mut unsaved = false;
+            let mut written = 0;
+            let mut write_total = 0;
+            let mut checkpoint_total = 0;
+            let result: Result<(), Diagnostic> = async {
+                let mut carry = None;
+                let mut saved_at = std::time::Instant::now();
+                loop {
+                    let mut records = match carry.take() {
+                        Some(records) => records,
+                        None => match receiver.recv().await { Some(buffered) => load(buffered).await?, None => break },
                     };
+                    // Merge groups that are already queued, so one write uses the whole
+                    // writer pool instead of one thread per record. Stop once every
+                    // writer has a full chunk; more adds no parallelism and would pull
+                    // spilled groups into memory early. Never merge a repeated identity.
+                    let mut keys = records.iter().map(|(id, _)| storage::identity_key(id))
+                        .collect::<std::collections::HashSet<_>>();
+                    while records.len() < MERGED_RECORDS {
+                        let Ok(buffered) = receiver.try_recv() else { break };
+                        let more = load(buffered).await?;
+                        if more.iter().any(|(id, _)| keys.contains(&storage::identity_key(id))) {
+                            carry = Some(more);
+                            break;
+                        }
+                        keys.extend(more.iter().map(|(id, _)| storage::identity_key(id)));
+                        records.extend(more);
+                    }
                     let count = records.len();
                     let started = std::time::Instant::now();
                     let prepared = self.prepare_reference_page(run, records, &stop).await?;
@@ -223,25 +266,37 @@ impl Host {
                         prepared, &writers, &writer_cancel,
                         |count| progress.processed(written + count))).await?;
                     written += count;
-                    // Each ready group is recoverable. The page cursor is still
+                    unsaved = true;
+                    // Written groups are recoverable. The page cursor is still
                     // withheld until both sides finish successfully.
                     let write_ms = started.elapsed().as_millis();
-                    let checkpoint_started = std::time::Instant::now();
-                    let storage = run.storage.clone();
-                    blocking(move || storage.lock().map_err(|_| Diagnostic::new(
-                        "RUN_STATE_FAILED", "Run state is unavailable."))?.checkpoint()).await?;
-                    let checkpoint_ms = checkpoint_started.elapsed().as_millis();
+                    let mut checkpoint_ms = 0;
+                    if saved_at.elapsed() >= CHECKPOINT_INTERVAL {
+                        let checkpoint_started = std::time::Instant::now();
+                        save(run).await?;
+                        unsaved = false;
+                        saved_at = std::time::Instant::now();
+                        checkpoint_ms = checkpoint_started.elapsed().as_millis();
+                    }
                     write_total += write_ms;
                     checkpoint_total += checkpoint_ms;
                     run.activity.record(json!({"event":"readyGroupWritten",
                         "category":plugin.category.id,"records":count,
                         "writeElapsedMs":write_ms,"checkpointElapsedMs":checkpoint_ms}));
                 }
-                if written > 0 {
-                    run.activity.page_written(&plugin.category.id, written, write_total, checkpoint_total);
-                }
-                Ok(written)
+                Ok(())
             }.await;
+            // Save what was written even when a later group failed.
+            let saved = if unsaved {
+                let checkpoint_started = std::time::Instant::now();
+                let saved = save(run).await;
+                checkpoint_total += checkpoint_started.elapsed().as_millis();
+                saved
+            } else { Ok(()) };
+            let result = result.and(saved).map(|()| written);
+            if result.is_ok() && written > 0 {
+                run.activity.page_written(&plugin.category.id, written, write_total, checkpoint_total);
+            }
             if result.is_err() { stop.cancel(); }
             result
         };
@@ -253,7 +308,7 @@ impl Host {
         if matches!(&result.0, GuestReply::Failure { .. }) { return Ok(result); }
         if expected.is_some_and(|count| count != written) {
             return Err(Diagnostic::new("PAGE_RECORD_COUNT_MISMATCH",
-                "The prepared page count does not match its written records. Saved files remain available; the page cursor was not advanced."));
+                "The prepared page count does not match its written records. Saved files remain available; the page saved position was not advanced."));
         }
         let completed = run.storage.lock().map_err(|_| Diagnostic::new(
             "RUN_STATE_FAILED", "Run state is unavailable."))?.journal.artifacts.iter()

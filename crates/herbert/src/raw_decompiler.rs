@@ -24,7 +24,7 @@ struct Active {cancel:CancellationToken,finished:tokio::sync::Notify,done:std::s
 pub(crate) struct Service {active:Mutex<BTreeMap<String,Arc<Active>>>,workers:Mutex<(u32,Arc<Semaphore>)>}
 impl Default for Service {fn default()->Self{Self{active:Mutex::new(BTreeMap::new()),workers:Mutex::new((4,Arc::new(Semaphore::new(4))))}}}
 fn record(root:&Path,id:&str)->Result<PathBuf,Diagnostic>{uuid::Uuid::parse_str(id).map_err(|_|err("Invalid decompiler job ID."))?;Ok(root.join("decompiler").join(format!("{id}.json")))}
-fn save(root:&Path,job:&Job)->Result<(),Diagnostic>{storage::atomic_write(&record(root,&job.id)?,&serde_json::to_vec(job).map_err(|_|err("Cannot encode job."))?)}
+fn save(root:&Path,job:&Job)->Result<(),Diagnostic>{storage::atomic_write(&record(root,&job.id)?,&serde_json::to_vec(job).map_err(|_|err("Herbert could not prepare a decompile job. The compiled files were kept; retry the job."))?)}
 fn read(root:&Path,id:&str)->Result<Job,Diagnostic>{serde_json::from_slice(&fs::read(record(root,id)?).map_err(|_|err("Decompiler job is unavailable."))?).map_err(|_|err("Decompiler job record is invalid."))}
 fn lease(output:&Path)->Result<fs::File,Diagnostic>{let file=fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(output.join(".herbert-decompiler/lease")).map_err(|_|err("Cannot open decompiler output lease."))?;file.try_lock_exclusive().map_err(|_|err("Another process owns this decompiler output."))?;Ok(file)}
 fn retain(source:&Path,output:&Path,name:&str)->Result<Value,Diagnostic>{
@@ -57,7 +57,7 @@ impl Service {
    jobs.insert(job.id.clone(),active.clone());pool.1.clone()};
   tokio::spawn(async move{let _held=held;active.activity.managed_job(&job.id,"queued");let queued=std::time::Instant::now();
    let result=async{
-    let _permit=tokio::select!{_ = active.cancel.cancelled()=>return Err(err("Decompiler job cancelled.")),p=workers.acquire_owned()=>p.map_err(|_|err("Decompiler queue is closed."))?};
+    let _permit=tokio::select!{_ = active.cancel.cancelled()=>return Err(err("The decompile job was canceled. The compiled files were kept.")),p=workers.acquire_owned()=>p.map_err(|_|err("Decompiler queue is closed."))?};
     active.activity.record(json!({"event":"decompilerAdmitted","queueMs":queued.elapsed().as_millis()}));
     job.state="running".into();save(&root,&job)?;active.activity.managed_job(&job.id,"running");
     let attempt=job.output.join(".herbert-decompiler").join(uuid::Uuid::new_v4().to_string());fs::create_dir(&attempt).map_err(|_|err("Cannot create job attempt."))?;let out=attempt.join("output");fs::create_dir(&out).map_err(|_|err("Cannot create attempt output."))?;

@@ -13,7 +13,7 @@ fn invalid(message: &str) -> Diagnostic {
 fn xml(root: &Element) -> Result<String, Diagnostic> {
     let mut writer = quick_xml::Writer::new(Vec::new());
     root.write(&mut writer)?;
-    String::from_utf8(writer.into_inner()).map_err(|_| invalid("The native XML is not UTF-8."))
+    String::from_utf8(writer.into_inner()).map_err(|_| invalid("The personalization export from Epicor is not readable text, so no import file was built."))
 }
 fn cell(row: &mut Element, name: &str, value: String) {
     if let Some(existing) = row.child_mut(name) {
@@ -45,18 +45,18 @@ fn dataset(table: &str, row: &Value, root: &str, namespace: &str) -> Result<Stri
     let mut record = Element::new(table);
     for (name, value) in row
         .as_object()
-        .ok_or_else(|| invalid("The persisted row is invalid."))?
+        .ok_or_else(|| invalid("The saved row is invalid."))?
     {
         if name.starts_with("Herbert") || value.is_null() {
             continue;
         }
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(invalid("A native field has an invalid XML name."));
+            return Err(invalid("An Epicor field has an invalid XML name."));
         }
         let value = match value {
             Value::String(s) => s.clone(),
             Value::Number(_) | Value::Bool(_) => value.to_string(),
-            _ => return Err(invalid("A native field is not a scalar value.")),
+            _ => return Err(invalid("An Epicor field is not a scalar value.")),
         };
         cell(&mut record, name, value);
     }
@@ -66,13 +66,13 @@ fn dataset(table: &str, row: &Value, root: &str, namespace: &str) -> Result<Stri
 fn checked_text<'a>(row: &'a Value, field: &str, length: &str) -> Result<&'a str, Diagnostic> {
     let value = row[field]
         .as_str()
-        .ok_or_else(|| invalid("The native text is missing."))?;
+        .ok_or_else(|| invalid("The Epicor text is missing."))?;
     let expected = row[length]
         .as_u64()
         .or_else(|| row[length].as_str().and_then(|s| s.parse().ok()));
     if expected != Some((value.encode_utf16().count() * 2) as u64) {
         return Err(invalid(
-            "The native text failed its length check. The source is retained.",
+            "The Epicor text failed its length check. The source is retained.",
         ));
     }
     Ok(value)
@@ -133,7 +133,7 @@ fn with_images(source: &str, images: &[Value]) -> Result<String, Diagnostic> {
         if !crate::file_store_resources::validate_bytes(&image["metadata"], &image["bytes"])
             .is_empty()
         {
-            return Err(invalid("A home image failed its native metadata check."));
+            return Err(invalid("A home image failed its Epicor metadata check."));
         }
         let mut compressed = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         compressed
@@ -164,11 +164,11 @@ fn recovery_root(contract: &Value) -> Result<&str, Diagnostic> {
         version.split('.').map(|part| part.parse::<u64>().ok()).collect()
     });
     let Some(parts) = parts.filter(|parts| parts.len() == 4) else {
-        return Err(invalid("The frozen native personalization recovery format is missing or malformed."));
+        return Err(invalid("The frozen Epicor personalization recovery format is missing or malformed."));
     };
     let expected = if parts[0] == 4 && parts[1] == 3 {"Layers"} else {"Personalizations"};
     if contract["zipRoot"] != expected {
-        return Err(invalid("The saved ZIP root does not match its native recovery version."));
+        return Err(invalid("The saved ZIP root does not match its Epicor recovery version."));
     }
     Ok(expected)
 }

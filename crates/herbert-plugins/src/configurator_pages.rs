@@ -18,7 +18,7 @@ pub fn begin(r: GuestRequest, reply: GuestReply) -> GuestReply {
         .map(|(_, data)| data["response"]["returnObj"]["PcStatus"][0].clone())
         .collect();
     let Some(size) = r.page_size else {
-        return crate::failure("CONFIGURATOR_PAGE_INVALID", "Missing page size.");
+        return crate::failure("CONFIGURATOR_PAGE_INVALID", "No page size was set for this download. Enter a page size of 1 or more in the plugin settings.");
     };
     let state = json!({"configuratorPage":true,"records":records,"inventory":inventory,"prepare":r.state["_hostPreparePage"],"company":r.company,"size":size});
     advance(
@@ -66,7 +66,7 @@ fn recover(mut state: Value, diagnostic: Diagnostic) -> GuestReply {
         return prepare(state);
     }
     let Ok(records) = serde_json::from_value(state["records"].take()) else {
-        return crate::failure("CONFIGURATOR_PAGE_INVALID", "Missing visible records.");
+        return crate::failure("CONFIGURATOR_PAGE_INVALID", "Epicor's response contained no configurator records where some were expected. Nothing was saved for this page.");
     };
     GuestReply::InventoryData {
         records,
@@ -125,7 +125,7 @@ fn prepare(mut state: Value) -> GuestReply {
         let inventory: GuestReply = match serde_json::from_value(state["inventory"].clone()) {
             Ok(v) => v,
             Err(_) => {
-                return crate::failure("CONFIGURATOR_PAGE_INVALID", "Invalid saved inventory.");
+                return crate::failure("CONFIGURATOR_PAGE_INVALID", "Herbert could not continue this download from its saved progress (saved configurator list). Start the download again.");
             }
         };
         let GuestReply::Inventory { next_cursor, .. } = inventory else {
@@ -145,19 +145,19 @@ fn prepare(mut state: Value) -> GuestReply {
 fn finish(mut state: Value) -> GuestReply {
     let Ok(mut records) = serde_json::from_value::<Vec<(Identity, Value)>>(state["records"].take())
     else {
-        return crate::failure("CONFIGURATOR_PAGE_INVALID", "Invalid prepared records.");
+        return crate::failure("CONFIGURATOR_PAGE_INVALID", "Herbert could not continue this download from its saved progress (prepared configurator records). Start the download again.");
     };
     for (identity, data) in &mut records {
         let Some(id) = identity.keys.get("ConfigID") else {
             return crate::failure(
                 "CONFIGURATOR_PAGE_INVALID",
-                "Missing configurator identity.",
+                "Epicor returned a configurator without its ID, so it was not saved.",
             );
         };
         let Some(stored) = state["stored"].get(id).filter(|v| v.is_object()) else {
             return crate::failure(
                 "CONFIGURATOR_PAGE_INVALID",
-                "Missing stored configurator graph.",
+                "Missing stored configurator record set.",
             );
         };
         data["storedConfigurator"] = stored.clone();
@@ -170,7 +170,7 @@ fn finish(mut state: Value) -> GuestReply {
             records,
             inventory: Box::new(inventory),
         },
-        Err(_) => crate::failure("CONFIGURATOR_PAGE_INVALID", "Invalid prepared inventory."),
+        Err(_) => crate::failure("CONFIGURATOR_PAGE_INVALID", "Herbert could not continue this download from its saved progress (configurator list). Start the download again."),
     }
 }
 
@@ -181,7 +181,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C19".into(),
+            category: "configurators".into(),
             company: "TESTCO".into(),
             identity: None,
             cursor: None,
@@ -193,7 +193,7 @@ mod tests {
     }
     #[test]
     fn supplied_public_page_to_local_xml_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -309,18 +309,7 @@ mod tests {
                 r.operation = "acquire".into();
                 r.identity = Some(identity);
                 r.state = json!({"_inventory":inventory});
-                let GuestReply::Action {
-                    action: HostAction::SharedNativeRead { method, .. },
-                    state,
-                } = crate::collectors::handle(r.clone())
-                else {
-                    panic!()
-                };
-                assert_eq!(method, "RetrievePcLayeredImagesForExport");
-                r.state = state;
-                r.response = Some(
-                    json!({"parameters":{"configImportExportLayeredImageTableset":{"ConfigImportExportLayeredImage":[]}}}),
-                );
+                // The local route no longer reads layered images (only the native-export fallback does).
                 let GuestReply::Action {
                     action: HostAction::SharedNativeRead { method, .. },
                     state,

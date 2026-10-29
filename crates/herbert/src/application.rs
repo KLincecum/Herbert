@@ -37,14 +37,17 @@ mod helper_transfers;
 #[path = "native_file_export.rs"]
 pub(crate) mod native_file_export;
 #[path = "native_permissions.rs"]
-mod native_permissions;
+pub(crate) mod native_permissions;
 #[path = "server_change_operations.rs"]
 mod server_change_operations;
 #[path="server_change_dispatch.rs"]
 mod server_change_dispatch;
 #[cfg(test)]
 #[path="server_change_api_tests.rs"]
-mod server_change_api_tests;
+pub(crate) mod server_change_api_tests;
+#[cfg(test)]
+#[path="connection_test_tests.rs"]
+mod test_connection_tests;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -57,6 +60,20 @@ use std::{
 };
 use tokio::sync::{Mutex, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
+
+// Host metadata added to sanitized or plugin-scoped native responses saved in the backup.
+// 0.2.0 renamed these keys. 0.1.x backups keep their saved bytes: nothing parses the
+// keys back, and saved responses are verified by their recorded hashes.
+pub(crate) const ACQUISITION_METADATA_KEY: &str = "_herbertAcquisition";
+pub(crate) const RETENTION_METADATA_KEY: &str = "_herbertRetention";
+
+fn mark_sanitized_response(value: &mut Value, secrets_omitted: bool, scope_omitted: bool) {
+    value[ACQUISITION_METADATA_KEY] = json!({"secretValuesOmitted":secrets_omitted,"outOfScopeRowsOrHistoryOmitted":scope_omitted,"representation":"sanitized native definition response"});
+}
+
+fn mark_scoped_response(saved: &mut serde_json::Map<String, Value>) {
+    saved.insert(RETENTION_METADATA_KEY.into(), json!({"outOfScopeRowsOmitted":true,"representation":"plugin-scoped native response"}));
+}
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -106,6 +123,9 @@ pub struct Host {
     connection: RwLock<Option<Arc<Connection>>>,
     last_diagnostic: Mutex<Option<Diagnostic>>,
     runs: Mutex<BTreeMap<String, Arc<Run>>>,
+    /// In-memory status fields of runs this host settled (see settle_run). The journal
+    /// itself is read from disk, so a settled run keeps no storage, cache or plugins.
+    settled_runs: Mutex<BTreeMap<String, Value>>,
     requests: Mutex<BTreeMap<String, (String, String)>>,
     native_operations:
         Mutex<BTreeMap<(String, String), Arc<Mutex<crate::native_artifact_store::OperationFile>>>>,
@@ -124,6 +144,9 @@ pub struct Host {
     // Host connection-session identity, never an Epicor token or login secret.
     authorization_session: RwLock<String>,
     server_change_previews: Mutex<BTreeMap<String, server_change_operations::IssuedPreview>>,
+    // Per run: method/unheld-membership keys whose policy preview had no borrow
+    // effect. Only that negative answer is reused; see borrow_method_access.
+    borrow_preview_negative: std::sync::Mutex<BTreeMap<String, std::collections::BTreeSet<String>>>,
 }
 struct Run {
     storage: Arc<std::sync::Mutex<Storage>>,
@@ -188,18 +211,21 @@ impl Host {
         };
         let settings = OperatingSettings::default();
         let budget = Budget::new(settings.concurrency).expect("Default concurrency must be valid");
+        // Descriptors are data, so this cache may live in the user-writable state folder.
+        let plugin_cache = crate::plugins::FolderCache::with_descriptor_cache(state_root.join("plugin-descriptors"));
         Arc::new_cyclic(|owner| Self {
             self_owner: owner.clone(),
             state_root,
             plugin_root,
             access_store,
-            plugin_cache: Mutex::new(crate::plugins::FolderCache::default()),
+            plugin_cache: Mutex::new(plugin_cache),
             settings: RwLock::new(settings),
             decompiler_settings_ready: Mutex::new(false),
             budget,
             connection: RwLock::new(None),
             last_diagnostic: Mutex::new(None),
             runs: Mutex::new(BTreeMap::new()),
+            settled_runs: Mutex::new(BTreeMap::new()),
             requests: Mutex::new(BTreeMap::new()),
             native_operations: Mutex::new(BTreeMap::new()),
             managed: managed_decompilation::Supervisor::default(),
@@ -216,6 +242,7 @@ impl Host {
             operation_cancel: CancellationToken::new(),
             authorization_session: RwLock::new(uuid::Uuid::new_v4().to_string()),
             server_change_previews: Mutex::new(BTreeMap::new()),
+            borrow_preview_negative: std::sync::Mutex::new(BTreeMap::new()),
         })
     }
     pub async fn execute(self: &Arc<Self>, command: Command) -> Reply {
@@ -238,7 +265,11 @@ impl Host {
                 "The command schemaVersion must be 1.",
             )));
         }
-        let mut result=self.operation(&command.method, command.arguments).await;
+        // Retired Release 1 category codes are refused with their replacement before any work.
+        let mut result=match crate::legacy_category_ids::refuse_retired_arguments(&command.arguments) {
+            Err(diagnostic)=>Err(diagnostic),
+            Ok(())=>self.operation(&command.method, command.arguments).await,
+        };
         if command.method != "diagnostics.export" {
             if let Err(diagnostic)=&mut result {
                 diagnostic.context.entry("operation".into()).or_insert(json!(command.method));
@@ -255,7 +286,7 @@ impl Host {
             let mut legacy=None;
             for path in paths {
                 let plugin=Plugin::load(&path).await?;
-                if plugin.category.id=="C08" {
+                if plugin.category.id=="functions" {
                     if legacy.is_some() {return Err(Diagnostic::new("SETTINGS_CONFLICT","Multiple Functions copies contain a legacy worker preference. Preserve them and select the intended plugin copy."));}
                     legacy=Some(plugin);
                 }
@@ -304,11 +335,16 @@ impl Host {
                 blocking(move || Ok(json!(Profiles::new(&root).list()?))).await
             }
             "profiles.upsert" => {
-                let profile: Profile = decode(args)?;
+                let mut profile: Profile = decode(args)?;
+                // An explicitly empty company means "not chosen", the same as omitted.
+                if profile.defaults.company.as_deref() == Some("") { profile.defaults.company = None; }
+                let warnings = if profile.defaults.company.is_none() {
+                    vec![Diagnostic::new("COMPANY_NOT_SET", "No company is chosen for this profile. Choose one before downloading; Test connection lists the companies this account can use.")]
+                } else { vec![] };
                 let root = self.state_root.clone();
                 blocking(move || {
                     Profiles::new(&root).upsert(profile)?;
-                    Ok(json!({"saved":true}))
+                    Ok(if warnings.is_empty() { json!({"saved":true}) } else { json!({"saved":true,"warnings":warnings}) })
                 })
                 .await
             }
@@ -448,7 +484,7 @@ impl Host {
                 {
                     return Err(Diagnostic::new(
                         "RUN_ACTIVE",
-                        "Use the active run controls before reconciling its native resources.",
+                        "This download is still running. Cancel it, or wait for it to finish, before Herbert cleans up its changes in Epicor.",
                     ));
                 }
                 self.reconcile_helper_operation(&input.id).await
@@ -462,11 +498,24 @@ impl Host {
                         "Disconnect the current connection before you test another connection.",
                     ));
                 }
-                let connection = self.resolve_connection(input).await?;
-                let result = connection
-                    .connect(&self.operation_cancel.child_token())
-                    .await;
+                let connection = self.resolve_connection_for(input, true).await?;
+                let cancel = self.operation_cancel.child_token();
+                let mut result = connection.connect(&cancel).await;
+                if let Ok(output) = &mut result {
+                    // Read the company list in the same session, then always sign out.
+                    let (companies, source, diagnostic) = connection.available_companies(&cancel).await;
+                    let selected = (!connection.is_company_discovery()).then(|| json!({"id":connection.company,"inList":companies.iter().any(|row|row["id"]==connection.company.as_str())}));
+                    output["availableCompanies"] = json!(companies);
+                    output["companySource"] = json!(source);
+                    output["selectedCompany"] = json!(selected);
+                    output["companyListDiagnostic"] = json!(diagnostic);
+                    output["transportTrust"] = json!(connection.transport_trust());
+                    if connection.is_company_discovery() { output["company"] = Value::Null; }
+                }
                 let cleanup = connection.logout(&CancellationToken::new()).await;
+                // A retained test is held only for disconnect: never a confirmed connect, so no
+                // authorization-session rotation or preview clear, and no other work may use it.
+                if cleanup.is_err() { connection.mark_test_only(); }
                 match (result,cleanup) {
                     (Ok(mut output),Ok(())) => { output["cleanup"]=Value::Null; Ok(output) }
                     (Err(error),Ok(())) => Err(error),
@@ -498,7 +547,7 @@ impl Host {
                     .connect(&self.operation_cancel.child_token())
                     .await
                 {
-                    Ok(result) => result,
+                    Ok(mut result) => { result["transportTrust"] = json!(connection.transport_trust()); result },
                     Err(mut error) => {
                         error.context.insert("authMode".into(),json!(connection.mode));
                         if let Err(cleanup)=connection.logout(&CancellationToken::new()).await {
@@ -534,6 +583,9 @@ impl Host {
                 active.take();
                 *self.authorization_session.write().await = uuid::Uuid::new_v4().to_string();
                 self.server_change_previews.lock().await.clear();
+                // Compiled plugin code is reloaded on next use. Runs that still execute
+                // (local reprocessing) keep their own references.
+                self.plugin_cache.lock().await.unload_modules();
                 Ok(json!({"disconnected":true}))
             }
             "companies.list" => {
@@ -547,8 +599,12 @@ impl Host {
                         &self.operation_cancel.child_token(),
                     )
                     .await?;
+                let mut available = native.value.pointer("/returnObj/CompanyList").and_then(Value::as_array).into_iter().flatten()
+                    .filter_map(|row| Some(json!({"id":row["Company"].as_str().filter(|id|!id.is_empty())?,"name":row["Name"].as_str().unwrap_or("")})))
+                    .collect::<Vec<_>>();
+                available.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));
                 Ok(
-                    json!({"companies":native.value,"scope":"Authorized discovery only. Each run still selects one company."}),
+                    json!({"companies":native.value,"availableCompanies":available,"scope":"Authorized discovery only. Each run still selects one company."}),
                 )
             }
             "plugin.configure" => {
@@ -601,7 +657,10 @@ impl Host {
             "run.status" => {
                 let input: StatusInput = decode(args)?;
                 let summary = input.summary;
-                if !self.runs.lock().await.contains_key(&input.id) {
+                let live = self.runs.lock().await.get(&input.id).cloned();
+                let Some(run) = live else {
+                    // settle_run records a settled run here before it leaves `runs`.
+                    let settled = self.settled_runs.lock().await.get(&input.id).cloned();
                     let root = self.state_root.clone();
                     let id = input.id;
                     return blocking(move || {
@@ -610,15 +669,17 @@ impl Host {
                         let mut status = if summary {
                             crate::progress_snapshot::summary(&journal)
                         } else {
-                            json!(journal)
+                            crate::progress_snapshot::full(&journal)
                         };
                         status["discoveryMessages"] = crate::progress_snapshot::discovery_messages(&status);
                         status["executionActive"] = json!(false);
+                        if let Some(Value::Object(fields)) = settled {
+                            for (key, value) in fields { status[key] = value; }
+                        }
                         Ok(status)
                     })
                     .await;
-                }
-                let run = self.run(&input.id).await?;
+                };
                 // Capture execution first: a terminal journal can precede final
                 // destination cleanup. A stale true requires one extra poll.
                 // False must describe a snapshot taken after execution ended.
@@ -642,7 +703,7 @@ impl Host {
                             Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable.")
                         })?;
                         if summary { crate::progress_snapshot::summary(&storage.journal) }
-                        else { json!(storage.journal) }
+                        else { crate::progress_snapshot::full(&storage.journal) }
                     };
                     status["discoveryMessages"] = crate::progress_snapshot::discovery_messages(&status);
                     status["executionActive"] = json!(execution_active);
@@ -682,12 +743,16 @@ impl Host {
             }
             "run.pause" | "run.resume" | "run.cancel" => {
                 let input: IdInput = decode(args)?;
-                let run = self.run(&input.id).await?;
-                if !run.active.load(Ordering::SeqCst) {
+                let run = match self.run(&input.id).await {
+                    Ok(run) => Some(run),
+                    Err(_) if self.settled_runs.lock().await.contains_key(&input.id) => None,
+                    Err(error) => return Err(error),
+                };
+                let Some(run) = run.filter(|run| run.active.load(Ordering::SeqCst)) else {
                     return Ok(
                         json!({"accepted":false,"runId":input.id,"effect":"The run is terminal; use recovery or retry to acquire a new execution lease."}),
                     );
-                }
+                };
                 match method {
                     "run.pause" => run.paused.store(true, Ordering::SeqCst),
                     "run.resume" => {
@@ -713,17 +778,41 @@ impl Host {
             )),
         }
     }
+    /// Every operation except connect, test and disconnect reaches the server
+    /// connection here. A connection.test connection (with or without a company)
+    /// can be held only because its logout was uncertain; it stays held so
+    /// connection.disconnect can retry the logout and free the Epicor session,
+    /// but it is never usable for any other work.
     async fn current_connection(&self) -> Result<Arc<Connection>, Diagnostic> {
-        self.connection.read().await.clone().ok_or_else(|| {
+        let connection = self.connection.read().await.clone().ok_or_else(|| {
             Diagnostic::new(
                 "CONNECTION_REQUIRED",
-                "Connect and verify Security Manager admission first.",
+                "Connect to Epicor first, so Herbert can run its Security Manager sign-in check.",
             )
-        })
+        })?;
+        if connection.is_company_discovery() {
+            let mut error = Diagnostic::new("CONNECTION_REQUIRED", "The only held connection is a company-list test whose sign-out could not be confirmed. Disconnect to retry the sign-out, then connect with a company.");
+            error.context.insert("recoveryOperation".into(), json!("connection.disconnect"));
+            return Err(error);
+        }
+        if connection.is_test_only() {
+            let mut error = Diagnostic::new("CONNECTION_REQUIRED", "The only held connection is a connection test whose sign-out could not be confirmed. Disconnect to retry the sign-out, then connect.");
+            error.context.insert("recoveryOperation".into(), json!("connection.disconnect"));
+            return Err(error);
+        }
+        Ok(connection)
     }
     async fn resolve_connection(
         &self,
         input: ConnectionInput,
+    ) -> Result<Arc<Connection>, Diagnostic> {
+        self.resolve_connection_for(input, false).await
+    }
+    /// `allow_discovery`: connection.test may run without a company to list them.
+    async fn resolve_connection_for(
+        &self,
+        input: ConnectionInput,
+        allow_discovery: bool,
     ) -> Result<Arc<Connection>, Diagnostic> {
         let profile = if let Some(id) = &input.profile_id {
             let root = self.state_root.clone();
@@ -768,9 +857,19 @@ impl Host {
             .unwrap_or_default();
         let company = input
             .company
-            .or_else(|| profile.as_ref().and_then(|p| p.defaults.company.clone()))
-            .or_else(|| file.as_ref().and_then(|f| f.defaults.company.clone()))
-            .ok_or_else(|| Diagnostic::new("COMPANY_REQUIRED", "Select exactly one company."))?;
+            .clone()
+            .filter(|c| !c.is_empty())
+            .or_else(|| profile.as_ref().and_then(|p| p.defaults.company.clone()).filter(|c| !c.is_empty()))
+            .or_else(|| file.as_ref().and_then(|f| f.defaults.company.clone()).filter(|c| !c.is_empty()));
+        if company.is_none() && !allow_discovery {
+            return Err(crate::connection::company_required());
+        }
+        // A saved profile's or file's certificate choice never follows an overridden endpoint.
+        let same_endpoint = |url: &str| crate::input::endpoint(url).is_ok_and(|saved| saved == endpoint);
+        let allow_untrusted_certificate = input.allow_untrusted_certificate
+            .or_else(|| profile.as_ref().filter(|p| same_endpoint(&p.url)).map(|p| p.allow_untrusted_certificate))
+            .or_else(|| file.as_ref().filter(|f| same_endpoint(&f.url)).map(|f| f.allow_untrusted_certificate))
+            .unwrap_or(false);
         let explicit_settings = input.settings.is_some();
         let settings = match input.settings {
             Some(settings) => settings,
@@ -808,13 +907,14 @@ impl Host {
                 blocking(move || profiles::secure_read(&url, &id)).await?
             }
         };
-        let connection=Connection::new(
+        let connection=Connection::with_options(
             endpoint,
             company,
             mode,
             credentials,
             settings,
             self.budget.clone(),
+            crate::connection::ConnectionOptions { allow_untrusted_certificate },
         )?;
         self.budget.configure_operating(connection.settings().concurrency,connection.settings().minimum_request_interval_ms)?;
         if explicit_settings {
@@ -844,8 +944,9 @@ impl Host {
         Ok(
             json!({"schemaVersion":1,"categories":plugins.into_iter().map(|p|p.category).collect::<Vec<_>>(),"diagnostics":diagnostics,
             "discovery":"The selected folder is authoritative. Only present module descriptors appear; no expected roster or plugin registry exists.",
-            "targets":["2026.100","2025.2"],"qualification":"Review each artifact result and diagnostic. Server contracts and available source determine completeness.",
-            "temporaryAccess":{"default":default_temporary_access(),"nativeGrant":"Native policy checks determine required groups. Grants use recorded ownership.","nativeCleanup":"Remove only owned additions and verify the resulting memberships.","qualified":false}}),
+            "targets":["2026.100","2025.2","2024.2"],"qualification":"Review each artifact result and diagnostic. Server contracts and available source determine completeness.",
+            "temporaryAccess":{"default":default_temporary_access(),"nativeGrant":"Native policy checks determine required groups. Grants use recorded ownership.","nativeCleanup":"Remove only owned additions and verify the resulting memberships."},
+            "connection":{"allowUntrustedCertificate":true,"companyDiscovery":true}}),
         )
     }
     async fn drive_inner(
@@ -915,8 +1016,8 @@ impl Host {
             .then(|| run.activity.compiled_page());
         loop {
             // No blanket borrowing: a boolean cannot extend every active group.
-            // The reviewed per-method dispatch integration must supply an exact
-            // BorrowAuthority before using a selected owned temporary membership.
+            // native_read_with_access borrows per dispatched service/method, only
+            // through an exact PolicyAuthority for a selected owned membership.
             self.checkpoint_access(run, connection).await?;
             if !request.state.is_object() {
                 request.state = json!({});
@@ -925,6 +1026,8 @@ impl Host {
             if cfg!(feature="function-compiled"){request.state["_hostCapabilities"]["managedDecompilationV1"]=json!({"protocolVersion":1,"engineId":MANAGED_ENGINE_ID,"retainedArtifactFunctions":true});}
             if cfg!(feature="managed-decompilation"){request.state["_hostCapabilities"]["localDecompilationV1"]=json!({"protocolVersion":1,"engineId":MANAGED_ENGINE_ID,"retainedArtifactFunctions":true});}
             request.state["_hostCaller"] = json!(connection.caller().await);
+            // Native formats can differ by Epicor version (for example app page path separators).
+            request.state["_hostServerVersion"] = json!(connection.server_version().await);
             request.state["_hostRunId"] = json!(holder);
             request.state["_hostSettings"] = json!(connection.settings());
             request.state["_hostSettings"]["serverConcurrency"] = json!(server_concurrency);
@@ -961,7 +1064,7 @@ impl Host {
             let mut resume_page = None;
             if let GuestReply::ReadyRecords { records, state } = reply {
                 if !matches!(request.operation.as_str(), "materialize" | "acquire") || !plugin.has_role("pagedDefinitions") {
-                    return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "Ready records require a materialized page or selected definition."));
+                    return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "Ready records require a created page or selected definition."));
                 }
                 if request.operation=="acquire" && records.iter().any(|(owner,_)|request.identity.as_ref()!=Some(owner)) {
                     return Err(Diagnostic::new("PLUGIN_IDENTITY_DENIED","Ready records must belong to the selected definition."));
@@ -1011,7 +1114,7 @@ impl Host {
                     let writer_cancel = cancel.clone();
                     let batch = blocking(move || {
                         // Local file concurrency is independent of server request slots.
-                        // The qualification ledger records the selected operating default.
+                        // This is the selected operating default.
                         crate::collection_output::write_shared_page(writer_storage, prepared,
                             &writers,
                             &writer_cancel, |count| { if let Some(batch) = &batch { batch.processed(count); } })?;
@@ -1129,7 +1232,7 @@ impl Host {
                             if !plugin.binary_exports.iter().any(|d|d.service==*alias && d.method==*function) {
                                 return Err(Diagnostic::new("MANAGED_BINARY_DECLARATION_REQUIRED","The retained helper read has no declared binary output paths."));
                             }
-                            if plugin.category.id!="C08" || alias!="compiled_functions" || function!="ReadCompiled" {return Err(Diagnostic::new("MANAGED_INPUT_OWNERSHIP_DENIED","This retained native route is reserved for the declared Function reader."));}
+                            if plugin.category.id!="functions" || alias!="compiled_functions" || function!="ReadCompiled" {return Err(Diagnostic::new("MANAGED_INPUT_OWNERSHIP_DENIED","This retained Epicor route is reserved for the declared Function reader."));}
                             let mut arguments=arguments.clone();
                             {let storage=run.storage.lock().map_err(|_|Diagnostic::new("RUN_STATE_FAILED","Run storage is unavailable."))?;
                                 arguments["iCaller"]=json!(storage.journal.caller);arguments["iCompany"]=json!(storage.journal.company);
@@ -1141,7 +1244,7 @@ impl Host {
                             let blobs=crate::native_export::declared_blobs(&plugin.binary_exports,alias,function,&native.value)?;
                             for blob in blobs {
                                 let file={let mut storage=run.storage.lock().map_err(|_|Diagnostic::new("RUN_STATE_FAILED","Run storage is unavailable."))?;storage.preserve_for(None,&blob.bytes,&blob.extension)?};
-                                *native.value.pointer_mut(&blob.pointer).ok_or_else(||Diagnostic::new("INVALID_NATIVE_BYTES","A declared native binary pointer disappeared."))?=json!({"nativeFile":file,"representation":"decoded native bytes"});
+                                *native.value.pointer_mut(&blob.pointer).ok_or_else(||Diagnostic::new("INVALID_NATIVE_BYTES","A declared Epicor binary pointer disappeared."))?=json!({"nativeFile":file,"representation":"decoded native bytes"});
                                 files.push(file);
                             }
                             {let storage=run.storage.lock().map_err(|_|Diagnostic::new("RUN_STATE_FAILED","Run storage is unavailable."))?;managed_decompilation::restore_retained_rows(&storage,&mut native.value,&mut files)?;}
@@ -1513,26 +1616,15 @@ impl Host {
                             if !plugin.entities.contains(&(service.clone(), entity.clone())) {
                                 return Err(Diagnostic::new(
                                     "PLUGIN_CAPABILITY_DENIED",
-                                    "The plugin does not declare native schema discovery.",
+                                    "The plugin does not declare Epicor schema discovery.",
                                 ));
                             }
-                            let key = json!([
-                                "entity",
-                                connection.company,
-                                service,
-                                entity,
-                                query,
-                                page_size,
-                                page
-                            ])
-                            .to_string();
-                            run.shared_reads
-                                .read_with_source(key, cancel, || {
-                                    connection.native_entity_page(
-                                        &service, &entity, &query, page_size, page, cancel,
-                                    )
-                                })
-                                .await.map(|(response, reused)| { cached_response = reused; response })
+                            // Not cached: the run cache keeps every body until the run
+                            // ends, and a paged entity read is consumed once by the
+                            // plugin that requested it (there is no shared form).
+                            connection
+                                .native_entity_page(&service, &entity, &query, page_size, page, cancel)
+                                .await
                         }
                         HostAction::SystemInfo => {
                             let started = std::time::Instant::now();
@@ -1590,7 +1682,7 @@ impl Host {
                             if !plugin.methods.contains(&(service.clone(), method.clone())) {
                                 return Err(Diagnostic::new(
                                     "PLUGIN_CAPABILITY_DENIED",
-                                    "The plugin requested a native method absent from its descriptor.",
+                                    "The plugin requested an Epicor method absent from its descriptor.",
                                 ));
                             }
                             let read = || {
@@ -1673,7 +1765,7 @@ impl Host {
                                         {
                                             return Err(Diagnostic::new(
                                                 "QUERY_REFUSED",
-                                                "The native unsaved query returned errors or omitted its result rows.",
+                                                "Epicor returned errors or no result rows for this unsaved query. Check the query, then try again.",
                                             ));
                                         }
                                         Ok(native)
@@ -1699,7 +1791,7 @@ impl Host {
                                             if errors.is_some_and(|e| !e.is_empty()) {
                                                 Err(Diagnostic::new(
                                                     "QUERY_REFUSED",
-                                                    "The native unsaved query returned errors. Error contents were omitted from routine diagnostics.",
+                                                    "Epicor returned errors for this unsaved query. Check the query, then try again. The error text is not included in routine diagnostics.",
                                                 ))
                                             } else if let Some(rows) =
                                                 result.get("Results").and_then(Value::as_array)
@@ -1727,7 +1819,7 @@ impl Host {
                                             } else {
                                                 Err(Diagnostic::new(
                                                     "QUERY_RESULT_UNVERIFIED",
-                                                    "The native unsaved query omitted its Results table.",
+                                                    "Epicor's response to this unsaved query had no Results table.",
                                                 ))
                                             }
                                         }
@@ -1761,7 +1853,7 @@ impl Host {
                                     })
                                     .unwrap_or((false, false));
                                 if secrets_omitted || scope_omitted {
-                                    native.value["_hooverAcquisition"] = json!({"secretValuesOmitted":secrets_omitted,"outOfScopeRowsOrHistoryOmitted":scope_omitted,"representation":"sanitized native definition response"});
+                                    mark_sanitized_response(&mut native.value, secrets_omitted, scope_omitted);
                                     zeroize::Zeroize::zeroize(&mut native.raw);
                                     native.raw = serde_json::to_vec(&native.value)
                                         .map_err(|_| crate::processing::output_error())?;
@@ -1775,8 +1867,7 @@ impl Host {
                                 {
                                     let projection = (|| -> Result<Option<(Vec<u8>, std::collections::BTreeSet<String>)>, Diagnostic> {
                                         let Some(mut saved) = crate::response_retention::project_with_omissions(policy, method, &native.value)? else { return Ok(None); };
-                                        saved.value.as_object_mut().ok_or_else(|| Diagnostic::new("INVALID_RETENTION_RESPONSE", "The filtered native response must be an object. The original response was not saved."))?
-                                            .insert("_hooverRetention".into(), json!({"outOfScopeRowsOmitted":true,"representation":"plugin-scoped native response"}));
+                                        mark_scoped_response(saved.value.as_object_mut().ok_or_else(|| Diagnostic::new("INVALID_RETENTION_RESPONSE", "The filtered Epicor response must be an object. The original response was not saved."))?);
                                         Ok(Some((serde_json::to_vec(&saved.value).map_err(|_| crate::processing::output_error())?, saved.omitted)))
                                     })();
                                     match projection {
@@ -1809,7 +1900,7 @@ impl Host {
                                                     "Run state is unavailable.",
                                                 )
                                             })?
-                                            .preserve_for(owner.as_ref(), &raw, "json")
+                                            .preserve_for_paced(owner.as_ref(), &raw, "json")
                                     })
                                     .await?,
                                 );
@@ -1833,7 +1924,7 @@ impl Host {
                                                         "Run state is unavailable.",
                                                     )
                                                 })?
-                                                .preserve_for(owner.as_ref(), &bytes, "bin")
+                                                .preserve_for_paced(owner.as_ref(), &bytes, "bin")
                                         })
                                         .await?;
                                         binary_files
@@ -1879,7 +1970,7 @@ impl Host {
                                                                 "Run state is unavailable.",
                                                             )
                                                         })?
-                                                        .preserve_for(
+                                                        .preserve_for_paced(
                                                             owner.as_ref(),
                                                             &bytes,
                                                             &extension,
@@ -1922,7 +2013,7 @@ impl Host {
                                                     "Run state is unavailable.",
                                                 )
                                             })?
-                                            .preserve_for(owner.as_ref(), &bytes, "bin")
+                                            .preserve_for_paced(owner.as_ref(), &bytes, "bin")
                                     })
                                     .await?;
                                     native.value[&output] = json!({"nativeFile":file});
@@ -2015,9 +2106,10 @@ impl Host {
             .await?;
         let collection_permit = crate::server_collection::acquire(
             &self.access_store.location()?.join("server-collections"), holder, &plugin.category.id, cancel).await?;
-        let result = connection
+        let lost = match run { Some(run) => self.lease_gate(run).await?, None => None };
+        let result = server_leases::after_leased_call(&lost, connection
             .helper_call(&verified, arguments.clone(), cancel)
-            .await;
+            .await);
         collection_permit.settle(&result)?;
         if let (Some(run), Ok(response)) = (run, &result) {
             self.observe_helper_transfer(&instance, function, &arguments, &response.value, run)
@@ -2038,7 +2130,22 @@ impl Host {
         let verified = self
             .verify_helper_claim(claim, function, connection, run, identity, cancel, false)
             .await?;
-        connection.helper_call(&verified, arguments, cancel).await
+        if let Some(run) = run {
+            // F2/F3: each newly initiated call into an installed private instance
+            // re-checks the live grant for its legacyHelper effect. Owned cleanup, under
+            // its original reference or of this run's own reference-less records,
+            // is not new work and is not checked here.
+            if server_change_dispatch::cleanup_reference().is_none() && !server_leases::in_cleanup() {
+                let journal = collection::snapshot(run).await?;
+                if let Some(lease) = journal.helper_libraries.iter().find(|lease| lease.instance.global_id == claim.global_id) {
+                    let category = journal.plugin_hashes.iter().find(|(_, hash)| **hash == lease.plugin_hash).map(|(category, _)| category.clone())
+                        .ok_or_else(|| Diagnostic::new("SERVER_CHANGE_AUTHORIZATION_REQUIRED", "The helper's module is not part of this run."))?;
+                    self.require_server_change(run, connection, &category, &format!("legacyHelper:{}", lease.template_id), None, &json!({"kind":"legacyHelper"}), None).await?;
+                }
+            }
+        }
+        let lost = match run { Some(run) => self.lease_gate(run).await?, None => None };
+        server_leases::after_leased_call(&lost, connection.helper_call(&verified, arguments, cancel).await)
     }
     async fn verify_helper_claim(
         &self,
@@ -2141,7 +2248,7 @@ impl Host {
                 .ok_or_else(|| {
                     Diagnostic::new(
                         "FIELD_METADATA_REQUIRED",
-                        "The native dictionary omitted its field list.",
+                        "Epicor's data dictionary returned no field list.",
                     )
                 })?;
             let mut metadata = Vec::new();
@@ -2169,14 +2276,14 @@ impl Host {
                 } else {
                     return Err(Diagnostic::new(
                         "FIELD_METADATA_REQUIRED",
-                        "A native field dictionary row lacks its identity or type.",
+                        "A field in Epicor's data dictionary has no name or type.",
                     ));
                 }
             }
             if metadata.is_empty() {
                 return Err(Diagnostic::new(
                     "FIELD_METADATA_REQUIRED",
-                    "No native field metadata matched the requested table.",
+                    "Epicor's data dictionary has no fields for the requested table. Check the table name, then try again.",
                 ));
             }
             table.metadata = metadata;
@@ -2185,6 +2292,54 @@ impl Host {
     }
     async fn run(&self, id: &str) -> Result<Arc<Run>, Diagnostic> {
         self.runs.lock().await.get(id).cloned().ok_or_else(||Diagnostic::new("RUN_NOT_FOUND","This host does not own that run. Durable restart attachment is still under implementation."))
+    }
+    /// Release a run that has stopped executing. Its retained responses and plugin references
+    /// go at once. When `released` (the destination was released after the final checkpoint,
+    /// so the saved journal is current), the run also leaves `runs`: run.status then reads the
+    /// saved journal plus the few live-only fields kept here, and the storage, activity and
+    /// diagnostic log are dropped with the last reference. Recovery always opens a new run
+    /// from the saved journal, so nothing released here is needed to resume. When the release
+    /// is uncertain the run stays in `runs` and keeps serving its in-memory journal.
+    async fn settle_run(&self, run: &Arc<Run>, released: bool) {
+        if run.active.load(Ordering::SeqCst) { return; }
+        run.shared_reads.clear().await;
+        *run.collection_context.lock().await = None;
+        if !released { return; }
+        let Ok(id) = run.storage.lock().map(|storage| storage.journal.run_id.clone()) else { return; };
+        let fields = json!({
+            "activeOperations": [],
+            "pluginStates": run.activity.plugin_states(),
+            "activityStages": run.activity.history(),
+            "transferBatches": run.activity.batches(),
+            "diagnosticLog": run.activity.diagnostics_status(),
+            "statistics": run.activity.statistics(),
+            "pauseRequested": false,
+            "cancelRequested": false,
+        });
+        let mut runs = self.runs.lock().await;
+        // A recovery started since this run stopped owns the entry now; leave it alone.
+        if runs.get(&id).is_some_and(|current| Arc::ptr_eq(current, run)) {
+            self.settled_runs.lock().await.insert(id.clone(), fields);
+            runs.remove(&id);
+            drop(runs);
+            // Teardown removes these on its normal path; an early return there would otherwise
+            // keep the operation (its artifact snapshots and operation lock) until the host
+            // exits. Recovery reopens operations from disk.
+            self.native_operations.lock().await.retain(|(holder, _), _| holder != &id);
+            self.unload_idle_plugin_modules().await;
+        }
+    }
+    /// Release cached plugin code once no run is executing. Measured 2026-10-28: memory held
+    /// between runs on one connection (about +175 MB per run) was released only by
+    /// disconnect, whose one plugin-side step is this unload. It is safe at any time: a run,
+    /// discovery or MCP call that is using a plugin holds its own clone of that plugin's
+    /// runtime, which this leaves untouched, and the cache reloads lazily on next use (cheap
+    /// from a shipped .cwasm). The cache lock waits for any scan in progress.
+    async fn unload_idle_plugin_modules(&self) {
+        if self.runs.lock().await.values().any(|run| run.active.load(Ordering::SeqCst)) {
+            return;
+        }
+        self.plugin_cache.lock().await.unload_modules();
     }
     async fn recover(self: &Arc<Self>, id: &str, operation: &str) -> Result<Value, Diagnostic> {
         if self
@@ -2199,6 +2354,8 @@ impl Host {
                 "The current host is still executing this run. Pause or cancel it before recovery.",
             ));
         }
+        // A recovered execution re-evaluates every borrow preview.
+        self.forget_borrow_previews(id);
         let reprocess = operation == "run.reprocess";
         let connection = if reprocess {
             None
@@ -2216,7 +2373,7 @@ impl Host {
             {
                 return Err(Diagnostic::new(
                     "RUN_SCOPE_MISMATCH",
-                    "Reconnect as the saved initiating caller to the saved endpoint and company before recovery.",
+                    "To recover this download, reconnect as the Epicor user who started it, to the same server and company.",
                 ));
             }
         }
@@ -2229,7 +2386,7 @@ impl Host {
             Err(error) => Err(error),
         })
         .await?;
-        if !cfg!(feature="managed-decompilation") && journal.managed_processing.is_some(){return Err(Diagnostic::new("MANAGED_HOST_UNAVAILABLE","This run contains newer managed processing state. Use its qualified managed-decompilation host; all saved state and output were preserved."));}
+        if !cfg!(feature="managed-decompilation") && journal.managed_processing.is_some(){return Err(Diagnostic::new("MANAGED_HOST_UNAVAILABLE","This run contains managed processing state. Open it with a Herbert build that includes managed decompilation; all saved state and output were preserved."));}
         if !reprocess
             && journal.access_leases.iter().any(|lease| {
                 !matches!(
@@ -2351,7 +2508,7 @@ impl Host {
         if !full && input.identities.is_empty() {
             return Err(Diagnostic::new(
                 "IDENTITY_REQUIRED",
-                "Targeted retrieval needs at least one exact native identity.",
+                "To download selected items, give at least one item's exact Epicor ID.",
             ));
         }
         let connection = self.current_connection().await?;
@@ -2378,7 +2535,8 @@ impl Host {
             }
             requested.into_iter().collect()
         };
-        categories.sort();
+        // Run journals and the run monitor list categories in the established catalog order.
+        categories.sort_by_key(|id| crate::legacy_category_ids::catalog_order(id));
         categories.dedup();
         let mut plugin_settings = BTreeMap::new();
         let mut plugin_selection_contracts = BTreeMap::new();
@@ -2451,6 +2609,7 @@ impl Host {
         let mut journal = storage::new_journal(input.request_id.clone());
         journal.server_version = connection.server_version().await;
         journal.auth_mode = Some(connection.mode);
+        journal.transport_trust = Some(connection.transport_trust());
         journal.endpoint = connection.endpoint.to_string();
         journal.company = connection.company.clone();
         journal.caller = connection.caller().await.unwrap_or_default();
@@ -2473,7 +2632,7 @@ impl Host {
             {
                 return Err(Diagnostic::new(
                     "RUN_SCOPE_MISMATCH",
-                    "The definition-reference context belongs to a different endpoint, company or initiating caller.",
+                    "This reference data belongs to a different server, company or Epicor user than the current connection.",
                 ));
             }
             journal.references = saved.references;
@@ -2641,6 +2800,38 @@ fn selection_contract_metadata(declarations: &[PluginSetting]) -> Vec<Value> {
 }
 
 #[cfg(test)]
+mod output_metadata_key_tests {
+    use super::*;
+
+    #[test]
+    fn new_backups_write_only_product_named_metadata_keys() {
+        let mut sanitized = json!({"returnObj":{}});
+        mark_sanitized_response(&mut sanitized, true, false);
+        assert_eq!(sanitized[ACQUISITION_METADATA_KEY]["secretValuesOmitted"], true);
+        let mut scoped = serde_json::Map::new();
+        mark_scoped_response(&mut scoped);
+        assert_eq!(scoped[RETENTION_METADATA_KEY]["outOfScopeRowsOmitted"], true);
+        let written = format!("{sanitized}{}", Value::Object(scoped)).to_ascii_lowercase();
+        assert!(written.contains("_herbertacquisition") && written.contains("_herbertretention"));
+        assert!(!written.contains("hoover"), "{written}");
+    }
+
+    #[test]
+    fn existing_0_1_backup_responses_with_old_metadata_keys_still_read() {
+        // A 0.1.x saved response carries the old key spelling (the one remaining
+        // legacy literal, kept only as this compatibility fixture).
+        let saved = br#"{"returnObj":{"Rows":[]},"_hooverAcquisition":{"secretValuesOmitted":true,"outOfScopeRowsOrHistoryOmitted":false,"representation":"sanitized native definition response"}}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let mut storage = crate::storage::Storage::open(dir.path(), false, crate::storage::new_journal("old-keys".into())).unwrap();
+        let file = storage.preserve_raw(saved, "json").unwrap();
+        storage.verify(&file).unwrap();
+        let read = storage.parse_native_json(None, &file, std::slice::from_ref(&file)).unwrap();
+        assert_eq!(serde_json::to_vec(&read).unwrap(), serde_json::to_vec(&serde_json::from_slice::<Value>(saved).unwrap()).unwrap());
+        assert_eq!(std::fs::read(dir.path().join(&file.path)).unwrap(), saved);
+    }
+}
+
+#[cfg(test)]
 mod frozen_selection_tests {
     use super::*;
 
@@ -2690,7 +2881,8 @@ fn select_full_categories(
     requested:Option<Vec<String>>,
     diagnostics:&[Diagnostic],
 ) -> Result<Vec<String>,Diagnostic> {
-    let Some(requested)=requested else { return Ok(available.iter().cloned().collect()); };
+    let catalog_ordered=|ids:Vec<String>|{let mut ids=ids;ids.sort_by_key(|id|crate::legacy_category_ids::catalog_order(id));ids};
+    let Some(requested)=requested else { return Ok(catalog_ordered(available.iter().cloned().collect())); };
     if requested.is_empty() {
         return Err(Diagnostic::new("CATEGORY_SELECTION_EMPTY","Select at least one category for an explicit full backup."));
     }
@@ -2698,12 +2890,12 @@ fn select_full_categories(
     let unavailable=requested.iter().filter(|id|!available.contains(*id)).cloned().collect::<Vec<_>>();
     if !unavailable.is_empty() {
         let mut error=Diagnostic::new("COLLECTION_UNAVAILABLE","One or more requested categories are not available.");
-        error.context.insert("requestedCategories".into(),json!(requested));
+        error.context.insert("requestedCategories".into(),json!(catalog_ordered(requested.into_iter().collect())));
         error.context.insert("unavailableCategories".into(),json!(unavailable));
         error.context.insert("discoveryDiagnostics".into(),json!(diagnostics));
         return Err(error);
     }
-    Ok(requested.into_iter().collect())
+    Ok(catalog_ordered(requested.into_iter().collect()))
 }
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, Diagnostic> + Send + 'static,
@@ -2711,7 +2903,7 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(f).await.map_err(|_| {
         Diagnostic::new(
             "LOCAL_TASK_FAILED",
-            "A local operation failed; preserve existing output and inspect its checkpoint.",
+            "A local processing step failed. Existing output was kept, and the download's saved progress shows where it stopped.",
         )
     })?
 }
@@ -2759,7 +2951,7 @@ mod shared_company_scope_tests {
     use super::*;
     #[test]
     fn shared_identity_keeps_owner_and_is_bound_to_the_selected_company() {
-        let mut id=Identity{category:"C15".into(),kind:"PersistedMenu".into(),
+        let mut id=Identity{category:"menus-and-launch-definitions".into(),kind:"PersistedMenu".into(),
             scope:Scope::SharedCompany{company:"C".into(),owner_company:"Peer".into()},
             keys:std::collections::BTreeMap::from([("Company".into(),"Peer".into()),("MenuID".into(),"M".into())])};
         assert!(identity_in_scope(&id,"C"));
@@ -2778,7 +2970,7 @@ async fn checkpoint(run: &Arc<Run>, phase: &str) -> Result<(), Diagnostic> {
             .lock()
             .map_err(|_| Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable."))?;
         s.journal.phase = phase;
-        s.checkpoint()
+        s.checkpoint_all()
     })
     .await
 }
@@ -3043,7 +3235,7 @@ fn schema<T:schemars::JsonSchema>() -> Value {
 fn object_schema(required:&[&str],properties:Value,additional_properties:bool)->Value {
     json!({"type":"object","required":required,"properties":properties,"additionalProperties":additional_properties})
 }
-fn operation_result_schema(name:&str)->Value {
+pub(crate) fn operation_result_schema(name:&str)->Value {
     let string=||json!({"type":"string"});
     let boolean=||json!({"type":"boolean"});
     let integer=||json!({"type":"integer"});
@@ -3078,7 +3270,8 @@ fn operation_result_schema(name:&str)->Value {
         "helpers.reconcile"=>open("Native helper reconciliation result and cleanup evidence."),
         "plugin.configure"=>schema::<GuestReply>(),
         "profiles.list"=>array(schema::<Profile>()),
-        "profiles.upsert"|"credentials.save"=>object_schema(&["saved"],json!({"saved":{"const":true}}),false),
+        "profiles.upsert"=>object_schema(&["saved"],json!({"saved":{"const":true},"warnings":{"type":"array","items":schema::<Diagnostic>(),"description":"For example COMPANY_NOT_SET. Membership is checked by connection.test and connect."}}),false),
+        "credentials.save"=>object_schema(&["saved"],json!({"saved":{"const":true}}),false),
         "profiles.rename"=>object_schema(&["renamed"],json!({"renamed":{"const":true}}),false),
         "profiles.remove"=>object_schema(&["removed","credentialCleanup"],json!({"removed":{"const":true},"credentialCleanup":string()}),false),
         "profiles.associateFile"=>object_schema(&["associated","inputFileChanged"],json!({"associated":{"const":true},"inputFileChanged":{"const":false}}),false),
@@ -3093,18 +3286,35 @@ fn operation_result_schema(name:&str)->Value {
         "serverCollection.reconcile"=>object_schema(&["schemaVersion","invocationId","runId","plugin","state","evidence"],json!({
             "schemaVersion":{"const":1},"invocationId":string(),"runId":string(),"plugin":string(),"state":{"const":"operatorConfirmedStopped"},"evidence":string()
         }),false),
-        "capabilities"=>object_schema(&["schemaVersion","categories","diagnostics","discovery","targets","qualification","temporaryAccess"],json!({
-            "schemaVersion":{"const":1},"categories":array(schema::<Category>()),"diagnostics":array(schema::<Diagnostic>()),"discovery":string(),
-            "targets":array(string()),"qualification":string(),"temporaryAccess":object_schema(&["default","nativeGrant","nativeCleanup","qualified"],json!({
-                "default":boolean(),"nativeGrant":string(),"nativeCleanup":string(),"qualified":boolean()
+        "capabilities"=>{
+            let mut category=schema::<Category>();
+            // Host-side description only; the shared contract bytes stay frozen.
+            if let Some(field)=category.pointer_mut("/properties/qualification") {field["description"]=json!("The plugin's plain statement of how to judge its results, or why it is unavailable.");}
+            object_schema(&["schemaVersion","categories","diagnostics","discovery","targets","qualification","temporaryAccess","connection"],json!({
+            "schemaVersion":{"const":1},"categories":array(category),"diagnostics":array(schema::<Diagnostic>()),"discovery":string(),
+            "targets":array(string()),"qualification":{"type":"string","description":"How to judge completeness: check each artifact's result and diagnostics."},
+            "temporaryAccess":object_schema(&["default","nativeGrant","nativeCleanup"],json!({
+                "default":boolean(),"nativeGrant":string(),"nativeCleanup":string()
+            }),false),
+            "connection":object_schema(&["allowUntrustedCertificate","companyDiscovery"],json!({
+                "allowUntrustedCertificate":{"type":"boolean","description":"Connections accept a per-profile allowUntrustedCertificate option. It relaxes trust in the certificate issuer only; the server name and validity dates are still checked."},
+                "companyDiscovery":{"type":"boolean","description":"connection.test without a company lists the companies the account can use, then signs out."}
             }),false)
-        }),false),
-        "connection.test"|"connection.connect"=>object_schema(&["endpoint","company","caller","authMode","admission","version"],json!({
-            "endpoint":string(),"company":string(),"caller":string(),"authMode":string(),"admission":{"const":"verifiedSecurityManager"},"version":{},
-            "cleanup":{"type":"null","description":"connection.test only. Null means logout was confirmed."}
-        }),false),
+        }),false)},
+        "connection.test"|"connection.connect"=>{
+            let company_row=object_schema(&["id","name"],json!({"id":string(),"name":string()}),false);
+            object_schema(&["endpoint","company","caller","authMode","admission","version","transportTrust"],json!({
+            "endpoint":string(),"company":{"type":["string","null"],"description":"Null when connection.test ran without a company."},"caller":string(),"authMode":string(),"admission":{"const":"verifiedSecurityManager"},"version":{},
+            "cleanup":{"type":"null","description":"connection.test only. Null means logout was confirmed."},
+            "transportTrust":schema::<crate::transport_trust::TransportTrust>(),
+            "availableCompanies":{"type":"array","items":company_row,"description":"connection.test only. Companies this account can use, sorted by id."},
+            "companySource":{"type":"string","enum":["userAccess","companyList","unavailable"],"description":"connection.test only. userAccess: the account's own company access; companyList: all companies, access is confirmed when you connect; unavailable: the list could not be read."},
+            "selectedCompany":{"oneOf":[object_schema(&["id","inList"],json!({"id":string(),"inList":boolean()}),false),{"type":"null"}],"description":"connection.test only. The requested company and whether it is in availableCompanies."},
+            "companyListDiagnostic":{"oneOf":[schema::<Diagnostic>(),{"type":"null"}],"description":"connection.test only. Why the company list could not be read."}
+        }),false)},
         "connection.disconnect"=>object_schema(&["disconnected"],json!({"disconnected":{"const":true}}),false),
-        "companies.list"=>object_schema(&["companies","scope"],json!({"companies":open("Native CompanySvc GetList response."),"scope":string()}),false),
+        "companies.list"=>object_schema(&["companies","availableCompanies","scope"],json!({"companies":open("Native CompanySvc GetList response."),
+            "availableCompanies":array(object_schema(&["id","name"],json!({"id":string(),"name":string()}),false)),"scope":string()}),false),
         "retrieve.start"|"backup.start"=>object_schema(&["runId","accepted"],json!({
             "runId":string(),"accepted":{"const":true},"destination":string(),"scope":string(),"reconciled":boolean(),"execution":string()
         }),false),
@@ -3122,7 +3332,15 @@ fn operation_result_schema(name:&str)->Value {
             "targets":array(schema::<Identity>()),"pluginSettings":open("Frozen plugin setting map."),"pluginSelectionContracts":open("Frozen plugin-declared filter metadata; matching help belongs to the plugin."),"discoveryMessages":open("Successful empty-selection messages after complete discovery."),"managedProcessing":{"type":["object","null"],"additionalProperties":true},
             "temporaryAccessEnabled":boolean(),"collectionMethod":string(),"executionActive":boolean(),"activeOperations":array(json!({})),"pluginStates":open("Transient plugin state."),
             "activityStages":array(json!({})),"transferBatches":array(json!({})),"diagnosticLog":{"oneOf":[{"type":"null"},object_schema(&["path","writeFailed"],json!({"path":string(),"writeFailed":boolean()}),false)]},"pauseRequested":boolean(),"cancelRequested":boolean(),
-            "fileCount":integer(),"fileBytes":integer(),"countsPending":boolean()
+            "fileCount":integer(),"fileBytes":integer(),"countsPending":boolean(),
+            "serverChangeAuthority":{"oneOf":[schema::<crate::server_changes::RunAuthority>(),{"type":"null"}],"description":"The explicit server-change authorization this run uses, or null for a run that may change nothing on the server."},
+            "transportTrust":{"oneOf":[schema::<crate::transport_trust::TransportTrust>(),{"type":"null"}],"description":"How the server certificate was trusted for this run."},
+            "serverChanges":object_schema(&["leaseLost","resources","foreignPending"],json!({
+                "leaseLost":{"type":"boolean","description":"This run's server lease for its temporary helpers was lost. New helper work stopped; Direct reads and cleanup continued."},
+                "resources":array(object_schema(&["code","outcome"],json!({"code":string(),"identity":{"oneOf":[schema::<Identity>(),{"type":"null"}]},"context":open("Codes and identities only."),"outcome":schema::<crate::progress_snapshot::ServerChangeOutcome>()}),false)),
+                "foreignPending":array(schema::<crate::storage::ForeignPendingHelper>())
+            }),false),
+            "foreignPendingHelpers":{"type":"array","items":schema::<crate::storage::ForeignPendingHelper>(),"description":"Internal recovery evidence; use serverChanges."}
         }),true),
         "diagnostics.export"=>object_schema(&["saved","path","sanitized","schemaVersion","logs","events","omittedInvalidEvents"],json!({
             "saved":{"const":true},"path":string(),"sanitized":{"const":true},"schemaVersion":{"const":1},"logs":integer(),"events":integer(),"omittedInvalidEvents":integer()
@@ -3191,15 +3409,16 @@ mod download_surface_tests {
 
     #[test]
     fn explicit_backup_selection_rejects_missing_and_empty_categories() {
-        let available=["C01".to_string(),"C02".to_string()].into_iter().collect();
-        let mixed=select_full_categories(&available,Some(vec!["C01".into(),"C99".into()]),&[
+        let available=["ud-codes".to_string(),"ud-schema".to_string()].into_iter().collect();
+        // A vendor-style unknown ID: requested categories are reported in sorted ID order.
+        let mixed=select_full_categories(&available,Some(vec!["ud-codes".into(),"vendor.unknown".into()]),&[
             Diagnostic::new("PLUGIN_INVALID","A plugin failed discovery."),
         ]).unwrap_err();
         assert_eq!(mixed.code,"COLLECTION_UNAVAILABLE");
-        assert_eq!(mixed.context["unavailableCategories"],json!(["C99"]));
-        assert_eq!(mixed.context["requestedCategories"],json!(["C01","C99"]));
+        assert_eq!(mixed.context["unavailableCategories"],json!(["vendor.unknown"]));
+        assert_eq!(mixed.context["requestedCategories"],json!(["ud-codes","vendor.unknown"]));
         assert_eq!(mixed.context["discoveryDiagnostics"][0]["code"],"PLUGIN_INVALID");
-        assert_eq!(select_full_categories(&available,None,&[]).unwrap(),vec!["C01","C02"]);
+        assert_eq!(select_full_categories(&available,None,&[]).unwrap(),vec!["ud-codes","ud-schema"]);
         assert_eq!(select_full_categories(&available,Some(Vec::new()),&[]).unwrap_err().code,"CATEGORY_SELECTION_EMPTY");
     }
 
@@ -3215,7 +3434,7 @@ mod download_surface_tests {
             auth_mode:Some(AuthMode::BasicApiKey),company:Some("FIXTURE".into()),
             credential_source:CredentialSource::Inline { credentials:Credentials {
                 username:"fixture".into(),password:"fixture".into(),api_key:Some("fixture".into()),
-            }},settings:Some(requested),
+            }},settings:Some(requested),allow_untrusted_certificate:None,
         };
         let error=match host.resolve_connection(invalid).await { Ok(_)=>panic!("invalid connection settings were accepted"),Err(error)=>error };
         assert_eq!(error.code,"INVALID_SERVER_CONCURRENCY");
@@ -3227,7 +3446,7 @@ mod download_surface_tests {
         let missing_profile=ConnectionInput {
             profile_id:None,url:Some("https://example.invalid/instance".into()),
             auth_mode:Some(AuthMode::Session),company:Some("FIXTURE".into()),
-            credential_source:CredentialSource::SecureStore,settings:Some(valid_settings),
+            credential_source:CredentialSource::SecureStore,settings:Some(valid_settings),allow_untrusted_certificate:None,
         };
         let error=match host.resolve_connection(missing_profile).await { Ok(_)=>panic!("missing secure-store profile was accepted"),Err(error)=>error };
         assert_eq!(error.code,"PROFILE_REQUIRED");
@@ -3311,7 +3530,7 @@ mod download_surface_tests {
                 .execute(Command {
                     schema_version: 1,
                     method: removed.into(),
-                    arguments: json!({"category":"C01","temporaryAccess":true}),
+                    arguments: json!({"category":"ud-codes","temporaryAccess":true}),
                 })
                 .await;
             assert!(!reply.ok);
@@ -3343,6 +3562,128 @@ mod download_surface_tests {
         ] {
             assert!(options["properties"].get(field).is_some());
         }
+        assert!(host.shutdown().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cached_plugin_modules_unload_when_the_last_active_run_settles_and_reload_on_use() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, plugins) = (root.path().join("state"), root.path().join("plugins"));
+        server_change_api_tests::module(&plugins, "Loaded");
+        let host = Host::with_roots(state.clone(), plugins.clone(), Some(root.path().join("coordination")));
+        let in_use = host.plugin_cache.lock().await.scan(&plugins, &CancellationToken::new()).await.unwrap().0;
+        assert_eq!(in_use.len(), 1);
+        assert_eq!(host.plugin_cache.lock().await.loaded_modules(), 1, "a first scan describes the plugin live");
+        let run = |name: &str, active: bool| {
+            let mut journal = storage::new_journal(name.into());
+            journal.phase = "completed".into();
+            let store = Storage::open(&root.path().join(name), false, journal.clone()).unwrap();
+            crate::recovery::RunIndex::open(&state).unwrap().save(&crate::recovery::RunRecord {
+                schema_version: 1, scope_hash: "test".into(), destination: store.root().to_string_lossy().to_string(),
+                accepted: true, full: false, page_size: None, journal: journal.clone(),
+            }).unwrap();
+            (journal.run_id, Arc::new(Run {
+                storage: Arc::new(std::sync::Mutex::new(store)), cancel: CancellationToken::new(),
+                paused: AtomicBool::new(false), wake: Notify::new(), active: AtomicBool::new(active), network: false,
+                helper_restore_attempts: Mutex::new(std::collections::BTreeSet::new()), activity: Arc::new(Default::default()),
+                shared_reads: Default::default(), helper_instances: Mutex::new(BTreeMap::new()), collection_context: Mutex::new(None),
+            }))
+        };
+        // Another run still executing keeps the modules loaded when one run settles.
+        let (busy_id, busy) = run("busy-output", true);
+        let (done_id, done) = run("done-output", true);
+        host.runs.lock().await.insert(busy_id.clone(), busy.clone());
+        host.runs.lock().await.insert(done_id.clone(), done.clone());
+        done.storage.lock().unwrap().release_destination().unwrap();
+        done.active.store(false, Ordering::SeqCst);
+        host.settle_run(&done, true).await;
+        assert_eq!(host.plugin_cache.lock().await.loaded_modules(), 1, "an active run keeps cached modules");
+        // The last active run settling unloads them.
+        busy.storage.lock().unwrap().release_destination().unwrap();
+        busy.active.store(false, Ordering::SeqCst);
+        host.settle_run(&busy, true).await;
+        assert_eq!(host.plugin_cache.lock().await.loaded_modules(), 0, "no run active: cached modules are released");
+        // A holder that was using the plugin keeps its own runtime and still works.
+        assert_eq!(in_use[0].prepare(&CancellationToken::new()).await.unwrap()["event"], "pluginLoaded");
+        // The next use reloads lazily from the cache.
+        let reloaded = host.plugin_cache.lock().await.scan(&plugins, &CancellationToken::new()).await.unwrap().0;
+        assert_eq!(reloaded[0].prepare(&CancellationToken::new()).await.unwrap()["event"], "pluginLoaded");
+        assert_eq!(host.plugin_cache.lock().await.loaded_modules(), 1);
+        assert!(host.shutdown().await.is_empty());
+    }
+    #[tokio::test]
+    async fn settled_run_releases_cache_context_and_storage_and_status_still_answers() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        let host = Host::with_roots(state.clone(), root.path().join("plugins"), Some(root.path().join("coordination")));
+        let fixture = |name: &str| {
+            let mut journal = storage::new_journal(name.into());
+            journal.phase = "completed".into();
+            let store = Storage::open(&root.path().join(name), false, journal.clone()).unwrap();
+            crate::recovery::RunIndex::open(&state).unwrap().save(&crate::recovery::RunRecord {
+                schema_version: 1, scope_hash: "test".into(), destination: store.root().to_string_lossy().to_string(),
+                accepted: true, full: false, page_size: None, journal: journal.clone(),
+            }).unwrap();
+            (journal.run_id, Arc::new(Run {
+                storage: Arc::new(std::sync::Mutex::new(store)), cancel: CancellationToken::new(),
+                paused: AtomicBool::new(false), wake: Notify::new(), active: AtomicBool::new(true), network: false,
+                helper_restore_attempts: Mutex::new(std::collections::BTreeSet::new()), activity: Arc::new(Default::default()),
+                shared_reads: Default::default(), helper_instances: Mutex::new(BTreeMap::new()), collection_context: Mutex::new(None),
+            }))
+        };
+        let retain = |run: Arc<Run>| async move {
+            run.shared_reads.read("body".into(), &CancellationToken::new(), || async {
+                Ok(crate::connection::NativeResponse { raw: vec![0; 1024], value: json!({}), elapsed_ms: 0 })
+            }).await.unwrap();
+            *run.collection_context.lock().await = Some(collection::CollectionContext { processors: vec![], page_size: None, full: true, processed_inputs: Default::default() });
+        };
+
+        // Released: the host drops the run and answers status from the saved journal.
+        let (run_id, run) = fixture("settled-output");
+        host.runs.lock().await.insert(run_id.clone(), run.clone());
+        retain(run.clone()).await;
+        run.activity.plugin_state("fixture-plugin", "finished");
+        run.activity.begin_batch("fixture-plugin", 3).complete();
+        run.storage.lock().unwrap().release_destination().unwrap();
+        run.active.store(false, Ordering::SeqCst);
+        host.settle_run(&run, true).await;
+        assert!(run.shared_reads.is_empty().await);
+        assert!(run.collection_context.lock().await.is_none());
+        assert!(!host.runs.lock().await.contains_key(&run_id));
+        assert_eq!(Arc::strong_count(&run), 1, "the host keeps no reference to a settled run");
+        drop(run);
+        for summary in [false, true] {
+            let status = host.operation("run.status", json!({"id":run_id,"summary":summary})).await.unwrap();
+            assert_eq!(status["phase"], "completed");
+            assert_eq!(status["executionActive"], false);
+            assert_eq!(status["pluginStates"]["fixture-plugin"], "finished");
+            assert_eq!(status["transferBatches"][0]["phase"], "Verified");
+            assert_eq!(status["activeOperations"], json!([]));
+            assert!(status["statistics"].is_object());
+        }
+        assert_eq!(host.operation("run.pause", json!({"id":run_id})).await.unwrap()["accepted"], false);
+
+        // Uncertain release: the retained cache and plugins still go, the run stays.
+        let (kept_id, kept) = fixture("uncertain-output");
+        host.runs.lock().await.insert(kept_id.clone(), kept.clone());
+        retain(kept.clone()).await;
+        kept.active.store(false, Ordering::SeqCst);
+        host.settle_run(&kept, false).await;
+        assert!(kept.shared_reads.is_empty().await);
+        assert!(kept.collection_context.lock().await.is_none());
+        assert!(host.runs.lock().await.contains_key(&kept_id));
+        assert_eq!(host.operation("run.status", json!({"id":kept_id})).await.unwrap()["executionActive"], false);
+
+        // A recovery that replaced the entry keeps it.
+        let (raced_id, raced) = fixture("raced-output");
+        let (_, newer) = fixture("newer-output");
+        newer.active.store(false, Ordering::SeqCst);
+        host.runs.lock().await.insert(raced_id.clone(), newer.clone());
+        raced.storage.lock().unwrap().release_destination().unwrap();
+        raced.active.store(false, Ordering::SeqCst);
+        host.settle_run(&raced, true).await;
+        assert!(Arc::ptr_eq(host.runs.lock().await.get(&raced_id).unwrap(), &newer));
+        assert!(!host.settled_runs.lock().await.contains_key(&raced_id));
         assert!(host.shutdown().await.is_empty());
     }
 

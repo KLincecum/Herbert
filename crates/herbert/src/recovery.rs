@@ -87,7 +87,7 @@ impl RunIndex {
     }
     pub fn get(&self, id: &str) -> Result<RunRecord, Diagnostic> {
         uuid::Uuid::parse_str(id)
-            .map_err(|_| failure("INVALID_RUN_ID", "Use a native Herbert run UUID."))?;
+            .map_err(|_| failure("INVALID_RUN_ID", "Use an Epicor Herbert run UUID."))?;
         let record = self.read(&owned_file(&self.root, &format!("{id}.json"))?)?;
         if record.journal.run_id != id {
             return Err(failure(
@@ -163,6 +163,27 @@ impl RunIndex {
             &bytes,
         )
     }
+    /// Every readable saved journal (the output journal when available, else the
+    /// indexed copy). Unreadable records are skipped: they prove no ownership.
+    pub fn journals(&self) -> Result<Vec<RunJournal>, Diagnostic> {
+        let mut journals = Vec::new();
+        for entry in fs::read_dir(&self.root)
+            .map_err(|_| failure("RUN_INDEX_UNAVAILABLE", "Cannot read saved run state."))?
+        {
+            let entry = entry
+                .map_err(|_| failure("RUN_INDEX_UNAVAILABLE", "Cannot read a saved run entry."))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".json")
+                || uuid::Uuid::parse_str(name.trim_end_matches(".json")).is_err()
+            {
+                continue;
+            }
+            if let Ok(record) = self.read(&owned_file(&self.root, &name)?) {
+                journals.push(read_journal(&record).unwrap_or(record.journal));
+            }
+        }
+        Ok(journals)
+    }
     pub fn list(&self) -> Result<Vec<serde_json::Value>, Diagnostic> {
         let mut records = Vec::new();
         for entry in fs::read_dir(&self.root)
@@ -235,7 +256,7 @@ pub fn read_journal(record: &RunRecord) -> Result<RunJournal, Diagnostic> {
     {
         return Err(failure(
             "RUN_SCOPE_MISMATCH",
-            "The saved journal does not match its accepted endpoint, caller, company and request.",
+            "The saved journal does not match its accepted endpoint, Epicor user, company and request.",
         ));
     }
     Ok(journal)

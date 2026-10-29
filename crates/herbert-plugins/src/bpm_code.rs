@@ -102,7 +102,7 @@ pub fn attach(definition: &mut Value, dataset: &Value) -> Vec<Diagnostic> {
                     .map(label).unwrap_or_else(||format!("row-{}",index+1));
                 candidates.extend(code.into_iter().map(|(file,text)|(format!("Code/{} - {} - {file}",label(method),label(name)),text,owner.clone())));
             },
-            Err(())=>errors.push(Diagnostic::new("BPM_CODE_UNREADABLE",format!("The custom code in directive {name} could not be read. Its native workflow remains preserved."))),
+            Err(())=>errors.push(Diagnostic::new("BPM_CODE_UNREADABLE",format!("The custom code in directive {name} could not be read. Its Epicor workflow remains preserved."))),
         }
     }
     let mut counts=BTreeMap::<String,usize>::new();
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn data_directive_owner_is_table_scoped_and_code_is_readable() {
         let mut definition=json!({});
-        attach_method_export_owner(&mut definition,&json!({"Source":"DB","SystemCode":"ICE","BusinessObject":"UD39"}),"C07","C");
+        attach_method_export_owner(&mut definition,&json!({"Source":"DB","SystemCode":"ICE","BusinessObject":"UD39"}),"data-directives","C");
         assert_eq!(definition["herbertExportIdentity"]["kind"],"DataDirectiveTable");
         assert_eq!(definition["herbertExportIdentity"]["keys"]["Table"],"ICE.UD39");
         let data=json!({"BpDirective":[{"Source":"DB","Name":"Code","BpMethodCode":"Ice.UD39","IsProtected":false,"Body":r#"<DirectiveDefinition2><DirectiveStep DisplayName="Code"><CustomCodeAction Code="var value = 1;"/></DirectiveStep></DirectiveDefinition2>"#}]});

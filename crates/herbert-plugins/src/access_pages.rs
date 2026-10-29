@@ -1,4 +1,4 @@
-//! C26 caller-visible native definitions and explicit assignment projections.
+//! Access and assignments caller-visible native definitions and explicit assignment projections.
 //! Complete native graphs are acquired once per family, then grouped locally.
 use base64::Engine;
 use herbert_contract::*;
@@ -27,6 +27,15 @@ fn err(s: &str) -> Diagnostic {
 }
 
 fn selection(state:&Value)->Result<(&str,&str),Diagnostic>{let settings=&state["_pluginSettings"];let family=match settings.get("accessFamily"){None=>"all",Some(Value::String(v))if matches!(v.as_str(),"all"|"definitions"|"userAssignments"|"apiKeyAssignments")=>v,_=>return Err(err("Select a declared access family."))};let prefix=match settings.get("userIdPrefix"){None=>"",Some(Value::String(v))=>v,_=>return Err(err("The user ID prefix must be a string."))};Ok((family,prefix))}
+/// The prefix's leading run before any LIKE wildcard, bracket or non-ASCII character, for a
+/// server-side starts-with superset that needs no escape syntax. Non-ASCII stops the stem, as in
+/// the SQL plugins, so a lossy conversion can never narrow the read. None when nothing narrows it.
+fn like_stem(prefix: &str) -> Option<&str> {
+    let stem = &prefix[..prefix.find(|c: char| matches!(c, '%' | '_' | '[' | ']') || !c.is_ascii()).unwrap_or(prefix.len())];
+    (!stem.is_empty()).then_some(stem)
+}
+/// The literal user prefix for discovery of the three user-assignment projections; blank otherwise.
+fn user_prefix(r:&GuestRequest,index:usize)->Result<String,Diagnostic>{Ok(if r.identity.is_none()&&matches!(index,5|6|8){selection(&r.state)?.1.to_owned()}else{String::new()})}
 fn selected_surface(i:usize,state:&Value)->Result<bool,Diagnostic>{let(family,_)=selection(state)?;Ok(family=="all"||family==if i<5{"definitions"}else if i==7{"apiKeyAssignments"}else{"userAssignments"})}
 fn selected_identity(identity:&Identity,state:&Value)->Result<bool,Diagnostic>{let i=SURFACES.iter().position(|(kind,_)|*kind==identity.kind).or_else(||matches!(identity.kind.as_str(),"NativeSecuritySourceSupplement"|"NativeAccessSupplementary").then_some(0)).ok_or_else(||err("Unknown access output owner."))?;let (_,prefix)=selection(state)?;Ok(selected_surface(i,state)?&&(!matches!(i,5|6|8)||identity.keys.get("UserID").is_some_and(|user|user.starts_with(prefix))))}
 
@@ -115,11 +124,11 @@ fn scope(company: &str) -> Scope {
 fn string<'a>(row: &'a Value, key: &str) -> Result<&'a str, Diagnostic> {
     row[key]
         .as_str()
-        .ok_or_else(|| err("A native access identity field is absent or has an invalid type."))
+        .ok_or_else(|| err("An Epicor access identity field is absent or has an invalid type."))
 }
 fn identity(kind: &str, row: &Value, keys: &[&str], company: &str) -> Result<Identity, Diagnostic> {
     Ok(Identity {
-        category: "C26".into(),
+        category: "access-and-assignments".into(),
         kind: kind.into(),
         scope: scope(company),
         keys: keys
@@ -136,7 +145,7 @@ fn native_owner(row: &Value, company: &str, inherited_scope: bool) -> Result<Str
         && !matches!(row["CompanyVisibility"].as_u64(), Some(5 | 10))
         && !inherited_scope
     {
-        return Err(err("A native access row belongs to another company."));
+        return Err(err("An Epicor access row belongs to another company."));
     }
     Ok(c.into())
 }
@@ -160,7 +169,7 @@ fn applicable_scope(owner: &str, selected: &str) -> Scope {
 fn rows<'a>(body: &'a Value, table: &str) -> Result<&'a Vec<Value>, Diagnostic> {
     body[table]
         .as_array()
-        .ok_or_else(|| err("The native access graph omitted a required table."))
+        .ok_or_else(|| err("The Epicor access record set omitted a required table."))
 }
 fn checked<'a>(
     body: &'a Value,
@@ -178,13 +187,13 @@ fn checked<'a>(
         )?;
         if marked && r["SystemFlag"] != false {
             return Err(err(
-                "The access graph contains an unverified or system-owned definition.",
+                "The access record set contains an unverified or system-owned definition.",
             ));
         }
         let id = string(r, "SysRowID")?;
         if id.is_empty() || !ids.insert(id.to_ascii_lowercase()) {
             return Err(err(
-                "A native access physical identity is absent or repeated.",
+                "An Epicor access physical identity is absent or repeated.",
             ));
         }
     }
@@ -202,7 +211,7 @@ fn complete(
     data["herbertRestore"] = if kind == "NativeSecuritySourceSupplement" {
         let row = &data["definition"]["Security"][0];
         let parent = row["ParentSecCode"].as_str().unwrap_or("");
-        json!({"contract":"source-only-supplement","nativeSourceService":"Ice.BO.SecuritySvc","relatedDefinition":{"category":"C26","kind":"ObjectSecurity","nativeKey":{"Company":row["Company"],"SecCode":if parent.eq_ignore_ascii_case("OBJECT"){row["SecCode"].clone()}else{row["ParentSecCode"].clone()}},"resolution":"unverified-reference"},"instruction":"This is supplemental native source, not a standalone SecuritySvc import. SecuritySvc GetNew/Update accepts only menu or collaboration security codes. If the matching ObjectSecurity artifact was collected, use its ObjectSecuritySvc recovery contract for the native object root or permission. This reference does not establish that the artifact or destination parent exists. Additional SecuritySvc fields remain source evidence; no separate native write contract for them is claimed."})
+        json!({"contract":"source-only-supplement","nativeSourceService":"Ice.BO.SecuritySvc","relatedDefinition":{"category":"access-and-assignments","kind":"ObjectSecurity","nativeKey":{"Company":row["Company"],"SecCode":if parent.eq_ignore_ascii_case("OBJECT"){row["SecCode"].clone()}else{row["ParentSecCode"].clone()}},"resolution":"unverified-reference"},"instruction":"This is supplemental native source, not a standalone SecuritySvc import. SecuritySvc GetNew/Update accepts only menu or collaboration security codes. If the matching ObjectSecurity artifact was collected, use its ObjectSecuritySvc recovery contract for the native object root or permission. This reference does not establish that the artifact or destination parent exists. Additional SecuritySvc fields remain source evidence; no separate native write contract for them is claimed."})
     } else if kind == "NativeAccessSupplementary" {
         json!({"contract":"source-only-unverified-relations","instruction":"The native source is retained. Its table relationships and native recovery contract are unverified. No GetNew/Update or import replay is claimed for this supplemental data."})
     } else if matches!(
@@ -271,7 +280,7 @@ fn native_records(
             vec!["Company", "AccessScopeID"],
             vec!["AccessScopeEntity", "AccessScopeBOMethod"],
         ),
-        _ => return Err(err("Invalid native access surface.")),
+        _ => return Err(err("Invalid Epicor access surface.")),
     };
     let roots = checked(body, root, company, index != 3)?;
     for child in &children {
@@ -299,7 +308,7 @@ fn native_records(
         let mut id = identity(row_kind, row, &keys, &c)?;
         id.scope = applicable_scope(&c, company);
         if !logical.insert(serde_json::to_string(&id).unwrap().to_ascii_lowercase()) {
-            return Err(err("A native access logical identity is repeated."));
+            return Err(err("An Epicor access logical identity is repeated."));
         }
         let mut ds = json!({});
         ds[root] = json!([row]);
@@ -354,7 +363,7 @@ fn native_records(
         .collect();
     let supplemental: serde_json::Map<String, Value> = body
         .as_object()
-        .ok_or_else(|| err("Invalid native access body."))?
+        .ok_or_else(|| err("Invalid Epicor access body."))?
         .iter()
         .filter(|(k, v)| {
             (!known.contains(k.as_str()) || k.as_str() == "ExtensionTables")
@@ -365,12 +374,12 @@ fn native_records(
     let mut out = vec![];
     if grouped.is_empty() && !supplemental.is_empty() {
         let id = Identity {
-            category: "C26".into(),
+            category: "access-and-assignments".into(),
             kind: "NativeAccessSupplementary".into(),
             scope: scope(company),
             keys: BTreeMap::from([("Service".into(), service.clone())]),
         };
-        out.push((id,complete(&service,"NativeAccessSupplementary",json!({"herbertUnassociatedNativeData":supplemental}),Value::Null,version,vec![Diagnostic::new("ACCESS_NATIVE_RELATION_UNKNOWN","Native data outside known definition tables is retained as source. Its relationship and recovery contract are unverified.")])));
+        out.push((id,complete(&service,"NativeAccessSupplementary",json!({"herbertUnassociatedNativeData":supplemental}),Value::Null,version,vec![Diagnostic::new("ACCESS_NATIVE_RELATION_UNKNOWN","Epicor data outside known definition tables is retained as source. Its relationship and recovery contract are unverified.")])));
     }
     for (_, mut group) in grouped {
         let id: Identity = serde_json::from_value(group["id"].take())
@@ -378,7 +387,7 @@ fn native_records(
         let mut diagnostics = vec![];
         if !supplemental.is_empty() {
             group["ds"]["herbertUnassociatedNativeData"] = Value::Object(supplemental.clone());
-            diagnostics.push(Diagnostic::new("ACCESS_NATIVE_RELATION_UNKNOWN","Unexpected native tables or metadata were retained as unassociated source; their relationship closure is unverified."));
+            diagnostics.push(Diagnostic::new("ACCESS_NATIVE_RELATION_UNKNOWN","Unexpected Epicor tables or metadata were retained as unassociated source; their relationship closure is unverified."));
         }
         if index == 4 {
             let entities = rows(&group["ds"], "AccessScopeEntity")?;
@@ -388,7 +397,7 @@ fn native_records(
                         .iter()
                         .all(|k| same(&e[*k], &method[*k]))
                 }) {
-                    diagnostics.push(Diagnostic::new("ACCESS_ENTITY_PARENT_NOT_COLLECTED","A custom method references an entity outside the collected custom entity set. Its exact parent keys remain in the method; restore requires that native entity."));
+                    diagnostics.push(Diagnostic::new("ACCESS_ENTITY_PARENT_NOT_COLLECTED","A custom method references an entity outside the collected custom entity set. Its exact parent keys remain in the method; restore requires that Epicor entity."));
                 }
             }
         }
@@ -459,7 +468,7 @@ fn assignment_records(
         let mut id = identity(kind, r, keys, &c)?;
         id.scope = applicable_scope(&c, company);
         if !seen.insert(serde_json::to_string(&id).unwrap().to_ascii_lowercase()) {
-            return Err(err("A native assignment identity is repeated."));
+            return Err(err("An Epicor assignment identity is repeated."));
         }
         for field in &allowed {
             if r.get(*field).is_none() {
@@ -493,7 +502,7 @@ fn finish(
             .ok_or_else(|| {
                 Diagnostic::new(
                     "ACCESS_NOT_FOUND",
-                    "No caller-visible access definition matches this exact identity.",
+                    "No Epicor user-visible access definition matches this exact identity.",
                 )
             })?
             .1;
@@ -542,7 +551,7 @@ fn output(mut s: Value) -> Result<GuestReply, Diagnostic> {
     }
     let i = s["index"]
         .as_u64()
-        .ok_or_else(|| err("Invalid access output checkpoint."))? as usize;
+        .ok_or_else(|| err("Invalid access output saved progress."))? as usize;
     let count = s["records"]
         .as_array()
         .ok_or_else(|| err("Invalid access output records."))?
@@ -613,10 +622,15 @@ fn surface_action(mut r: GuestRequest, index: usize) -> Result<GuestReply, Diagn
     if matches!(index, 6 | 8) {
         filters.push(format!("Company eq '{company}'"));
     }
+    // Server-side superset for the user prefix; the literal case-sensitive prefix is
+    // applied locally. Exact acquisition, definitions and API keys are not narrowed.
+    if let Some(stem) = like_stem(&user_prefix(&r, index)?) {
+        filters.push(format!("startswith(UserID,'{}')", stem.replace('\'', "''")));
+    }
     if let Some(after) = r.state["after"].as_str() {
         if !guid(after) {
             return Err(err(
-                "The assignment keyset checkpoint is not a native GUID.",
+                "The assignment keyset saved progress is not an Epicor GUID.",
             ));
         }
         filters.push(format!("SysRowID gt {after}"));
@@ -647,21 +661,21 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     if !matches!(r.operation.as_str(), "discover" | "materialize" | "acquire") {
         return Err(Diagnostic::new(
             "UNSUPPORTED_OPERATION",
-            "C26 supports discovery, exact acquisition and materialization.",
+            "The Access and assignments plugin received a request it does not support. Make sure the plugin and Herbert come from the same release.",
         ));
     }
     if r.company.is_empty() {
-        return Err(err("Select a company for native access collection."));
+        return Err(err("Select a company for Epicor access collection."));
     }
     if r.operation == "acquire" && r.identity.is_none() {
         return Err(Diagnostic::new(
             "IDENTITY_REQUIRED",
-            "Select an exact native access identity.",
+            "Select an exact Epicor access identity.",
         ));
     }
     if r.state["phase"].is_null() {
         let index = if let Some(id) = &r.identity {
-            if id.category != "C26" {
+            if id.category != "access-and-assignments" {
                 return Err(err("The selected identity belongs to another category."));
             }
             let i = SURFACES
@@ -699,18 +713,18 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             if id.keys.get("Company").is_some_and(|v| v != c)
                 || (i == 5 && !matches!(id.scope, Scope::Global))
             {
-                return Err(err("The native Company key and scope disagree."));
+                return Err(err("The Epicor Company key and scope disagree."));
             }
             i
         } else if let Some(cursor) = &r.cursor {
             let v: Value =
-                serde_json::from_str(cursor).map_err(|_| err("Invalid C26 continuation."))?;
+                serde_json::from_str(cursor).map_err(|_| err("Herbert could not continue this download from its saved progress (access paging). Start the download again."))?;
             let i = v["surface"]
                 .as_u64()
                 .filter(|n| *n < SURFACES.len() as u64)
-                .ok_or_else(|| err("Invalid C26 surface."))? as usize;
+                .ok_or_else(|| err("Herbert could not continue this download from its saved progress (access area). Start the download again."))? as usize;
             if v.as_object().is_none_or(|m| m.len() != 1) {
-                return Err(err("Invalid C26 continuation fields."));
+                return Err(err("Herbert could not continue this download from its saved progress (access paging details). Start the download again."));
             }
             i
         } else {
@@ -730,7 +744,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     let index = r.state["surface"]
         .as_u64()
         .filter(|n| *n < SURFACES.len() as u64)
-        .ok_or_else(|| err("Invalid C26 surface checkpoint."))? as usize;
+        .ok_or_else(|| err("Herbert could not continue this download from its saved progress (access area position). Start the download again."))? as usize;
     if r.state["phase"] == "version" {
         if let Some(diagnostic) = r.error.take() {
             r.state["versionDiagnostic"] = json!(diagnostic);
@@ -761,7 +775,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     if index < 5 {
         if response["parameters"]["morePages"] != false {
             return Err(err(
-                "The native complete access graph did not confirm completeness.",
+                "The Epicor complete access record set did not confirm completeness.",
             ));
         }
         let mut records = native_records(
@@ -793,7 +807,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         .ok_or_else(|| err("The assignment response omitted its count."))?;
     let before = r.state["rows"]
         .as_array()
-        .ok_or_else(|| err("Invalid assignment checkpoint."))?
+        .ok_or_else(|| err("Herbert could not continue this download from its saved progress (access assignment position). Start the download again."))?
         .len() as u64;
     if let Some(original) = r.state["total"].as_u64() {
         if before.checked_add(total) != Some(original) {
@@ -805,7 +819,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         r.state["total"] = json!(total);
     }
     let mut seen: BTreeSet<String> = serde_json::from_value(r.state["seen"].clone())
-        .map_err(|_| err("Invalid assignment identity checkpoint."))?;
+        .map_err(|_| err("Invalid assignment identity saved progress."))?;
     for row in incoming {
         let id = string(row, "SysRowID")?;
         if !guid(id) || !seen.insert(id.to_ascii_lowercase()) {
@@ -814,7 +828,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     }
     r.state["rows"]
         .as_array_mut()
-        .ok_or_else(|| err("Invalid assignment checkpoint."))?
+        .ok_or_else(|| err("Herbert could not continue this download from its saved progress (access assignment position). Start the download again."))?
         .extend(incoming.iter().cloned());
     r.state["seen"] = json!(seen);
     let original = r.state["total"].as_u64().unwrap();
@@ -826,7 +840,16 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         r.state["after"] = incoming.last().unwrap()["SysRowID"].clone();
         return surface_action(r, index);
     }
-    let records = assignment_records(index, r.state["rows"].as_array().unwrap(), &r.company)?;
+    // Raw keyset/count checks above cover every received row. Only rows the literal
+    // user prefix keeps are validated and projected; others produce no diagnostics.
+    let prefix = user_prefix(&r, index)?;
+    let rows = r.state["rows"].as_array().unwrap();
+    let records = if prefix.is_empty() {
+        assignment_records(index, rows, &r.company)?
+    } else {
+        let kept: Vec<Value> = rows.iter().filter(|row| row["UserID"].as_str().is_some_and(|user| user.starts_with(&prefix))).cloned().collect();
+        assignment_records(index, &kept, &r.company)?
+    };
     finish(r, records, index)
 }
 fn handle_inner(r: GuestRequest) -> GuestReply {
@@ -858,7 +881,7 @@ mod bulk_output_tests {
     #[test]
     fn access_bulk_preserves_complete_records_and_legacy_checkpoint_output() {
         let records: Vec<(Identity, Value)> = (0..37).map(|n| (Identity {
-            category:"C26".into(), kind:"AccessScope".into(), scope:Scope::Global,
+            category:"access-and-assignments".into(), kind:"AccessScope".into(), scope:Scope::Global,
             keys:BTreeMap::from([("AccessScopeID".into(), n.to_string())]),
         }, json!({"herbertSources":{"files":[{"name":"original.json","text":"é exact"}],"binaryFiles":[{"name":"scope.eas","base64":"AAH/"}]},"herbertCollectionStatus":{"completeness":"partial","diagnostics":[{"code":"fixture"}]},"unknown":{"keep":n}}))).collect();
         let mut legacy = json!({"records":records,"index":0,"next":"next-surface"});
@@ -878,7 +901,7 @@ mod bulk_output_tests {
     #[test]
     fn access_bulk_requires_host_negotiation_and_survives_version_setup() {
         for negotiated in [false,true] {
-            let r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"C26".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true,"_hostIndependentWorkItems":negotiated}),response:None,error:None};
+            let r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"access-and-assignments".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true,"_hostIndependentWorkItems":negotiated}),response:None,error:None};
             let GuestReply::Action{state,..}=handle(r) else {panic!()};
             assert_eq!(state["bulk"],negotiated);
         }
@@ -1089,18 +1112,36 @@ mod tests {
         for index in [5,6,8]{let rows:Vec<_>=[" Ω%_ '","Other"].into_iter().enumerate().map(|(i,name)|{let mut row=if index==5{user(name,&format!("00000000-0000-0000-0000-{:012}",i+1))}else if index==6{json!({"UserID":name,"Company":"C","CurPlant":"M","PlantList":"M~Other","SysRowID":format!("00000000-0000-0000-0000-{:012}",i+1),"SysRevID":1})}else{json!({"UserID":name,"Company":"C","ExtCompID":"OutsidePrefix","CurPlant":"M","SysRowID":format!("00000000-0000-0000-0000-{:012}",i+1),"SysRevID":1})};row["SysRevID"]=json!(9007199254740000i64);row}).collect();let all=assignment_records(index,&rows,"C").unwrap();for prefix in [""," Ω%_ '","Ω","other"]{let settings=json!({"accessFamily":"userAssignments","userIdPrefix":prefix});let (actual,errors)=select_records(all.clone(),&json!({"_pluginSettings":settings})).unwrap();assert!(errors.is_empty());assert_eq!(actual,all.iter().filter(|(id,_)|id.keys["UserID"].starts_with(prefix)).cloned().collect::<Vec<_>>());}}
     }
     #[test]
-    fn assignment_raw_keyset_advances_past_excluded_page_and_validates_excluded_payload(){let mut r=request("discover",5);r.state["_pluginSettings"]=json!({"accessFamily":"userAssignments","userIdPrefix":"A"});r.response=Some(json!({"value":[user("B","00000000-0000-0000-0000-000000000001")],"@odata.count":2}));let GuestReply::Action{state,action:HostAction::NativeEntityPage{query,..}}=handle(r.clone())else{panic!()};assert!(query["$filter"].contains("00000000-0000-0000-0000-000000000001"));assert!(!query["$filter"].contains("UserID"));assert_eq!(state["_pluginSettings"]["userIdPrefix"],"A");r.state=state;r.response=Some(json!({"value":[user("A","00000000-0000-0000-0000-000000000002")],"@odata.count":1}));let GuestReply::PreparedPage{state,next_state,..}=handle(r.clone())else{panic!()};assert!(state.get("_hostWorkItems").is_none());assert_eq!(state["records"].as_array().unwrap().len(),1);assert_eq!(state["records"][0][0]["keys"]["UserID"],"A");assert_eq!(next_state["_pluginSettings"]["userIdPrefix"],"A");let mut bad=user("B","00000000-0000-0000-0000-000000000002");bad["Password"]=json!("EXCLUDED_PRIVATE");r.response=Some(json!({"value":[bad],"@odata.count":1}));assert!(matches!(handle(r),GuestReply::Inventory{authoritative:false,diagnostics,..}if !diagnostics.is_empty()));}
+    fn assignment_keyset_pushes_user_stem_advances_past_excluded_superset_page_and_skips_excluded_validation(){
+        // "a" models the server's case-insensitive starts-with superset for the literal prefix "A".
+        let mut r=request("discover",5);r.state["_pluginSettings"]=json!({"accessFamily":"userAssignments","userIdPrefix":"A"});r.response=Some(json!({"value":[user("a","00000000-0000-0000-0000-000000000001")],"@odata.count":2}));let GuestReply::Action{state,action:HostAction::NativeEntityPage{query,..}}=handle(r.clone())else{panic!()};assert_eq!(query["$filter"],"startswith(UserID,'A') and SysRowID gt 00000000-0000-0000-0000-000000000001");assert_eq!(state["_pluginSettings"]["userIdPrefix"],"A");r.state=state;r.response=Some(json!({"value":[user("A","00000000-0000-0000-0000-000000000002")],"@odata.count":1}));let GuestReply::PreparedPage{state,next_state,..}=handle(r.clone())else{panic!()};assert!(state.get("_hostWorkItems").is_none());assert_eq!(state["records"].as_array().unwrap().len(),1);assert_eq!(state["records"][0][0]["keys"]["UserID"],"A");assert_eq!(next_state["_pluginSettings"]["userIdPrefix"],"A");
+        // An unselected row is not validated and produces no diagnostics; a selected invalid row still fails.
+        for (name,selected) in [("a",false),("A",true)]{let mut bad=user(name,"00000000-0000-0000-0000-000000000002");bad["Password"]=json!("EXCLUDED_PRIVATE");r.response=Some(json!({"value":[bad],"@odata.count":1}));match handle(r.clone()){GuestReply::PreparedPage{state,..} if !selected=>{assert_eq!(state["records"],json!([]));assert!(state.get("diagnostics").is_none());},GuestReply::Inventory{authoritative:false,diagnostics,..} if selected=>assert!(diagnostics.iter().any(|d|d.code=="ACCESS_GRAPH_INVALID")),reply=>panic!("{name}: {reply:?}")}}
+    }
+    #[test]
+    fn user_prefix_pushes_startswith_only_onto_user_assignment_reads_and_not_exact_acquisition(){
+        for (prefix,stem) in [("O'Brien",Some("O''Brien")),("ab_c",Some("ab")),("[x",None),("%",None),("",None)]{for index in 0..9{
+            let mut r=request("discover",index);r.state["phase"]=json!("version");r.state["_pluginSettings"]=json!({"accessFamily":"all","userIdPrefix":prefix});
+            let GuestReply::Action{action,..}=handle(r)else{panic!("{index}")};
+            if index<5{let text=json!(action).to_string();assert!(!text.contains("UserID")&&!text.contains("startswith"),"{index}/{prefix}");continue;}
+            let HostAction::NativeEntityPage{query,..}=action else{panic!("{index}")};
+            let mut filters:Vec<String>=vec![];if matches!(index,6|8){filters.push("Company eq 'C'".into());}
+            if let Some(stem)=stem{if matches!(index,5|6|8){filters.push(format!("startswith(UserID,'{stem}')"));}}
+            assert_eq!(query.get("$filter").cloned(),(!filters.is_empty()).then(||filters.join(" and ")),"{index}/{prefix}");
+        }}
+        for index in [5,6,8]{let(kind,_)=SURFACES[index];let mut r=request("acquire",index);r.state["phase"]=json!("version");r.identity=Some(Identity{category:"access-and-assignments".into(),kind:kind.into(),scope:if index==5{Scope::Global}else{Scope::Company{company:"C".into()}},keys:BTreeMap::from([("UserID".into(),"B".into())])});let baseline=serde_json::to_value(handle(r.clone())).unwrap();r.state["_pluginSettings"]=json!({"accessFamily":"definitions","userIdPrefix":"A"});let reply=serde_json::to_value(handle(r)).unwrap();assert_eq!(baseline["type"],"action");assert_eq!(reply["action"],baseline["action"]);assert!(!reply["action"].to_string().contains("startswith"));}
+    }
     #[test]
     fn excluded_partial_diagnostics_and_scope_version_survive_empty_bulk_and_legacy_output(){
-        let id=Identity{category:"C26".into(),kind:"NativeAccessSupplementary".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("Service".into(),"Ice.BO.SecuritySvc".into())])};let record=(id,complete("Ice.BO.SecuritySvc","NativeAccessSupplementary",json!({"extra":[{"source":"EXCLUDED_PRIVATE"}]}),Value::Null,"",vec![Diagnostic::new("ACQUIRED","unknown relationship")]));for bulk in [false,true]{let mut r=request("discover",0);r.state["bulk"]=json!(bulk);r.state["_pluginSettings"]=json!({"accessFamily":"userAssignments","userIdPrefix":"Missing"});let GuestReply::PreparedPage{state,next_state,..}=selected_reply(finish(r.clone(),vec![record.clone()],0).unwrap(),&r.state).unwrap()else{panic!()};assert_eq!(state["records"],json!([]));assert!(state.get("_hostWorkItems").is_none());assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);r.operation="materialize".into();r.state=state;match handle(r){GuestReply::Inventory{authoritative:false,diagnostics,..}=>assert!(!diagnostics.is_empty()),GuestReply::InventoryData{records,inventory}=>{assert!(records.is_empty());assert!(matches!(*inventory,GuestReply::Inventory{authoritative:false,diagnostics,..}if !diagnostics.is_empty()));},reply=>panic!("{reply:?}")}}
+        let id=Identity{category:"access-and-assignments".into(),kind:"NativeAccessSupplementary".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("Service".into(),"Ice.BO.SecuritySvc".into())])};let record=(id,complete("Ice.BO.SecuritySvc","NativeAccessSupplementary",json!({"extra":[{"source":"EXCLUDED_PRIVATE"}]}),Value::Null,"",vec![Diagnostic::new("ACQUIRED","unknown relationship")]));for bulk in [false,true]{let mut r=request("discover",0);r.state["bulk"]=json!(bulk);r.state["_pluginSettings"]=json!({"accessFamily":"userAssignments","userIdPrefix":"Missing"});let GuestReply::PreparedPage{state,next_state,..}=selected_reply(finish(r.clone(),vec![record.clone()],0).unwrap(),&r.state).unwrap()else{panic!()};assert_eq!(state["records"],json!([]));assert!(state.get("_hostWorkItems").is_none());assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);r.operation="materialize".into();r.state=state;match handle(r){GuestReply::Inventory{authoritative:false,diagnostics,..}=>assert!(!diagnostics.is_empty()),GuestReply::InventoryData{records,inventory}=>{assert!(records.is_empty());assert!(matches!(*inventory,GuestReply::Inventory{authoritative:false,diagnostics,..}if !diagnostics.is_empty()));},reply=>panic!("{reply:?}")}}
         let mut r=request("discover",4);r.state["versionDiagnostic"]=json!(Diagnostic::new("VERSION_DENIED","original cause"));r.state["_pluginSettings"]=json!({"accessFamily":"userAssignments","userIdPrefix":"Missing"});r.response=Some(json!({"returnObj":{"AccessScope":[],"AccessScopeEntity":[],"AccessScopeBOMethod":[]},"parameters":{"morePages":false}}));let GuestReply::PreparedPage{state,..}=handle(r)else{panic!()};assert_eq!(state["diagnostics"][0]["code"],"VERSION_DENIED");}
     #[test]
-    fn exact_access_ignores_invalid_discovery_controls_and_nonuser_families_ignore_prefix(){for index in 0..9{let (kind,_)=SURFACES[index];let scope=if index==5{Scope::Global}else{Scope::Company{company:"C".into()}};let id=Identity{category:"C26".into(),kind:kind.into(),scope,keys:BTreeMap::from([("Company".into(),if index==5{"".into()}else{"C".into()})])};let mut r=request("acquire",index);r.identity=Some(id);r.state=json!({});let baseline=handle(r.clone());r.state["_pluginSettings"]=json!({"accessFamily":false,"userIdPrefix":false});assert_eq!(json!(handle(r)),json!(baseline));}for kind in ["SecurityDefinition","ObjectSecurity","SecurityGroup","ColumnSecurity","AccessScope","APIKeyScopeAssignment"]{let id=Identity{category:"C26".into(),kind:kind.into(),scope:Scope::Global,keys:BTreeMap::new()};assert!(selected_identity(&id,&json!({"_pluginSettings":{"accessFamily":"all","userIdPrefix":"no match"}})).unwrap());}}
+    fn exact_access_ignores_invalid_discovery_controls_and_nonuser_families_ignore_prefix(){for index in 0..9{let (kind,_)=SURFACES[index];let scope=if index==5{Scope::Global}else{Scope::Company{company:"C".into()}};let id=Identity{category:"access-and-assignments".into(),kind:kind.into(),scope,keys:BTreeMap::from([("Company".into(),if index==5{"".into()}else{"C".into()})])};let mut r=request("acquire",index);r.identity=Some(id);r.state=json!({});let baseline=handle(r.clone());r.state["_pluginSettings"]=json!({"accessFamily":false,"userIdPrefix":false});assert_eq!(json!(handle(r)),json!(baseline));}for kind in ["SecurityDefinition","ObjectSecurity","SecurityGroup","ColumnSecurity","AccessScope","APIKeyScopeAssignment"]{let id=Identity{category:"access-and-assignments".into(),kind:kind.into(),scope:Scope::Global,keys:BTreeMap::new()};assert!(selected_identity(&id,&json!({"_pluginSettings":{"accessFamily":"all","userIdPrefix":"no match"}})).unwrap());}}
     fn request(operation: &str, index: usize) -> GuestRequest {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: operation.into(),
-            category: "C26".into(),
+            category: "access-and-assignments".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

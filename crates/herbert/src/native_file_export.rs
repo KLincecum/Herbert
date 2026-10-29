@@ -23,10 +23,10 @@ fn issue(message: impl Into<String>) -> Diagnostic {
 
 pub(crate) fn resolve_export_owner(requested: Option<&Identity>, declared: Option<&Identity>, category: &str, company: &str) -> Result<Identity,Diagnostic> {
     if requested.zip(declared).is_some_and(|(a,b)|a!=b) {
-        return Err(Diagnostic::new("PLUGIN_IDENTITY_DENIED","A native export cannot replace the requested artifact owner."));
+        return Err(Diagnostic::new("PLUGIN_IDENTITY_DENIED","Epicor's export cannot replace the requested artifact owner."));
     }
     declared.or(requested).filter(|id|id.category==category && identity_in_scope(id,company)).cloned()
-        .ok_or_else(||Diagnostic::new("PLUGIN_IDENTITY_DENIED","Native export requires an artifact owner in the selected category and company."))
+        .ok_or_else(||Diagnostic::new("PLUGIN_IDENTITY_DENIED","Epicor's export requires an artifact owner in the selected category and company."))
 }
 
 fn prepare_arguments(
@@ -36,7 +36,7 @@ fn prepare_arguments(
 ) -> Result<Value, Diagnostic> {
     let object = arguments
         .as_object_mut()
-        .ok_or_else(|| issue("Native export arguments must be an object."))?;
+        .ok_or_else(|| issue("Epicor's export arguments must be an object."))?;
     if argument.is_empty() || object.contains_key(argument) {
         return Err(issue(
             "The export filename argument must be named and left for Herbert to supply.",
@@ -65,7 +65,7 @@ fn validate_record(record: &ExportFile) -> Result<(), Diagnostic> {
     // live method contract and Epicor.ServiceModel.Utilities.SpecialFolder.
     if !(0..=9).contains(&record.folder) {
         return Err(issue(
-            "The folder must be a native FileTransfer SpecialFolder value.",
+            "The folder must be an Epicor FileTransfer SpecialFolder value.",
         ));
     }
     Ok(())
@@ -117,7 +117,7 @@ async fn exists(
         .value
         .get("returnObj")
         .and_then(Value::as_bool)
-        .ok_or_else(|| issue("Native file presence was not returned as a boolean."))
+        .ok_or_else(|| issue("Epicor file presence was not returned as a boolean."))
 }
 
 async fn cleanup(
@@ -143,10 +143,10 @@ async fn cleanup(
             return save(run, record.clone()).await;
         }
         "exporting" | "uncertain" => {
-            return Err(issue(format!(
-                "Export completion is unknown for '{}'. Its ownership record is retained; do not replay the export or assume an absent file proves cleanup.",
-                record.server_path
-            )));
+            return Err(issue(
+                "Herbert cannot tell whether an export on the Epicor server finished. It kept its record of the export so the server file can still be cleaned up. Do not start the same export again by hand; run cleanup from Herbert.",
+            )
+            .with_context("serverFile", record.server_path.as_str()));
         }
         "exported" | "retained" | "deleting" => {}
         _ => {
@@ -176,7 +176,7 @@ async fn cleanup(
         if exists(connection, record, &cancel).await? {
             return Err(deletion
                 .err()
-                .unwrap_or_else(|| issue("The owned native export file remains after deletion.")));
+                .unwrap_or_else(|| issue("The owned Epicor's export file remains after deletion.")));
         }
     }
     record.phase = "removed".into();
@@ -202,14 +202,14 @@ impl Host {
         if !plugin.methods.contains(&(service.into(), method.into())) {
             return Err(Diagnostic::new(
                 "PLUGIN_CAPABILITY_DENIED",
-                "The plugin does not declare this native exporter.",
+                "The plugin does not declare this Epicor's export.",
             ));
         }
         let identity = identity
             .filter(|i| {
                 i.category == plugin.category.id && identity_in_scope(i, &connection.company)
             })
-            .ok_or_else(|| issue("A native file export requires the accepted artifact identity."))?
+            .ok_or_else(|| issue("An Epicor file export requires the accepted artifact identity."))?
             .clone();
         let binding=super::server_change_operations::semantic_binding(&plugin.category.id,&plugin.hash,&plugin.category.settings);
         perform_exports(
@@ -280,17 +280,17 @@ fn embedded_companion(archive: Option<&[u8]>, name: &str) -> Result<Option<Vec<u
         return Ok(None);
     }
     if matches != 1 {
-        return Err(issue("The export ZIP repeats a companion filename."));
+        return Err(issue("The export ZIP repeats a decompiler add-on filename."));
     }
     let mut member = zip
         .by_name(name)
-        .map_err(|_| issue("The embedded companion cannot be opened."))?;
+        .map_err(|_| issue("The embedded decompiler add-on cannot be opened."))?;
     if member.is_dir() {
-        return Err(issue("The embedded companion is a directory."));
+        return Err(issue("The embedded decompiler add-on is a directory."));
     }
     let mut bytes = Vec::new();
     member.read_to_end(&mut bytes).map_err(|_| {
-        issue("The embedded companion failed decompression or checksum validation.")
+        issue("The embedded decompiler add-on failed decompression or checksum validation.")
     })?;
     Ok(Some(bytes))
 }
@@ -435,7 +435,7 @@ async fn perform_exports(
                     response
                         .value
                         .get("returnObj")
-                        .ok_or_else(|| issue("The native file download omitted its bytes."))?,
+                        .ok_or_else(|| issue("The Epicor file download omitted its bytes."))?,
                 )?
             };
             let storage = run.storage.clone();
@@ -538,13 +538,13 @@ mod page_owner_tests {
  use super::*;
  #[test]
  fn page_export_owner_is_required_scoped_and_cannot_replace_exact_owner() {
-  let id=Identity {category:"C19".into(),kind:"Configurator".into(),scope:Scope::Company {company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("ConfigID".into(),"A".into())])};
-  assert_eq!(resolve_export_owner(None,Some(&id),"C19","C").unwrap(),id);
-  assert_eq!(resolve_export_owner(Some(&id),None,"C19","C").unwrap(),id);
-  assert!(resolve_export_owner(None,None,"C19","C").is_err());
-  assert!(resolve_export_owner(None,Some(&id),"C18","C").is_err());
-  assert!(resolve_export_owner(None,Some(&id),"C19","Other").is_err());
+  let id=Identity {category:"configurators".into(),kind:"Configurator".into(),scope:Scope::Company {company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("ConfigID".into(),"A".into())])};
+  assert_eq!(resolve_export_owner(None,Some(&id),"configurators","C").unwrap(),id);
+  assert_eq!(resolve_export_owner(Some(&id),None,"configurators","C").unwrap(),id);
+  assert!(resolve_export_owner(None,None,"configurators","C").is_err());
+  assert!(resolve_export_owner(None,Some(&id),"report-behavior","C").is_err());
+  assert!(resolve_export_owner(None,Some(&id),"configurators","Other").is_err());
   let mut other=id.clone();other.keys.insert("ConfigID".into(),"B".into());
-  assert!(resolve_export_owner(Some(&id),Some(&other),"C19","C").is_err());
+  assert!(resolve_export_owner(Some(&id),Some(&other),"configurators","C").is_err());
  }
 }

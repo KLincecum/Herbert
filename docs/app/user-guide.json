@@ -14,32 +14,64 @@
       ]
     },
     {
+      "title": "Test the connection and choose a company",
+      "paragraphs": [
+        "Select Test connection to check the address, credentials and account before you download. Herbert signs in, checks the account, lists the companies the account can use, and then signs out. The test collects nothing and changes nothing on the server.",
+        "After a successful test, the Company field becomes a dropdown. Choose your company from it. If the list could not be read, the field stays a text box and shows why. Enter the company ID yourself in that case. If your saved company is not in the list, Herbert keeps it and warns you.",
+        "A company is required. Until you choose one, Herbert shows a warning and Preview download stays disabled. Saving a profile without a company is allowed, but Herbert warns you.",
+        "If Herbert can't confirm the sign-out after listing companies, it keeps that connection only so it can sign out later. The connection can't be used to download. Disconnecting retries the sign-out.",
+        "Account readiness shows the result of the last test: Verified eligible (last check), Verification failed with the reason, or Unknown / unverified before any test. Eligibility does not authorize server changes."
+      ]
+    },
+    {
+      "title": "Allow self-signed certificate",
+      "paragraphs": [
+        "Each connection profile has an Allow self-signed certificate option. It is off by default. Turn it on only when the server uses a certificate that Windows does not trust, such as a test server or one that uses your organization's own certificate authority. Herbert shows a warning while the option is on, and screens for that profile show a Self-signed certificate badge.",
+        "This option relaxes only one check: whether Windows trusts the certificate's issuer. A private certificate authority is accepted. Herbert still checks the server name and the server certificate's dates. The option applies only to that profile.",
+        "Limits: any certificate the server presents can serve as the trust anchor, so an expired intermediate certificate is not refused. Herbert records the certificate it saw when the download started. If the server presents a different certificate when Herbert reconnects later in the same download, Herbert accepts it without a separate notice. Certificates are not pinned.",
+        "Use this option only for servers you control. After a test with the option on, Connection shows that certificate checks are relaxed for this profile, with the certificate fingerprint and a Copy button.",
+        "A plain http:// address has no certificate. Connection warns that the connection is not encrypted and that data travels in plain text. Support packets record it as Not encrypted: plain http, no certificate."
+      ]
+    },
+    {
+      "title": "Error messages",
+      "paragraphs": [
+        "Error notices say what happened and what to do next. Paths, IDs, lower-level errors and server text are under a collapsed Technical details section below the notice. Open it when you need to report the problem or look closer. Use Save diagnostics to save a sanitized support packet."
+      ]
+    },
+    {
       "title": "Set behavior on Download",
       "paragraphs": [
-        "The tabs are Connection, Download, Plugins and About. Download contains the destination folder picker, output mode, Download action and shared download options. Enter and save connection information on Connection.",
-        "Choose output mode, concurrency and temporary access on Download. Status and progress appear while the download is running."
+        "The tabs are Connection, Download, Plugins and About. Download contains the destination folder picker, output mode, Preview download and shared download options. Enter and save connection information on Connection.",
+        "Choose Direct only or Server-assisted, the output mode (New folder for this run or Refresh the chosen folder) and temporary access on Download. Concurrency, timeouts, retries and the fallback page size are under the collapsed Advanced section. Status and progress appear while the download is running.",
+        "Refreshing a backup that an earlier version of Herbert created updates its Herbert Data metadata to the new collection IDs. After that, earlier versions can't refresh that backup, so keep using this version or later for it. Backups this version hasn't refreshed are unchanged.",
+        "Plugins ship precompiled, so starting Herbert uses about 1 second of processor time instead of about 2 minutes."
       ]
     },
     {
       "title": "Choose collections on Plugins",
       "paragraphs": [
         "Open Plugins to choose the collections to include. Every installed collection supplies its own settings and help.",
+        "A new installation or profile starts with 17 collections selected. These seven start off: Classic customizations, Classic dashboards, Classic personalizations, Configurators, Kinetic personalizations, Programs and extensions, and Solutions and packages. Turn on any you need. Choices you have already saved are kept.",
+        "Each collection has a stable ID, such as ud-codes, baqs-and-ubaqs, functions, extended-properties or searches-and-navigation. The CLI, MCP, saved settings and backup metadata use these IDs. Runs, settings and plugins from earlier versions are still read.",
         "Plugin controls include enablement and collection-specific options. Category toggles, Select all available, Clear selection and Save plugin options save the current option draft beside the plugin, including filter edits. Opening Plugins does not save options. Downloads use the displayed draft.",
         "Selection filters narrow the eligible roots to download. Clear filter makes the field blank; save the blank to clear its saved value. A completed filtered download establishes completeness within that selection. Existing ownership, access and system exclusions still apply.",
-        "UD Codes provides Code type ID starts with. This is a literal, case-sensitive prefix: every entered character, including spaces, is preserved. Blank selects all eligible code types. Herbert reads native pages and selects complete code types with every eligible entry locally.",
+        "For most collections an ID prefix is sent to the server as a broad match on its leading characters up to the first wildcard character (%, _, [ or ]), Herbert applies the exact literal, case-sensitive prefix locally, and rows outside the selection are not checked and produce no diagnostics. Menus and launch definitions, Searches and navigation, Business rules and mappings, the Report styles and layouts stored-package path and the Programs and extensions externals list read every eligible row and select locally; Kinetic applications reads a light identity-only list and downloads content only for selected applications. Sources with no server filter (Quick, Predictive and context-menu searches, and current stored report packages) are read whole, and rows outside the selection still produce no diagnostics. Families or report types you leave unselected are not requested at all.",
+        "UD codes provides Code type ID starts with. This is a literal, case-sensitive prefix: every entered character, including spaces, is preserved. Blank selects all eligible code types. Herbert reads native pages and selects complete code types with every eligible entry locally.",
         "BAQs and UBAQs provides Query ID starts with. It uses the same literal, case-sensitive prefix rule. Each selected query retains its diagrams, required dependencies and authored update methods/workflows. Exact BAQ retrieval through MCP is unsupported; use filtered discovery.",
         "Functions provides Library ID starts with. It uses the same prefix rule and preserves the complete library, all Functions, signatures, references and company mappings. Exact global library retrieval through MCP ignores the discovery prefix. Empty selected pages still continue.",
-        "During a download, open Run scope and frozen options to inspect the values fixed for that run. A successful empty selection reports No eligible items matched the run selection. Review failures and incomplete items separately.",
-        "Automation and integrations provides Filter sensitive fields and parameters. It is off by default, so native field and parameter values are preserved. Turn it on to omit the plugin's declared sensitive values. System artifact exclusions apply in either mode.",
+        "During a download, open What this download includes on the Saving to: row to inspect the values fixed for that run. A successful empty selection reports No eligible items matched the run selection. Review failures and incomplete items separately.",
+        "Automation and integrations provides Filter sensitive fields and parameters. It is off by default, so native field and parameter values are preserved. Turn it on to omit the plugin's declared sensitive values. System artifact exclusions apply in either mode. Herbert asks Epicor only for the rows the native service admits for your account, so rows outside your visibility are never downloaded.",
         "Settings marked Demo / example do not affect collection."
       ]
     },
     {
       "title": "Choose a folder and download",
       "paragraphs": [
-        "Use the folder picker to choose where Herbert saves the backup, then select Download. Herbert connects using the selected connection information.",
-        "Separate-folder mode creates a folder named Herbert - company - timestamp. Inside the backup, readable files use collection names and artifact names. Herbert Data contains raw evidence and durable recovery records. Conflicts holds incoming versions when an existing local file has been changed.",
-        "Status and progress appear while the download is running. Working now shows each active plugin, item, operation and elapsed time. The latest saved file is separate from work still in progress. Keep Herbert open. Pause stops new work; resume continues it; cancel preserves verified files and finishes owned cleanup. On Windows, Open download folder opens this download's actual output folder once it exists.",
+        "Use the folder picker to choose where Herbert saves the backup, then select Preview download. Herbert connects using the selected connection information.",
+        "New folder for this run creates a folder named Herbert - company - timestamp. Refresh the chosen folder updates an existing backup and preserves your edits. Inside the backup, readable files use collection names and artifact names. Herbert Data contains raw evidence and durable recovery records. Conflicts holds incoming versions when an existing local file has been changed.",
+        "The Download monitor shows each plugin with its state, current work and page progress. The current stage stays visible at the default window size. Issues counts the problems; select Review issues to read each one, with its saved output, next step and Technical details. Keep Herbert open. Pause stops new work; Resume continues it; Cancel preserves verified files and finishes owned cleanup. On Windows, Open download folder opens this download's actual output folder once it exists.",
+        "The Saving to: row shows where this download is saved. A long path is shortened. Hover over it for the full path, or select Copy to copy it. The What this download includes menu on the same row shows the plugin settings fixed when the download started.",
         "Read the final outcome and any item failures. A permission refusal or partial acquisition means the affected content was not fully collected."
       ]
     },
@@ -47,14 +79,26 @@
       "title": "Permissions and temporary access",
       "paragraphs": [
         "A Security Manager can still lack permission to read a particular item. Herbert records the refusal when the read is denied.",
-        "Temporary group access is enabled by default. You can turn it off in Download options, and Herbert remembers your saved choice. When authorized by exact native policy, Herbert records ownership, adds the required group, retries the read and removes only the membership it added. Existing memberships stay unchanged.",
+        "New downloads use Direct only with temporary access off unless you choose otherwise. Earlier saved choices were changed once to these defaults, and the app shows a one-time notice.",
+        "Temporary access is a separate choice: Allow Herbert to temporarily add my Epicor user to required security groups. When you turn it on and authorize it, Herbert can add an eligible group membership that exact native policy requires, retry the read, and later remove only the membership it added. Existing memberships stay unchanged.",
         "Cleanup warnings remain part of the download result until ownership is reconciled."
+      ]
+    },
+    {
+      "title": "Review temporary server changes",
+      "paragraphs": [
+        "Preview download first asks Herbert what the download would change on the server. If nothing needs authorization, or a saved authorization already covers the same changes, the download starts. Otherwise Herbert shows Review temporary server changes.",
+        "The review shows the account, company and destination, the collection method and whether temporary access is on. It lists each possible server effect: helpers with their package and SHA-256, group changes, and temporary export files. Direct only never installs a helper, but some native exporters can still create temporary files on the server, so a Direct only download can also need review.",
+        "Choose how long the authorization lasts: One logical run, This connection session or Named workflow. A named workflow needs a Workflow ID. It does not create or activate a schedule.",
+        "Authorize these changes and start saves the authorization and starts the download. Preview Direct without temporary access switches to Direct only with temporary access off and previews again; it can omit content that needs a helper. Cancel preview starts nothing.",
+        "If the preview has unresolved facts, it can't create an authorization. If the connection inputs change after the preview, Herbert asks for a new preview. The Download monitor shows which authorization the run uses.",
+        "To see your saved session and named-workflow authorizations, select Saved authorizations… next to the authorization lifetime options on Download. Each entry shows what it allows and when it was created. Select Revoke…, then Revoke authorization, to remove one. The CLI and MCP offer the same. Revoking stops new optional changes under that authorization, including in a download that is running. Cleanup of resources the run owns still runs, and revoking never deletes server resources."
       ]
     },
     {
       "title": "Cleanup and recovery",
       "paragraphs": [
-        "Herbert records the server helpers, transfer files and temporary permissions it owns so that cleanup can be reconciled. Read any cleanup warnings in the final result.",
+        "Herbert records the server helpers, transfer files and temporary permissions it owns so that cleanup can be reconciled. Cleanup removes only resources that this run owns. Helpers that belong to other runs, or that Herbert can't attribute, are left in place and reported. If the server lease for helpers is lost, Herbert stops new helper use and continues Direct reads. Read any cleanup warnings in the final result.",
         "Keep the run record if cleanup is pending. Do not delete unidentified server files or permissions.",
         "Keep the backup's Herbert Data folder with its downloaded files. It contains the durable records needed for recovery. Recovery through the CLI or MCP requires the original caller and run identity. The graphical interface has no saved-run browser or inspection page."
       ]
@@ -63,7 +107,8 @@
       "title": "Get help",
       "paragraphs": [
         "Use the application guide for the Download workflow and plugin help on Plugins for collection details and settings. About contains the application information.",
-        "About contains the avatar, vacuum artwork, dedication, and copyright information. The artwork and help documents work offline."
+        "About contains the avatar, vacuum artwork, dedication, and copyright information. The artwork and help documents work offline.",
+        "To connect an MCP client, run herbert mcp-config --client followed by codex, claude-code, claude-desktop, gemini, vscode, cursor or generic. It prints that client's configuration with this installation's actual paths. The MCP guide says where each client keeps it. The package includes a Herbert skill for Claude Code and one for Codex. The package also includes mcp.claude-desktop.example.json and AGENTS.md, the operating instructions for agents, which MCP clients can also read through help_read as agent-instructions."
       ]
     }
   ]

@@ -113,7 +113,7 @@ pub(super) fn handle(mut r: GuestRequest, spec: &super::Family) -> GuestReply {
     }
     let next = if message {
         if phase != "initial" {
-            return failure("The message package checkpoint is invalid.");
+            return failure("The message package saved progress is invalid.");
         }
         r.state = json!({"errors":[],"accessExportAllowed":true});
         None

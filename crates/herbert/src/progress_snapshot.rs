@@ -28,7 +28,45 @@ pub(crate) fn active_summary(
         Err(TryLockError::Poisoned(_)) => Err(unavailable()),
     }
 }
+/// The one published outcome vocabulary for server changes (MCP GAP-18/19).
+/// Lease batch 1 reports lease loss, uncertain calls, pending cleanup and
+/// foreign-pending helpers; the per-resource audit projection (removed,
+/// restored, released, no changes observed) follows in lease batch 3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ServerChangeOutcome {
+    NoChangesObserved, RemovedVerified, RestoredVerified, LeaseReleasedSharedRemains,
+    InvokedPreexisting, Pending, Uncertain, Failed, Unknown, ForeignPending,
+}
+
+/// `serverChanges` for run status, separate from collection completeness.
+/// Foreign-pending helpers never appear in `resources`.
+pub(crate) fn server_changes(j: &RunJournal) -> Value {
+    let resources = j.diagnostics.iter().filter_map(|d| {
+        let outcome = match d.code.as_str() {
+            "SERVER_LEASE_LOST_DURING_CALL" => ServerChangeOutcome::Uncertain,
+            "SERVER_CLEANUP_PENDING" | "CLEANUP_AUTHORITY_REQUIRED" => ServerChangeOutcome::Pending,
+            _ => return None,
+        };
+        Some(json!({"code":d.code,"identity":d.identity,"context":d.context,"outcome":outcome}))
+    }).collect::<Vec<_>>();
+    json!({"leaseLost":j.diagnostics.iter().any(|d|d.code=="SERVER_LEASE_LOST"),"resources":resources,"foreignPending":j.foreign_pending_helpers})
+}
+
+/// Full run status: the journal plus the derived server-change outcomes.
+pub(crate) fn full(j: &RunJournal) -> Value {
+    let mut status = json!(j);
+    status["serverChanges"] = server_changes(j);
+    status
+}
+
 pub fn summary(j: &RunJournal) -> Value {
+    // A Release 1 journal keeps its stored codes; this view shows current IDs and names.
+    let mut view = summary_view(j);
+    crate::legacy_category_ids::normalize_view(&mut view);
+    view
+}
+fn summary_view(j: &RunJournal) -> Value {
     let (file_count, file_bytes) = file_totals(j);
     json!({"runId":j.run_id,"phase":j.phase,"scope":j.scope,"collectionMethod":j.collection_method,"serverChangeAuthority":j.server_change_authority,"categories":j.categories,"categoryNames":j.category_names,"categoryOutcomes":j.category_outcomes,"discoveryFinished":j.discovery_finished,"discovered":j.discovered,"targets":j.targets,"diagnostics":j.diagnostics,"pluginSettings":j.plugin_settings,"pluginHashes":j.plugin_hashes,"pluginSelectionContracts":j.plugin_selection_contracts,
  "artifacts":j.artifacts.iter().map(|a| {
@@ -46,6 +84,7 @@ pub fn summary(j: &RunJournal) -> Value {
      value
  }).collect::<Vec<_>>(),
  "acquisitions":j.acquisitions.last().into_iter().collect::<Vec<_>>(),
+ "serverChanges":server_changes(j),
  "statistics":j.statistics,"fileCount":file_count,"fileBytes":file_bytes})
 }
 /// Success presentation is derived from the committed overall inventory. An

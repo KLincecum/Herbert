@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn meaningful_activity_continues_after_definitions_and_polling_does_not_invent_work() {
         let activity=Arc::new(Activity::default());
-        let page=activity.begin_page("Functions","C08",0);page.page_received(2);page.processed(2);
+        let page=activity.begin_page("Functions","functions",0);page.page_received(2);page.processed(2);
         let before=activity.statistics()["meaningfulWork"].as_u64().unwrap();
         page.processed(2);assert_eq!(activity.statistics()["meaningfulWork"],before);
         activity.managed_job("job","running");activity.meaningful_work("decompiledFiles",3);
@@ -504,8 +504,8 @@ mod tests {
     #[test]
     fn empty_checks_do_not_complete_batches_or_move_other_guards() {
         let activity = Arc::new(Activity::default());
-        let empty = activity.begin_page("Reports", "C17", 0);
-        let populated = activity.begin_page("Reports", "C17", 0);
+        let empty = activity.begin_page("Reports", "report-styles-and-layouts", 0);
+        let populated = activity.begin_page("Reports", "report-styles-and-layouts", 0);
         empty.page_received(0);
         empty.processing_complete(0);
         assert_eq!(activity.batches().as_array().unwrap().len(), 1);
@@ -544,7 +544,7 @@ mod tests {
             file: File::options().write(true).create_new(true).open(&path).unwrap(),
             path: "test.jsonl".into(), started: Instant::now(), failed: false,
         })), ..Activity::default() };
-        activity.native_response("C04", Some(&("Ice.BO.BAQDesignerSvc".into(), "GetRows".into())),
+        activity.native_response("baqs-and-ubaqs", Some(&("Ice.BO.BAQDesignerSvc".into(), "GetRows".into())),
             123, 456, &json!({"returnObj":{"QueryHdr":[{"secret":"DO_NOT_LOG"}],"token":"DO_NOT_LOG"}}));
         let before = std::fs::read(&path).unwrap();
         activity.snapshot();
@@ -564,7 +564,7 @@ mod tests {
             file: File::open(&path).unwrap(), path: "test.jsonl".into(),
             started: Instant::now(), failed: false,
         })), ..Activity::default() };
-        activity.request_failed("C04", None, "TIMEOUT");
+        activity.request_failed("baqs-and-ubaqs", None, "TIMEOUT");
         assert_eq!(activity.diagnostics_status()["writeFailed"], true);
         drop(activity);
         std::fs::remove_file(path).unwrap();
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn definition_page_reports_download_then_real_writes_and_committed_progress() {
         let activity = Arc::new(Activity::default());
-        let page = activity.begin_page("BAQs", "C04", 100);
+        let page = activity.begin_page("BAQs", "baqs-and-ubaqs", 100);
         assert_eq!(activity.batches()[0]["countKnown"], false);
         assert_eq!(activity.batches()[0]["completedItems"], 100);
         page.page_received(24);
@@ -587,11 +587,11 @@ mod tests {
     #[test]
     fn batch_counts_survive_completion_and_interruption() {
         let activity = Arc::new(Activity::default());
-        let first = activity.begin_batch("C04", 25);
+        let first = activity.begin_batch("baqs-and-ubaqs", 25);
         first.update("Verifying", 7);
         assert_eq!(activity.batches()[0]["verified"], 7);
         first.complete();
-        let tail = activity.begin_batch("C04", 15);
+        let tail = activity.begin_batch("baqs-and-ubaqs", 15);
         assert_eq!(activity.batches()[1]["files"], 15);
         drop(tail);
         assert_eq!(activity.batches()[0]["phase"], "Verified");

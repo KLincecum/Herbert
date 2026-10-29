@@ -44,7 +44,7 @@ internal sealed partial class ConfinedSink : IDisposable
             }
             catch { current.Dispose(); throw; }
         }
-        else throw new PlatformNotSupportedException("Companion filesystem confinement is qualified for Windows/Linux only.");
+        else throw new PlatformNotSupportedException("Companion filesystem confinement is supported on Windows and Linux only.");
     }
     public void WriteText(string name, string text, string kind, string? logical = null) =>
         Write(name, new MemoryStream(new UTF8Encoding(false).GetBytes(text)), kind, logical);

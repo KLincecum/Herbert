@@ -28,18 +28,18 @@ impl CallerAccess {
             .get("UserFile")
             .and_then(Value::as_array)
             .filter(|rows| rows.len() == 1)
-            .ok_or_else(|| unavailable("The native read did not return one exact account."))?;
+            .ok_or_else(|| unavailable("The Epicor read did not return one exact account."))?;
         let row = &rows[0];
         let actual = row["UserID"]
             .as_str()
             .filter(|id| *id == caller)
-            .ok_or_else(|| unavailable("The native account does not match the admitted caller."))?;
+            .ok_or_else(|| unavailable("The Epicor account does not match the allowed to start Epicor user."))?;
         if row["SecurityMgr"].as_bool() != Some(true)
             || row["UserDisabled"].as_bool() != Some(false)
             || row["LockedOut"].as_bool() != Some(false)
         {
             return Err(unavailable(
-                "The caller is not an enabled Security Manager.",
+                "The Epicor user is not an enabled Security Manager.",
             ));
         }
         let text = |field: &str| {
@@ -47,15 +47,15 @@ impl CallerAccess {
                 .as_str()
                 .filter(|value| !value.is_empty())
                 .map(String::from)
-                .ok_or_else(|| unavailable("The native account identity is incomplete."))
+                .ok_or_else(|| unavailable("The Epicor account identity is incomplete."))
         };
         let groups = row["GroupList"]
             .as_str()
-            .ok_or_else(|| unavailable("The native account omitted its group membership."))?;
+            .ok_or_else(|| unavailable("The Epicor account omitted its group membership."))?;
         let revision = row
             .get("SysRevID")
             .filter(|value| value.is_number() || value.is_string())
-            .ok_or_else(|| unavailable("The native account omitted its revision."))?;
+            .ok_or_else(|| unavailable("The Epicor account omitted its revision."))?;
         let password_change_request = row
             .get("PwdChangeRequestOn")
             .ok_or_else(|| unavailable("The account's password-change request is unknown."))?;
@@ -103,13 +103,13 @@ impl CallerAccess {
     pub(crate) fn verify_preserved(&self, after: &Self) -> Result<(), Diagnostic> {
         if self.caller != after.caller || self.row_id != after.row_id {
             return Err(unavailable(
-                "Account readback returned a different native identity.",
+                "Account readback returned a different Epicor ID.",
             ));
         }
         if self.safeguards != after.safeguards {
             return Err(Diagnostic::new(
                 "ACCESS_ACCOUNT_FIELDS_CHANGED",
-                "Account fields changed during the membership operation. Preserve the ownership record and inspect the native account before another write.",
+                "Account fields changed during the membership operation. Preserve the ownership record and inspect the Epicor account before another write.",
             ));
         }
         Ok(())
@@ -129,12 +129,15 @@ pub(crate) async fn grant(
     connection: &Connection,
     holder: &str,
     requirement: Requirement,
+    authority: &PolicyAuthority<'_>,
     cancel: &CancellationToken,
 ) -> Result<AccessLease, Diagnostic> {
+    authority.permits_add(&requirement.group)?;
     let caller = connection
         .caller()
         .await
-        .ok_or_else(|| unavailable("Verify the caller before requesting access."))?;
+        .ok_or_else(|| unavailable("Verify the Epicor user before requesting access."))?;
+    if authority.scope.endpoint!=connection.endpoint.as_str()||authority.scope.company!=connection.company||authority.scope.principal!=caller {return Err(unavailable("The access authority belongs to another target, company or Epicor user."));}
     let mut registry = access_registry(root, connection, &caller, cancel).await?;
     // Read after taking the account lock. A queued operation must use the latest
     // native membership and revision rather than a stale pre-lock projection.
@@ -143,6 +146,16 @@ pub(crate) async fn grant(
         return Err(unavailable("The account changed while access was queued."));
     }
     let current_groups = canonical_memberships(connection, &before.groups, cancel).await?;
+    if let Some(member)=registry.registry.memberships.get(&requirement.group).filter(|member|member.phase==MembershipPhase::Active&&member.membership_added&&!member.existed_before) {
+        // Another run's membership became active while this request waited for
+        // the lock. Joining it is borrowing, which this add authority does not
+        // include; preserve the other owner and require a fresh preview.
+        if !member.holders.contains(holder)&&authority.permits(&requirement.group,&member.intent_id).is_err() {
+            return Err(unavailable("Another run now owns this temporary membership. This authorization covers adding it, not joining another run’s membership; obtain a fresh preview."));
+        }
+    }
+    authority.verify_policy(connection,&requirement.group,cancel).await?;
+    authority.permits_add(&requirement.group)?;
     let lease = AccessLease {
         schema_version: 1,
         lease_id: uuid::Uuid::new_v4().to_string(),
@@ -157,6 +170,7 @@ pub(crate) async fn grant(
         existed_before: false,
         membership_added: false,
         diagnostics: vec![],
+        authorization: Some(authority.reference()),
     };
     let needs_grant = registry.request(
         holder,
@@ -166,6 +180,7 @@ pub(crate) async fn grant(
     )?;
     if needs_grant {
         registry.record_account_proof(&lease.group, &before.row_id, &before.safeguards_sha256())?;
+        if let Err(error)=authority.permits_add(&lease.group) {registry.confirm_no_grant(&lease.group)?;return Err(error);}
         let result = connection.add_own_group(&lease.group, cancel).await;
         if result.is_ok() {
             // Persist a successful native response before the separate readback.
@@ -182,7 +197,7 @@ pub(crate) async fn grant(
             return Err(result.err().unwrap_or_else(|| {
                 Diagnostic::new(
                     "ACCESS_GRANT_UNVERIFIED",
-                    "Native readback did not confirm the required membership.",
+                    "Epicor readback did not confirm the required membership.",
                 )
             }));
         }
@@ -208,21 +223,39 @@ pub(crate) async fn grant(
 /// A borrower names an existing host grant and the exact run scope. These are
 /// checked again from durable authority immediately before each holder change.
 /// A preference or generic temporary-access flag cannot supply group authority.
-pub(crate) struct BorrowAuthority<'a> {
+pub(crate) struct PolicyAuthority<'a> {
     pub grants_root: &'a std::path::Path,
     pub grant_id: &'a str,
     pub scope: &'a crate::server_changes::MaterialScope,
     pub use_: crate::server_changes::Use<'a>,
     pub temporary_access: bool,
+    pub selected_effects: std::collections::BTreeSet<String>,
 }
-impl BorrowAuthority<'_> {
-    fn permits(&self,group:&str,intent:&str)->Result<(),Diagnostic> {
-        if !self.temporary_access {return Err(unavailable("Temporary access is off; this run cannot extend another run’s membership."));}
+impl PolicyAuthority<'_> {
+    fn live_grant(&self)->Result<(),Diagnostic> {
+        if !self.temporary_access {return Err(unavailable("Temporary access is off; this run cannot add or extend membership."));}
         let grant=crate::server_changes::get(self.grants_root,self.grant_id)?;
         if !grant.permits(self.scope,&self.use_) {return Err(unavailable("The selected access authorization is absent, changed, expired or revoked."));}
-        if !self.scope.capabilities.get("$native-access").is_some_and(|c|c.effects.values().any(|effect|effect["kind"]=="borrowOwnedMembership"&&effect["group"]==group&&effect["ownershipIntent"]==intent)) {
-            return Err(unavailable("This group and ownership generation are outside the selected policy-supported borrow authority."));
-        }
+        Ok(())
+    }
+    fn effects(&self)->impl Iterator<Item=&Value> {
+        self.scope.capabilities.get("$native-access").into_iter().flat_map(|capability|capability.effects.iter()).filter(|(key,_)|self.selected_effects.contains(*key)).map(|(_,effect)|effect)
+    }
+    fn permits(&self,group:&str,intent:&str)->Result<(),Diagnostic> {
+        self.live_grant()?;
+        if !self.effects().any(|effect|effect["kind"]=="borrowOwnedMembership"&&effect["group"]==group&&effect["ownershipIntent"]==intent) {return Err(unavailable("This group and ownership generation are outside selected policy-supported borrowing."));}
+        Ok(())
+    }
+    fn permits_add(&self,group:&str)->Result<(),Diagnostic> {
+        self.live_grant()?;
+        if !self.effects().any(|effect|effect["kind"]=="groupMembership"&&effect["group"]==group) {return Err(unavailable("The selected Epicor policy does not authorize adding this group."));}
+        Ok(())
+    }
+    fn reference(&self)->crate::server_changes::AuthorizationRef {
+        crate::server_changes::AuthorizationRef{grant_id:self.grant_id.into(),material_digest:self.scope.digest(),request_id:self.use_.request_id.into()}
+    }
+    async fn verify_policy(&self,connection:&Connection,group:&str,cancel:&CancellationToken)->Result<(),Diagnostic> {
+        for effect in self.effects().filter(|effect|effect["group"]==group) {crate::application::native_permissions::verify_access_effect(connection,effect,cancel).await?;}
         Ok(())
     }
     fn check_member(&self,group:&str,member:&crate::access::Membership,present:bool)->Result<(),Diagnostic> {
@@ -232,7 +265,7 @@ impl BorrowAuthority<'_> {
         self.permits(group,&member.intent_id)
     }
     fn selected_groups(&self)->Vec<String> {
-        self.scope.capabilities.get("$native-access").into_iter().flat_map(|c|c.effects.values()).filter(|v|v["kind"]=="borrowOwnedMembership").filter_map(|v|v["group"].as_str().map(String::from)).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+        self.effects().filter(|v|v["kind"]=="borrowOwnedMembership").filter_map(|v|v["group"].as_str().map(String::from)).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
     }
 }
 /// Borrow only specifically reviewed policy-supported groups. Revocation and
@@ -242,12 +275,12 @@ pub(crate) async fn borrow_active(
     root: &AccessStore,
     connection: &Connection,
     holder: &str,
-    authority: &BorrowAuthority<'_>,
+    authority: &PolicyAuthority<'_>,
     cancel: &CancellationToken,
 ) -> Result<bool, Diagnostic> {
     if !authority.temporary_access {return Err(unavailable("Temporary access is off; no membership can be borrowed."));}
-    let caller=connection.caller().await.ok_or_else(||unavailable("Verify the caller before borrowing access."))?;
-    if authority.scope.endpoint!=connection.endpoint.as_str() || authority.scope.company!=connection.company || authority.scope.principal!=caller {return Err(unavailable("The borrow authority belongs to a different target or caller."));}
+    let caller=connection.caller().await.ok_or_else(||unavailable("Verify the Epicor user before borrowing access."))?;
+    if authority.scope.endpoint!=connection.endpoint.as_str() || authority.scope.company!=connection.company || authority.scope.principal!=caller {return Err(unavailable("The borrow authority belongs to a different target or Epicor user."));}
     let selected=authority.selected_groups();
     if selected.is_empty(){return Ok(false);}
     // Validate before even entering the mutating local coordination route.
@@ -261,11 +294,12 @@ pub(crate) async fn borrow_active(
     let current=canonical_memberships(connection,&before.groups,cancel).await?;
     let mut changed=false;
     for group in selected {
+        authority.verify_policy(connection,&group,cancel).await?;
         let member=registry.registry.memberships.get(&group).ok_or_else(||unavailable("The original owned membership disappeared before dispatch."))?;
         authority.check_member(&group,member,current.split('~').any(|g|g==group))?;
         if member.holders.contains(holder){continue;}
         let original=member.lease_ids.iter().find_map(|id|registry.registry.leases.get(id)).ok_or_else(||unavailable("The owned membership has no original lease."))?;
-        let mut lease=original.clone();lease.lease_id=uuid::Uuid::new_v4().to_string();lease.holder=holder.into();lease.company=connection.company.clone();
+        let mut lease=original.clone();lease.authorization=Some(authority.reference());lease.lease_id=uuid::Uuid::new_v4().to_string();lease.holder=holder.into();lease.company=connection.company.clone();
         lease.artifact=Identity{category:"NativeOperation".into(),kind:"AccessDependency".into(),scope:herbert_contract::Scope::Company{company:connection.company.clone()},keys:BTreeMap::from([("OperationID".into(),holder.into())])};
         if registry.request(holder,lease,&current,&before.revision_text())? {return Err(unavailable("Borrowing access must not require a new membership."));}
         changed=true;
@@ -286,7 +320,7 @@ pub(crate) async fn release(
     let caller = connection.caller().await.ok_or_else(|| {
         Diagnostic::new(
             "ADMISSION_REQUIRED",
-            "Reconnect as the original caller to restore access.",
+            "Reconnect as the original Epicor user to restore access.",
         )
     })?;
     let mut registry = access_registry(root, connection, &caller, cancel).await?;
@@ -412,7 +446,7 @@ async fn restore_group(
             return Err(result.err().unwrap_or_else(|| {
                 Diagnostic::new(
                     "ACCESS_CLEANUP_UNVERIFIED",
-                    "Native readback still contains the owned membership.",
+                    "Epicor readback still contains the owned membership.",
                 )
             }));
         }
@@ -429,7 +463,7 @@ pub(crate) fn verify_update_result(response: &Value) -> Result<(), Diagnostic> {
     if errors.is_some_and(|rows| !rows.is_empty()) {
         return Err(Diagnostic::new(
             "ACCESS_UPDATE_REFUSED",
-            "The native membership update returned errors. Readback must establish its actual effect.",
+            "The Epicor membership update returned errors. Readback must establish its actual effect.",
         ));
     }
     Ok(())
@@ -482,7 +516,7 @@ mod borrow_authority_tests {
         let root=tempfile::tempdir().unwrap();
         let scope=MaterialScope{endpoint:"https://fixture.invalid/".into(),company:"C".into(),principal:"manager".into(),capabilities:BTreeMap::from([("$native-access".into(),Capability{binding:"stored-native-policy-remedy-v1".into(),selection:BTreeMap::new(),effects:BTreeMap::from([("access:Ice.BO.TestSvc/GetRows/ELIGIBLE".into(),json!({"kind":"borrowOwnedMembership","service":"Ice.BO.TestSvc","method":"GetRows","group":"ELIGIBLE","ownershipIntent":"original-intent","policy":{"SecCode":"bo.Test"}}))])})])};
         let grant=server_changes::create(root.path(),scope.clone(),Lifetime::OneRun{request_id:"request".into()},None,"explicitLocalClient").unwrap();
-        let mut authority=BorrowAuthority{grants_root:root.path(),grant_id:&grant.id,scope:&scope,use_:Use{request_id:"request",session_id:"session",workflow_id:None},temporary_access:true};
+        let mut authority=PolicyAuthority{grants_root:root.path(),grant_id:&grant.id,scope:&scope,use_:Use{request_id:"request",session_id:"session",workflow_id:None},temporary_access:true,selected_effects:std::collections::BTreeSet::from(["access:Ice.BO.TestSvc/GetRows/ELIGIBLE".into()])};
         assert_eq!(authority.selected_groups(),["ELIGIBLE"]);assert!(authority.permits("ELIGIBLE","original-intent").is_ok());
         assert!(authority.permits("UNRELATED-ACTIVE","original-intent").is_err());assert!(authority.permits("ELIGIBLE","replacement-owner-after-release").is_err());
         let mut member=crate::access::Membership{group:"ELIGIBLE".into(),holders:std::collections::BTreeSet::from(["original-holder".into()]),phase:MembershipPhase::Active,existed_before:false,membership_added:true,before_revision:"1".into(),grant_revision:Some("2".into()),intent_id:"original-intent".into(),lease_ids:Default::default(),native_write_confirmed:true,account_row_id:Some("account".into()),account_safeguards_sha256:Some("proof".into())};
@@ -491,5 +525,40 @@ mod borrow_authority_tests {
         authority.temporary_access=false;assert!(authority.permits("ELIGIBLE","original-intent").is_err());authority.temporary_access=true;
         server_changes::revoke(root.path(),&grant.id).unwrap();assert!(authority.permits("ELIGIBLE","original-intent").is_err());
         assert!(server_changes::get(root.path(),&grant.id).unwrap().permits_owned_cleanup(&scope));
+    }
+    #[test]
+    fn permits_add_requires_selected_group_membership_effect_and_live_grant() {
+        let root=tempfile::tempdir().unwrap();
+        let effects=BTreeMap::from([
+            ("access:Ice.BO.TestSvc/GetRows/ADD".into(),json!({"kind":"groupMembership","service":"Ice.BO.TestSvc","method":"GetRows","group":"ADD","ownershipIntent":null,"policy":{"SecCode":"bo.Test"}})),
+            ("access:Ice.BO.TestSvc/GetRows/BORROW".into(),json!({"kind":"borrowOwnedMembership","service":"Ice.BO.TestSvc","method":"GetRows","group":"BORROW","ownershipIntent":"intent","policy":{"SecCode":"bo.Test"}})),
+            ("access:Ice.BO.TestSvc/GetList/OTHER".into(),json!({"kind":"groupMembership","service":"Ice.BO.TestSvc","method":"GetList","group":"OTHER","ownershipIntent":null,"policy":{"SecCode":"bo.Test"}})),
+        ]);
+        let scope=MaterialScope{endpoint:"https://fixture.invalid/".into(),company:"C".into(),principal:"manager".into(),capabilities:BTreeMap::from([("$native-access".into(),Capability{binding:"stored-native-policy-remedy-v1".into(),selection:BTreeMap::new(),effects})])};
+        let grant=server_changes::create(root.path(),scope.clone(),Lifetime::OneRun{request_id:"request".into()},None,"explicitLocalClient").unwrap();
+        let mut authority=PolicyAuthority{grants_root:root.path(),grant_id:&grant.id,scope:&scope,use_:Use{request_id:"request",session_id:"session",workflow_id:None},temporary_access:true,
+            selected_effects:std::collections::BTreeSet::from(["access:Ice.BO.TestSvc/GetRows/ADD".into(),"access:Ice.BO.TestSvc/GetRows/BORROW".into()])};
+        assert!(authority.permits_add("ADD").is_ok());
+        assert!(authority.permits_add("BORROW").is_err(),"a borrow effect is not authority to add a membership");
+        assert!(authority.permits("ADD","intent").is_err(),"an add effect is not authority to borrow");
+        assert!(authority.permits_add("OTHER").is_err(),"an unselected effect in the same scope is not used");
+        let reference=authority.reference();
+        assert_eq!((reference.grant_id.as_str(),reference.material_digest.clone(),reference.request_id.as_str()),(grant.id.as_str(),scope.digest(),"request"));
+        authority.temporary_access=false;assert!(authority.permits_add("ADD").is_err());authority.temporary_access=true;
+        server_changes::revoke(root.path(),&grant.id).unwrap();assert!(authority.permits_add("ADD").is_err());
+    }
+    #[test]
+    fn access_lease_authorization_is_optional_for_legacy_journals() {
+        let mut lease=json!({"schemaVersion":1,"leaseId":"lease","endpoint":"https://fixture.invalid/","company":"C","caller":"manager","holder":"run",
+            "artifact":{"category":"NativeOperation","kind":"NativeMethod","scope":{"company":{"company":"C"}},"keys":{}},
+            "group":"G","nativePolicy":"{}","state":"granted","existedBefore":false,"membershipAdded":true,"diagnostics":[]});
+        let artifact=Identity{category:"NativeOperation".into(),kind:"NativeMethod".into(),scope:herbert_contract::Scope::Company{company:"C".into()},keys:BTreeMap::new()};
+        lease["artifact"]=serde_json::to_value(&artifact).unwrap();
+        let legacy:AccessLease=serde_json::from_value(lease.clone()).unwrap();assert!(legacy.authorization.is_none());
+        assert!(serde_json::to_value(&legacy).unwrap().get("authorization").is_none(),"absent authority is not invented on save");
+        lease["authorization"]=json!({"grantId":"grant","materialDigest":"digest","requestId":"request"});
+        let current:AccessLease=serde_json::from_value(lease).unwrap();
+        assert_eq!(current.authorization,Some(crate::server_changes::AuthorizationRef{grant_id:"grant".into(),material_digest:"digest".into(),request_id:"request".into()}));
+        let saved:AccessLease=serde_json::from_value(serde_json::to_value(&current).unwrap()).unwrap();assert_eq!(saved,current);
     }
 }

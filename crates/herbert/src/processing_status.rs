@@ -45,7 +45,7 @@ mod tests {
     }
     fn artifact() -> Artifact {
         Artifact {
-            identity: owner("C04", "one"),
+            identity: owner("baqs-and-ubaqs", "one"),
             classification: "discoveredDefinition".into(),
             acquisition: Completeness::Collected,
             integrity: "hostHashVerified".into(),
@@ -72,17 +72,17 @@ mod tests {
     }
     #[test]
     fn marked_failure_requires_exact_current_page_owner() {
-        let selected = owner("C04", "one");
+        let selected = owner("baqs-and-ubaqs", "one");
         assert_eq!(
-            page_owner("C04", &[selected.clone()], &diagnostic(selected.clone())).unwrap(),
+            page_owner("baqs-and-ubaqs", &[selected.clone()], &diagnostic(selected.clone())).unwrap(),
             Some(selected.clone())
         );
-        for other in [owner("C04", "two"), owner("C06", "one")] {
-            assert!(page_owner("C04", &[selected.clone()], &diagnostic(other)).is_err());
+        for other in [owner("baqs-and-ubaqs", "two"), owner("bpm-directives", "one")] {
+            assert!(page_owner("baqs-and-ubaqs", &[selected.clone()], &diagnostic(other)).is_err());
         }
         let mut d = diagnostic(selected);
         d.identity = None;
-        assert!(page_owner("C04", &[], &d).is_err());
+        assert!(page_owner("baqs-and-ubaqs", &[], &d).is_err());
     }
     #[test]
     fn ordinary_diagnostics_and_verified_absence_do_not_force_partial() {
@@ -91,7 +91,7 @@ mod tests {
             .push(Diagnostic::new("INFORMATION", "A normal observation."));
         reconcile(&mut a);
         assert_eq!(a.processing, "derived");
-        assert_eq!(page_owner("C04", &[], &a.diagnostics[0]).unwrap(), None);
+        assert_eq!(page_owner("baqs-and-ubaqs", &[], &a.diagnostics[0]).unwrap(), None);
         a.acquisition = Completeness::VerifiedAbsent;
         reconcile(&mut a);
         assert_eq!(a.processing, "derived");

@@ -1,4 +1,4 @@
-//! Optional C08 compiled snapshots. Definitions remain independently useful.
+//! Optional Functions compiled snapshots. Definitions remain independently useful.
 use herbert_contract::*;
 use serde_json::{Value,json};
 use sha2::{Digest,Sha256};
@@ -62,7 +62,7 @@ pub fn received(request:&GuestRequest)->Value {
 }
 fn unavailable(state:&Value,owner:&Identity)->Option<Diagnostic> {
  if !compatible(state){return Some(diagnostic("MANAGED_HOST_UNAVAILABLE","This host cannot negotiate optional compiled capture/local jobs. Normal Function backups remain available.",Some(owner)));}
- if state["_collectionMethod"]=="directOnly" {return Some(diagnostic("MANAGED_CAPTURE_UNAVAILABLE","This native version hides exact Function-store reads from direct services/BAQs. Direct only preserves normal definitions; the optional compiled snapshot requires the declared read helper.",Some(owner)));}
+ if state["_collectionMethod"]=="directOnly" {return Some(diagnostic("MANAGED_CAPTURE_UNAVAILABLE","This Epicor version hides exact Function-store reads from direct services/BAQs. Direct only preserves normal definitions; the optional compiled snapshot requires the declared read helper.",Some(owner)));}
  if !state["_compiledCaptureError"].is_null() {return Some(diagnostic("MANAGED_CAPTURE_UNAVAILABLE","The optional compiled-store read was refused or failed. Normal Function backups remain available.",Some(owner)));}
  if state.pointer("/_compiledCaptureResult/oSuccess")!=Some(&json!(true)) {return Some(diagnostic("MANAGED_CAPTURE_UNAVAILABLE","The optional compiled-store reader did not return a verified successful response.",Some(owner)));}
  None
@@ -80,7 +80,7 @@ fn capture_requests(state:&Value,owner:&Identity,definition:&Value)->Vec<Managed
  let rows=rows.into_iter().flatten().filter(|row|row["LibraryID"]==*id).collect::<Vec<_>>();
  let mut captures=vec![];let mut seen=BTreeSet::new();
  if !diagnostics.is_empty() || !visible {
-  if diagnostics.is_empty(){diagnostics.push(diagnostic("MANAGED_OWNER_UNVERIFIED","The compiled reader did not prove this exact caller-visible library owner.",Some(owner)));}
+  if diagnostics.is_empty(){diagnostics.push(diagnostic("MANAGED_OWNER_UNVERIFIED","The compiled reader did not prove this exact Epicor user-visible library owner.",Some(owner)));}
   captures.push(ManagedCapture{owner:owner.clone(),selector:None,binary_state:ManagedBinaryState::Unavailable,diagnostics,observation:json!({"association":"unavailable"}),definition_sha256:definition_hash,definition_revision:revision,input:None,symbols:None,symbol_mode:ManagedSymbolMode::None});
  } else if rows.is_empty() && (owner_changed || owner_observation["BeforeRows"]!=0 || owner_observation["AfterRows"]!=0){
   diagnostics.push(diagnostic("MANAGED_SOURCE_CHANGING","The empty row response does not prove stable absence across owner/store observations. No absent-binary claim was made.",Some(owner)));
@@ -147,7 +147,7 @@ fn drive(mut state:Value,error:Option<Diagnostic>)->Result<GuestReply,Diagnostic
 #[cfg(test)]
 mod tests {
  use super::*;use std::collections::BTreeMap;
- fn owner()->Identity{Identity{category:"C08".into(),kind:"EfxLibrary".into(),scope:Scope::Global,keys:BTreeMap::from([("LibraryID".into(),"Sample".into())])}}
+ fn owner()->Identity{Identity{category:"functions".into(),kind:"EfxLibrary".into(),scope:Scope::Global,keys:BTreeMap::from([("LibraryID".into(),"Sample".into())])}}
  fn definition()->Value{json!({"definition":{"EfxLibrary":[{"LibraryID":"Sample","Revision":4}]},"herbertDirectOutput":true,"herbertSources":{"files":[{"name":"Authored.cs","text":"original"}],"binaryFiles":[{"name":"Sample.efxj","base64":"77u/e30="}]}})}
  fn reply()->GuestReply{GuestReply::InventoryData{records:vec![(owner(),definition())],inventory:Box::new(GuestReply::Inventory{identities:vec![owner()],next_cursor:Some("next".into()),authoritative:true,diagnostics:vec![]})}}
  fn state()->Value{json!({"ids":["Sample"],"_pluginSettings":{(DOWNLOAD):true,(DECOMPILE):true},"_collectionMethod":"serverAssisted","_hostCapabilities":{"managedDecompilationV1":{"protocolVersion":1,"retainedArtifactFunctions":true}},"_compiledCaptureResult":{"oSuccess":true,"oDS":{"Owners":[{"LibraryID":"Sample","DefinitionRevision":4,"DefinitionRevisionAfter":4,"BeforeRows":0,"AfterRows":0}],"Assemblies":[]}}})}
@@ -164,7 +164,7 @@ mod tests {
 mod save_first_tests {
  use super::*;
  use std::collections::BTreeMap;
- fn owner()->Identity{Identity{category:"C08".into(),kind:"EfxLibrary".into(),scope:Scope::Global,keys:BTreeMap::from([("LibraryID".into(),"Sample".into())])}}
+ fn owner()->Identity{Identity{category:"functions".into(),kind:"EfxLibrary".into(),scope:Scope::Global,keys:BTreeMap::from([("LibraryID".into(),"Sample".into())])}}
  fn state()->Value{json!({"ids":["Sample"],"pageDataset":{"EfxLibrary":[{"LibraryID":"Sample","Revision":4}]},"_pluginSettings":{(DOWNLOAD):true,(DECOMPILE):true},"_collectionMethod":"serverAssisted","_hostCapabilities":{"managedDecompilationV1":{"protocolVersion":1,"retainedArtifactFunctions":true}}})}
  fn records()->Vec<(Identity,Value)>{vec![(owner(),json!({"definition":{"EfxLibrary":[{"LibraryID":"Sample","Revision":4}]},"herbertSources":{"files":[{"name":"Authored.cs","text":"original"}]}}))]}
  #[test]fn normal_records_are_ready_before_compiled_action_and_failure_does_not_rewrite_them(){

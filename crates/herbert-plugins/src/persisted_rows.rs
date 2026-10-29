@@ -16,13 +16,13 @@ pub fn validate(
                 if !seen.insert(key.to_ascii_lowercase()) {
                     out.push(Diagnostic::new(
                         "CHILD_IDENTITY_DUPLICATE",
-                        &format!("The persisted {table} response repeats a SysRowID."),
+                        &format!("The saved {table} response repeats a SysRowID."),
                     ));
                 }
             }
             _ => out.push(Diagnostic::new(
                 "CHILD_IDENTITY_UNVERIFIED",
-                &format!("A persisted {table} row does not identify its native SysRowID."),
+                &format!("A saved {table} row does not identify its Epicor SysRowID."),
             )),
         }
         for (field, parent) in links {
@@ -30,7 +30,7 @@ pub fn validate(
                 || root.get(parent).is_none_or(Value::is_null)
                 || row.get(field) != root.get(parent)
             {
-                out.push(Diagnostic::new("CHILD_IDENTITY_MISMATCH", &format!("A persisted {table}.{field} value does not match its full native parent key.")));
+                out.push(Diagnostic::new("CHILD_IDENTITY_MISMATCH", &format!("A saved {table}.{field} value does not match its full Epicor parent key.")));
             }
         }
     }

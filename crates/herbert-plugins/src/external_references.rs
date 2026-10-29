@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 const KIND: &str = "ExternalAssemblyReference";
 pub fn owns(category: &str, kind: &str) -> bool {
-    category == "C22" && kind == KIND
+    category == "programs-and-extensions" && kind == KIND
 }
 pub fn methods() -> Vec<(String, String)> {
     vec![
@@ -39,7 +39,7 @@ fn rows(response: &Value) -> Result<&Vec<Value>, Diagnostic> {
         .ok_or_else(|| {
             Diagnostic::new(
                 "REFERENCE_CATALOG_UNVERIFIED",
-                "The native reference catalog omitted its array.",
+                "The Epicor reference catalog omitted its array.",
             )
         })?;
     let mut seen = BTreeSet::new();
@@ -64,7 +64,7 @@ fn rows(response: &Value) -> Result<&Vec<Value>, Diagnostic> {
             if !row.get(key).is_some_and(|v| v.is_null() || v.is_string()) {
                 return Err(Diagnostic::new(
                     "REFERENCE_METADATA_UNVERIFIED",
-                    "The native reference metadata has an unexpected shape.",
+                    "The Epicor reference metadata has an unexpected shape.",
                 ));
             }
         }
@@ -73,7 +73,7 @@ fn rows(response: &Value) -> Result<&Vec<Value>, Diagnostic> {
 }
 fn identity(name: &str) -> Identity {
     Identity {
-        category: "C22".into(),
+        category: "programs-and-extensions".into(),
         kind: KIND.into(),
         scope: Scope::Global,
         keys: BTreeMap::from([("Name".into(), name.into())]),
@@ -93,24 +93,24 @@ fn bytes_valid(value: &Value) -> bool {
     }
 }
 pub fn handle(mut request: GuestRequest) -> GuestReply {
-    if request.category != "C22" {
+    if request.category != "programs-and-extensions" {
         return fail(
             "INVALID_IDENTITY",
-            "This collector owns C22 external assembly references.",
+            "External assembly references are downloaded by the Programs and extensions plugin. Choose that plugin instead.",
         );
     }
     let discover = request.operation == "discover";
     if !discover && request.operation != "acquire" {
         return fail(
             "UNSUPPORTED_OPERATION",
-            "The external reference collector supports discovery and exact acquisition.",
+            "The external reference collector supports discovery and exact download.",
         );
     }
     if !discover {
         let Some(id) = request.identity.as_ref() else {
             return fail(
                 "IDENTITY_REQUIRED",
-                "Select the exact native assembly Name.",
+                "Select the exact Epicor assembly Name.",
             );
         };
         let Some(name) = id.keys.get("Name") else {
@@ -152,7 +152,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     let Some(response) = request.response.as_ref() else {
         return fail(
             "NATIVE_RESPONSE_MISSING",
-            "The native reference response is absent.",
+            "The Epicor reference response is absent.",
         );
     };
     if phase == "catalog" {
@@ -191,7 +191,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let Some(row) = rows.iter().find(|r| r["Name"].as_str() == Some(name)) else {
             return fail(
                 "REFERENCE_DISAPPEARED",
-                "The exact reference no longer exists in the native catalog.",
+                "The exact reference no longer exists in the Epicor catalog.",
             );
         };
         if crate::system_artifacts::marked(row) {
@@ -212,7 +212,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let diagnostics = if payload.is_some_and(Value::is_null) {
             vec![Diagnostic::new(
                 "REFERENCE_BYTES_UNAVAILABLE",
-                "The native catalog contains this reference, but the Externals byte route returned null.",
+                "The Epicor catalog contains this reference, but the Externals byte route returned null.",
             )]
         } else if payload.is_some_and(bytes_valid) {
             vec![]
@@ -236,7 +236,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     }
     fail(
         "INVALID_PLUGIN_STATE",
-        "The external-reference acquisition checkpoint is invalid.",
+        "The external-reference download saved progress is invalid.",
     )
 }
 #[cfg(test)]
@@ -246,7 +246,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C22".into(),
+            category: "programs-and-extensions".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

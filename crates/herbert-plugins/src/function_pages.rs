@@ -27,6 +27,10 @@ fn discovery_prefix(state: &Value) -> Result<&str, Diagnostic> {
         Some(_) => Err(Diagnostic::new("INVALID_SETTING", "Library ID starts with must be a string.")),
     }
 }
+/// Literal part of the prefix before any SQL LIKE metacharacter.
+fn server_literal(prefix: &str) -> &str {
+    prefix.split(['%', '_', '[', ']']).next().unwrap_or("")
+}
 fn read(
     service: &str,
     method: &str,
@@ -141,7 +145,21 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             state["_progress"] = json!({"request":"Finding the next page of Function libraries",
                 "response":"Library list received; downloading complete definitions"});
             match crate::query_library(&request) {
-                GuestReply::Action { action, .. } => Ok(GuestReply::Action { action, state }),
+                GuestReply::Action { mut action, .. } => {
+                    // Server LIKE is a broad superset; the exact local
+                    // starts_with check below still decides selection.
+                    let literal = server_literal(discovery_prefix(&request.state)?);
+                    if let (HostAction::Query { query }, false) = (&mut action, literal.is_empty()) {
+                        query.parameters.insert("prefix".into(), json!(format!("{literal}%")));
+                        query.criteria.push(QueryCriterion {
+                            table: "EcfSource".into(),
+                            field: "LibraryID".into(),
+                            operator: "LIKE".into(),
+                            parameter: "prefix".into(),
+                        });
+                    }
+                    Ok(GuestReply::Action { action, state })
+                }
                 GuestReply::Failure { diagnostic } => Err(diagnostic),
                 _ => Err(invalid("The Function inventory route is invalid.")),
             }
@@ -150,10 +168,16 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let rows = response["rows"]
                 .as_array()
                 .ok_or_else(|| invalid("The library inventory is missing."))?;
+            // Select before validating: unselected rows produce no diagnostics.
+            // Keep native continuation even when this page selects no libraries.
+            let prefix = discovery_prefix(&request.state)?;
             let mut ids = Vec::new();
             let mut seen = BTreeSet::new();
             for row in rows {
                 if crate::system_artifacts::marked(row) || temporary_helper(row) {
+                    continue;
+                }
+                if !prefix.is_empty() && !row["LibraryID"].as_str().is_some_and(|id| id.starts_with(prefix)) {
                     continue;
                 }
                 let id = row["LibraryID"]
@@ -165,10 +189,6 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 }
                 ids.push(id);
             }
-            // Validate the complete eligible inventory before selecting roots.
-            // Keep native continuation even when this page selects no libraries.
-            let prefix = discovery_prefix(&request.state)?;
-            ids.retain(|id| id.starts_with(prefix));
             let mut state = request.state.clone();
             state["ids"] = json!(ids);
             state["nextCursor"] = response["nextCursor"].clone();
@@ -195,7 +215,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             #[cfg(not(feature="function-compiled"))]
             Ok(reply)
         },
-        _ => Err(invalid("The Function page checkpoint is invalid.")),
+        _ => Err(invalid("The Function page saved progress is invalid.")),
     }
 }
 
@@ -227,7 +247,7 @@ fn finish(state: &Value, dataset: &Value) -> Result<GuestReply, Diagnostic> {
             continue;
         }
         let identity = Identity {
-            category: "C08".into(),
+            category: "functions".into(),
             kind: "EfxLibrary".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([("LibraryID".into(), id.into())]),
@@ -357,7 +377,7 @@ pub(super) fn temporary_helper(row: &Value) -> bool {
 mod tests {
     use super::*;
     fn prefix_request(rows: Vec<Value>, settings: Value, prepared: bool) -> GuestRequest {
-        GuestRequest { abi: PLUGIN_ABI, operation: "discover".into(), category: "C08".into(),
+        GuestRequest { abi: PLUGIN_ABI, operation: "discover".into(), category: "functions".into(),
             company: "C".into(), identity: None, cursor: None, page_size: Some(100),
             state: json!({"phase":"inventory","version":"5.2.100","system":"ERP",
                 "_pluginSettings":settings,"_hostPreparePage":prepared}),
@@ -403,7 +423,7 @@ mod tests {
         }
     }
     #[test]
-    fn literal_library_prefix_validates_all_ids_before_bulk_selection() {
+    fn literal_library_prefix_selects_before_validating_ids() {
         let ids = ["Sample","SampleChild","sample"," Sample ","'Quote","%Literal","_Literal","*Literal","λLib","éLib","e\u{301}Lib"];
         let mut rows: Vec<_> = ids.iter().map(|id|json!({"LibraryID":id})).collect();
         rows.push(json!({"LibraryID":"SampleSystem","SystemFlag":true}));
@@ -424,8 +444,23 @@ mod tests {
                 GuestReply::Failure {diagnostic} if diagnostic.code=="INVALID_SETTING"));
         }
         for invalid_rows in [vec![json!({"LibraryID":"Other"}),json!({"LibraryID":"Other"})],vec![json!({"LibraryID":2})]] {
-            assert!(matches!(handle(prefix_request(invalid_rows,json!({"libraryIdPrefix":"Sample"}),false)),
+            assert!(matches!(handle(prefix_request(invalid_rows.clone(),json!({"libraryIdPrefix":""}),false)),
                 GuestReply::Failure {diagnostic} if diagnostic.code=="FUNCTION_PAGE_INVALID"));
+            // Unselected invalid rows are neither validated nor diagnosed.
+            assert_eq!(requested_ids(handle(prefix_request(invalid_rows,json!({"libraryIdPrefix":"Sample"}),false))),Vec::<Value>::new());
+        }
+    }
+    #[test]
+    fn discovery_query_pushes_down_literal_like_prefix() {
+        let mut request=prefix_request(vec![],json!({"libraryIdPrefix":"Ab%c"}),false);
+        request.state["phase"]=json!("nextPage");request.response=None;request.cursor=Some("{\"after\":\"Aa\"}".into());
+        let GuestReply::Action {action:HostAction::Query {query},..}=handle(request.clone()) else {panic!()};
+        assert_eq!(query.parameters["prefix"],"Ab%");assert_eq!(query.parameters["after"],"Aa");
+        assert!(query.criteria.iter().any(|c|c.operator=="LIKE"&&c.field=="LibraryID"&&c.parameter=="prefix"));
+        for prefix in ["%x","","[a"] {
+            request.state["_pluginSettings"]=json!({"libraryIdPrefix":prefix});
+            let GuestReply::Action {action:HostAction::Query {query},..}=handle(request.clone()) else {panic!()};
+            assert!(!query.parameters.contains_key("prefix"));assert!(query.criteria.iter().all(|c|c.operator!="LIKE"));
         }
     }
     #[test]
@@ -458,7 +493,7 @@ mod tests {
             assert_eq!(records[0].1["definition"][table],json!([data[table][0]]));
         }
         assert_eq!(records[0].1["herbertSources"]["binaryFiles"].as_array().unwrap().len(),2);
-        let mut exact=request;exact.operation="acquire".into();exact.identity=Some(Identity {category:"C08".into(),kind:"EfxLibrary".into(),scope:Scope::Global,keys:BTreeMap::from([("LibraryID".into(),"Other".into())])});
+        let mut exact=request;exact.operation="acquire".into();exact.identity=Some(Identity {category:"functions".into(),kind:"EfxLibrary".into(),scope:Scope::Global,keys:BTreeMap::from([("LibraryID".into(),"Other".into())])});
         exact.state["phase"]=json!("nextPage");exact.response=None;
         let GuestReply::Action {action:HostAction::SharedNativeRead {arguments,..},state}=handle(exact.clone()) else {panic!()};
         assert_eq!(arguments["libraryIds"],json!(["Other"]));
@@ -547,9 +582,9 @@ mod tests {
         let GuestReply::PreparedPage { state, next_cursor, .. } = finish(&state, &data).unwrap() else { panic!() };
         assert_eq!(next_cursor.as_deref(), Some("next"));
         let request = GuestRequest { abi: PLUGIN_ABI, operation:"materialize".into(),
-            category:"C08".into(),company:"TESTCO".into(),identity:None,cursor:None,
+            category:"functions".into(),company:"TESTCO".into(),identity:None,cursor:None,
             page_size:Some(2),state,response:None,error:None };
-        let GuestReply::InventoryData { records, inventory } = crate::handle("C08", request) else { panic!() };
+        let GuestReply::InventoryData { records, inventory } = crate::handle("functions", request) else { panic!() };
         assert!(matches!(*inventory, GuestReply::Inventory { authoritative:true, .. }));
         let files = records[0].1["herbertSources"]["binaryFiles"].as_array().unwrap();
         assert_eq!(files.len(), 2);
@@ -568,10 +603,10 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C08".into(),
+            category: "functions".into(),
             company: "TESTCO".into(),
             identity: Some(Identity {
-                category: "C08".into(),
+                category: "functions".into(),
                 kind: "EfxLibrary".into(),
                 scope: Scope::Global,
                 keys: BTreeMap::from([("LibraryID".into(), "CallLib".into())]),
@@ -642,7 +677,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C08".into(),
+            category: "functions".into(),
             company: "TESTCO".into(),
             identity: None,
             cursor: None,

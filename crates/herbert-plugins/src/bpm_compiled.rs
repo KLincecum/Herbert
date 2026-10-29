@@ -1,4 +1,4 @@
-//! Optional ordinary C06 compiled capture. Native ownership and paperwork live
+//! Optional ordinary BPM directives compiled capture. Native ownership and paperwork live
 //! here; the neutral host queue owns only verified local processing mechanics.
 use herbert_contract::*;
 use serde_json::{Value, json};
@@ -93,7 +93,7 @@ fn context(owner: &Identity, definition: &Value, project: bool) -> Value {
         );
     }
     json!({"schemaVersion":1,"owner":owner,"definitionSha256":digest(&definition["definition"]),"definition":native,"requestedProject":project,
- "evidence":{"root":"Copy the whole backup. Include Herbert Data/raw and the run journal.","ledger":"The run journal managedProcessing.ledger references retained reads and immutable originals. Filter localReads by category C06, alias compiled_bpm, function ReadCompiled and the exact Source/BpMethodCode tuple. Verify native owner/method witnesses against this context. Historical observations do not assert current freshness.","projects":"local-decompilation.json gives actual jobs, inputs and owner-local output FileRefs when a project was queued."},
+ "evidence":{"root":"Copy the whole backup. Include Herbert Data/raw and the run journal.","ledger":"The run journal managedProcessing.ledger references retained reads and immutable originals. Filter localReads by category BPM directives, alias compiled_bpm, function ReadCompiled and the exact Source/BpMethodCode tuple. Verify native owner/method witnesses against this context. Historical observations do not assert current freshness.","projects":"local-decompilation.json gives actual jobs, inputs and owner-local output FileRefs when a project was queued."},
  "interpretation":{"absence":"Verified absence requires complete exact owner/method observations, equal definition/runtime/store witnesses and BeforeRows=AfterRows=0. Failed or unavailable reads do not prove absence.","freshness":"Unknown. A stable stored assembly is not proof that it was compiled from the current authored definition.","symbols":"Only verified matching portable PDBs are supplied externally. Other symbols remain retained evidence.","recovery":"Native recovery uses the .bpm package and persisted workflow. Reconstructed C# is supplementary source and is not guaranteed to build."}})
 }
 fn processing_diagnostic(mut diagnostic: Diagnostic) -> Diagnostic {
@@ -273,7 +273,7 @@ pub fn continue_work(request: &GuestRequest) -> Result<GuestReply, Diagnostic> {
 fn selector(owner: &Identity, definition: &Value) -> Option<(String, String)> {
     let source = owner.keys.get("Source")?;
     let code = owner.keys.get("BpMethodCode")?;
-    if owner.category != "C06"
+    if owner.category != "bpm-directives"
         || owner.scope != Scope::Global
         || owner.keys.len() != 2
         || owner.kind
@@ -405,13 +405,13 @@ fn augment(
             && evidence["Registration"] == evidence["RegistrationAfter"]
             && evidence["BeforeRows"] == evidence["AfterRows"];
         if !associated {
-            diagnostics.push(diagnostic(owner,"BPM_COMPILED_ASSOCIATION_INVALID","Native registration/generator evidence does not prove the exact requested assembly."));
+            diagnostics.push(diagnostic(owner,"BPM_COMPILED_ASSOCIATION_INVALID","Epicor registration/generator evidence does not prove the exact requested assembly."));
         }
         if !authorized {
-            diagnostics.push(diagnostic(owner,"BPM_COMPILED_SCOPE_PARTIAL","The compiled owner includes directives outside the caller-visible native scope. Its bytes were withheld; available native BPM definitions remain preserved."));
+            diagnostics.push(diagnostic(owner,"BPM_COMPILED_SCOPE_PARTIAL","The compiled owner includes directives outside the Epicor user-visible Epicor scope. Its bytes were withheld; available Epicor BPM definitions remain preserved."));
         }
         if !stable {
-            diagnostics.push(diagnostic(owner,"BPM_COMPILED_SOURCE_CHANGING","Native definition/store/registration witnesses changed or do not match the collected definition. Available originals are retained without a current-pair claim."));
+            diagnostics.push(diagnostic(owner,"BPM_COMPILED_SOURCE_CHANGING","Epicor definition/store/registration checks changed or do not match the collected definition. Available originals are retained without a current-pair claim."));
         }
         let all = response
             .and_then(|r| r.pointer("/oDS/Assemblies"))
@@ -645,7 +645,7 @@ mod tests {
     use std::collections::BTreeMap;
     fn owner(source: &str) -> Identity {
         Identity {
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             kind: if source == "BO" {
                 "MethodDirectiveGroup"
             } else {
@@ -704,7 +704,7 @@ mod tests {
         let request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "materialize".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "TESTCO".into(),
             identity: None,
             cursor: None,
@@ -831,7 +831,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "materialize".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "TESTCO".into(),
             identity: None,
             cursor: None,
@@ -947,7 +947,7 @@ mod tests {
             let mut request = GuestRequest {
                 abi: PLUGIN_ABI,
                 operation: operation.into(),
-                category: "C06".into(),
+                category: "bpm-directives".into(),
                 company: "TESTCO".into(),
                 identity: (operation == "acquire").then(|| owners[0].clone()),
                 cursor: None,
@@ -1043,7 +1043,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "TESTCO".into(),
             identity: Some(owner("DB")),
             cursor: None,
@@ -1096,7 +1096,7 @@ mod tests {
         let request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "TESTCO".into(),
             identity: Some(owner("BO")),
             cursor: None,

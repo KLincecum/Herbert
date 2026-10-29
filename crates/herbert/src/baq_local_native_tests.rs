@@ -1,4 +1,4 @@
-//! Opt-in lab reads for local BAQ export qualification. No helper is installed.
+//! Opt-in test reads for local BAQ export test. No helper is installed.
 use crate::input::AuthMode;
 use crate::{connection::Connection, profiles, scheduler::Budget};
 use herbert_contract::OperatingSettings;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
-#[ignore = "Requires the isolated C04 WASM candidate and a retained lab response."]
+#[ignore = "Requires the isolated BAQs and UBAQs WASM candidate and a retained test response."]
 async fn local_baq_large_response_wasm() {
     use herbert_contract::{GuestReply, GuestRequest, HostAction, PLUGIN_ABI};
     let base = PathBuf::from(std::env::var("HERBERT_BAQ_EVIDENCE").unwrap());
@@ -15,7 +15,7 @@ async fn local_baq_large_response_wasm() {
         .await
         .unwrap();
     let original: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(base.join("lab-2026-1-complete/rows-100-1.json")).unwrap(),
+        &std::fs::read(base.join(format!("{}-complete/rows-100-1.json", crate::test_targets::lane("2026.1").1))).unwrap(),
     )
     .unwrap();
     let mut data = original["returnObj"].clone();
@@ -43,7 +43,7 @@ async fn local_baq_large_response_wasm() {
     let mut request = GuestRequest {
         abi: PLUGIN_ABI,
         operation: "discover".into(),
-        category: "C04".into(),
+        category: "baqs-and-ubaqs".into(),
         company: "TESTCO".into(),
         identity: None,
         cursor: None,
@@ -91,14 +91,11 @@ async fn local_baq_large_response_wasm() {
 }
 
 #[tokio::test]
-#[ignore = "Requires an explicit lab profile and output directory."]
+#[ignore = "Requires an explicit test profile and output directory."]
 async fn gather_local_baq_evidence() {
     let profile = std::env::var("HERBERT_BAQ_LAB_PROFILE").unwrap();
-    let endpoint = match profile.as_str() {
-        "lab-2026-1" => "https://kinetic-2026-1.lab.test:9448/",
-        "lab-2025-2" => "https://kinetic-2025-2.lab.test:9449/",
-        _ => panic!("Select one of the two lab profiles."),
-    };
+    let lane = crate::test_targets::lane_for_profile(&profile).expect("Select a configured test profile.");
+    let endpoint = crate::test_targets::lane(lane).0;
     let output = PathBuf::from(std::env::var("HERBERT_BAQ_LAB_OUTPUT").unwrap());
     assert!(!output.exists(), "Preserve previous evidence.");
     std::fs::create_dir_all(&output).unwrap();
@@ -184,8 +181,8 @@ async fn gather(
                 "(Company = 'TESTCO' OR Company = '') AND SystemFlag = false AND Updatable = false"
             );
             if bulk_probe {
-                // Vendor queries supply a read-only volume specimen in the labs.
-                // This qualification branch does not export or collect those queries.
+                // Vendor queries supply a read-only volume specimen in the tests.
+                // This test branch does not export or collect those queries.
                 arguments["whereClauseDynamicQueryDesigner"] = json!("Updatable = false");
             }
             let response = connection

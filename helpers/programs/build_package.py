@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 root=Path(__file__).resolve().parent
-plugin=root.parents[1]/'crates/herbert-plugins/packages/c22/artifacts'
+plugin=root.parents[1]/'crates/herbert-plugins/packages/programs-and-extensions/artifacts'
 code=(root/'src/read-internal-metadata.cs').read_text(encoding='utf-8')
 for version in ('5.1.100','5.2.100'):
  file=root/('HerbertPrograms-'+version+'.efxj')

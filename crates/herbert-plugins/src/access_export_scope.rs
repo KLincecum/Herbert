@@ -16,7 +16,7 @@ pub fn start(request: &mut GuestRequest) -> Option<HostAction> {
             request,
             Diagnostic::new(
                 "ACCESS_EXPORT_COMPANY_UNSUPPORTED",
-                "The native exporter only supports the session company. The filtered definition is retained without a mismatched native export.",
+                "Epicor's export only supports the session company. The filtered definition is retained without a mismatched Epicor's export.",
             ),
         );
     }
@@ -43,7 +43,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
             request,
             Diagnostic::new(
                 "ACCESS_EXPORT_SCOPE_UNVERIFIED",
-                "The native export scope checkpoint is invalid.",
+                "Epicor's export scope saved progress is invalid.",
             ),
         );
     };
@@ -53,7 +53,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
                 request,
                 Diagnostic::new(
                     "ACCESS_EXPORT_SCOPE_UNVERIFIED",
-                    "The native export ownership query omitted its rows.",
+                    "Epicor's export ownership query omitted its rows.",
                 ),
             );
         };
@@ -76,7 +76,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
                 request,
                 Diagnostic::new(
                     "ACCESS_NATIVE_EXPORT_MIXED_SCOPE",
-                    "The native access scope export includes system-marked definitions. Only independently filtered custom definitions are retained; the unfiltered native export is unavailable.",
+                    "The Epicor access scope export includes system-marked definitions. Only independently filtered custom definitions are retained; the unfiltered Epicor's export is unavailable.",
                 ),
             );
         }
@@ -175,10 +175,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C26".into(),
+            category: "access-and-assignments".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C26".into(),
+                category: "access-and-assignments".into(),
                 kind: "AccessScope".into(),
                 scope: Scope::Company {
                     company: "C".into(),

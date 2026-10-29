@@ -1,17 +1,17 @@
-//! C20 actual compiled guest and native-response replay through real output storage.
+//! Business rules and mappings actual compiled guest and native-response replay through real output storage.
 use herbert_contract::*;
 use serde_json::{Value,json};
 use std::{path::PathBuf,sync::{Arc,Mutex}};
 use tokio_util::sync::CancellationToken;
 #[tokio::test]
-#[ignore="Explicit private retained inputs and compiled C20 performance comparison"]
-async fn c20_local_performance_replay(){
- let source=PathBuf::from(std::env::var("HERBERT_C20_LOCAL_SOURCE").unwrap());
- let report=PathBuf::from(std::env::var("HERBERT_C20_LOCAL_REPORT").unwrap());
- let wasm=PathBuf::from(std::env::var("HERBERT_C20_WASM").unwrap());
+#[ignore="Explicit private retained inputs and compiled Business rules and mappings performance comparison"]
+async fn business_rules_and_mappings_local_performance_replay(){
+ let source=PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_LOCAL_SOURCE").unwrap());
+ let report=PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_LOCAL_REPORT").unwrap());
+ let wasm=PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_WASM").unwrap());
  let mut manifest:Value=serde_json::from_slice(&std::fs::read(source.join("Herbert Data/manifest.json")).unwrap()).unwrap();
  let mut retained:Vec<Value>=manifest["retainedFiles"].as_object().unwrap().values().cloned().collect();
- if std::env::var_os("HERBERT_C20_LOCAL_LAB").is_some(){
+ if std::env::var_os("HERBERT_BUSINESS_RULES_AND_MAPPINGS_LOCAL_LAB").is_some(){
   let receipt:Value=serde_json::from_slice(&std::fs::read(source.parent().unwrap().join("result.json")).unwrap()).unwrap();
   manifest["artifacts"]=Value::Object(receipt["artifacts"].as_array().unwrap().iter().enumerate().map(|(i,a)|(i.to_string(),a.clone())).collect());manifest["company"]=json!("TESTCO");
   let replay:Value=serde_json::from_slice(&std::fs::read(source.parent().unwrap().parent().unwrap().join("replay-manifest.json")).unwrap()).unwrap();
@@ -25,7 +25,7 @@ async fn c20_local_performance_replay(){
  let started=std::time::Instant::now();let plugin=crate::plugins::Plugin::load(&wasm).await.unwrap();let cancel=CancellationToken::new();
  let temporary=tempfile::tempdir().unwrap();let mut state=crate::storage::new_journal("local-performance".into());state.company=manifest["company"].as_str().unwrap().into();
  let mut storage=crate::storage::Storage::open(temporary.path(),false,state).unwrap();
- let mut request=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"C20".into(),company:manifest["company"].as_str().unwrap().into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true}),response:None,error:None};
+ let mut request=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"business-rules-and-mappings".into(),company:manifest["company"].as_str().unwrap().into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true}),response:None,error:None};
  let mut calls=vec![];let mut write_ms=0;let mut plugin_ms=0;let mut first_ready_ms=None;let mut items=std::collections::VecDeque::new();let mut after_items=None;let mut reads=0;
  loop{
   request.state["_hostIndependentWorkItems"]=json!(true);
@@ -63,15 +63,15 @@ async fn c20_local_performance_replay(){
  let result=json!({"source":source,"wasm":wasm,"pluginSha256":plugin.hash,"elapsedMs":started.elapsed().as_millis(),"pluginMicros":plugin_ms,"writerMs":write_ms,"firstReadyMs":first_ready_ms,"calls":calls,"filesByteIdentical":file_count,"artifacts":storage.journal.artifacts.len(),"noNetwork":true});std::fs::write(report,serde_json::to_vec_pretty(&result).unwrap()).unwrap();println!("{}",json!({"elapsedMs":result["elapsedMs"],"pluginMicros":result["pluginMicros"],"firstReadyMs":result["firstReadyMs"],"filesByteIdentical":file_count}));
 }
 #[tokio::test]
-#[ignore="Explicit compiled C20 and private two-lab retained native responses"]
-async fn c20_compiled_recovery_replay(){
- let base=PathBuf::from(std::env::var("HERBERT_C20_REPLAY").unwrap());let wasm=PathBuf::from(std::env::var("HERBERT_C20_WASM").unwrap());let mut plugin=crate::plugins::Plugin::load(&wasm).await.unwrap();let cancel=CancellationToken::new();let pool=crate::file_writers::WriterPool::default();
- let independent=std::env::var_os("HERBERT_C20_INDEPENDENT_RECOVERY").is_some();
+#[ignore="Explicit compiled Business rules and mappings and private two-environment retained native responses"]
+async fn business_rules_and_mappings_compiled_recovery_replay(){
+ let base=PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_REPLAY").unwrap());let wasm=PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_WASM").unwrap());let mut plugin=crate::plugins::Plugin::load(&wasm).await.unwrap();let cancel=CancellationToken::new();let pool=crate::file_writers::WriterPool::default();
+ let independent=std::env::var_os("HERBERT_BUSINESS_RULES_AND_MAPPINGS_INDEPENDENT_RECOVERY").is_some();
  for lane in ["2026.1","2025.2"]{
   let folder=base.join(lane);let manifest:Value=serde_json::from_slice(&std::fs::read(folder.join("replay-manifest.json")).unwrap()).unwrap();
   let read=|branch:&str,key:&str|->Value{let path=manifest[branch][key].as_str().unwrap();serde_json::from_slice(&std::fs::read(folder.join(manifest["collection"].as_str().unwrap()).join(path)).unwrap()).unwrap()};
-  let temporary=tempfile::tempdir().unwrap();let mut journal=crate::storage::new_journal("c20-wasm-recovery".into());journal.company="TESTCO".into();let shared=Arc::new(Mutex::new(crate::storage::Storage::open(temporary.path(),false,journal).unwrap()));
-  let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"C20".into(),company:"TESTCO".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true}),response:None,error:None};let mut retained=vec![];let mut reads=0;let mut restarts=0;let mut items=std::collections::VecDeque::new();let mut after_items=None;
+  let temporary=tempfile::tempdir().unwrap();let mut journal=crate::storage::new_journal("business-rules-and-mappings-wasm-recovery".into());journal.company="TESTCO".into();let shared=Arc::new(Mutex::new(crate::storage::Storage::open(temporary.path(),false,journal).unwrap()));
+  let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"business-rules-and-mappings".into(),company:"TESTCO".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true}),response:None,error:None};let mut retained=vec![];let mut reads=0;let mut restarts=0;let mut items=std::collections::VecDeque::new();let mut after_items=None;
   loop{
    r.state["_hostIndependentWorkItems"]=json!(independent);
    match plugin.call(r.clone(),cancel.clone()).await.unwrap(){
@@ -79,9 +79,9 @@ async fn c20_compiled_recovery_replay(){
      HostAction::NativeRead{service,method,..}if method=="GetRows"=>read("native",&service),
      HostAction::SharedNativeRead{service,method,..}if method=="GetRows"=>read("native",&service),
      HostAction::NativeRead{method,arguments,..}if method=="Execute"=>{reads+=1;read("queries",arguments["queryDS"]["DynamicQuery"][0]["QueryID"].as_str().unwrap())},
-     other=>panic!("Unexpected C20 request {other:?}")});}
+     other=>panic!("Unexpected Business rules and mappings request {other:?}")});}
     GuestReply::PreparedPage{state,..}=>{r.operation="materialize".into();r.state=state;r.response=None;let bytes=serde_json::to_vec(&r).unwrap();let stopped=CancellationToken::new();stopped.cancel();assert!(plugin.call(r.clone(),stopped).await.is_err());plugin=crate::plugins::Plugin::load(&wasm).await.unwrap();r=serde_json::from_slice(&bytes).unwrap();restarts+=1;
-     if let Some((work,next))=crate::application::ready_output::independent_work(&mut r).unwrap(){items=work.into();after_items=Some(next);r.state=items.pop_front().expect("Populated lab fixture work items");}
+     if let Some((work,next))=crate::application::ready_output::independent_work(&mut r).unwrap(){items=work.into();after_items=Some(next);r.state=items.pop_front().expect("Populated test fixture work items");}
     }
     GuestReply::ReadyRecords{records,state}=>{
      assert!(records.iter().all(|(_,d)|d["herbertCollectionStatus"]["completeness"]=="collected"));retained.extend(records.clone());let stopped=CancellationToken::new();stopped.cancel();let before=shared.lock().unwrap().journal.artifacts.len();assert!(crate::collection_output::write_shared_page(shared.clone(),crate::collection_output::prepare_page(records.clone()).unwrap(),&pool,&stopped,|_|{}).is_err());assert_eq!(shared.lock().unwrap().journal.artifacts.len(),before);crate::collection_output::write_shared_page(shared.clone(),crate::collection_output::prepare_page(records).unwrap(),&pool,&cancel,|_|{}).unwrap();shared.lock().unwrap().checkpoint().unwrap();r.state=state;r.response=None;
@@ -89,11 +89,11 @@ async fn c20_compiled_recovery_replay(){
     GuestReply::Inventory{authoritative,mut next_cursor,diagnostics,..}=>{assert!(authoritative&&diagnostics.is_empty(),"{diagnostics:?}");
      if after_items.is_some(){if let Some(state)=items.pop_front(){r.state=state;r.response=None;continue;}next_cursor=after_items.take().unwrap();}
      if next_cursor.is_none(){break;}r.operation="discover".into();r.cursor=next_cursor;r.state=json!({"_hostPreparePage":true});r.response=None;}
-    other=>panic!("Unexpected C20 reply {other:?}")
+    other=>panic!("Unexpected Business rules and mappings reply {other:?}")
    }
   }
   assert_eq!(reads,1);assert_eq!(retained.len(),5);assert_eq!(restarts,3);
   let storage=Arc::try_unwrap(shared).ok().unwrap().into_inner().unwrap();let journal=storage.journal.clone();drop(storage);let mut storage=crate::storage::Storage::open(temporary.path(),false,journal).unwrap();let missing=storage.journal.artifacts.iter().flat_map(|a|&a.files).find(|f|f.path.ends_with(".xml")).unwrap().clone();let expected=std::fs::read(storage.confined(&missing.path).unwrap()).unwrap();std::fs::remove_file(storage.confined(&missing.path).unwrap()).unwrap();storage.reconcile_downloads().unwrap();crate::collection_output::write_page(&mut storage,retained).unwrap();assert_eq!(std::fs::read(storage.confined(&missing.path).unwrap()).unwrap(),expected);let mut count=0;for artifact in &storage.journal.artifacts{assert_eq!(artifact.acquisition,Completeness::Collected);for file in &artifact.files{storage.verify(file).unwrap();count+=1;}}
-  let result=json!({"lane":lane,"qualified":true,"pluginSha256":plugin.hash,"independentWorkItems":independent,"proof":"actual C20 WASM with exclusively retained native lab responses; actual host writer and storage reopen","cancelBeforeMaterialization":true,"cancelBeforeWriter":true,"freshGuestResumes":restarts,"missingXmlRestoredExactly":true,"artifacts":storage.journal.artifacts.len(),"files":count,"bulkQueries":reads});std::fs::write(folder.join(if independent{"compiled-recovery-independent.json"}else{"compiled-recovery.json"}),serde_json::to_vec_pretty(&result).unwrap()).unwrap();println!("{result}");drop(storage);temporary.close().unwrap();
+  let result=json!({"lane":lane,"tested":true,"pluginSha256":plugin.hash,"independentWorkItems":independent,"proof":"actual Business rules and mappings WASM with exclusively retained native test responses; actual host writer and storage reopen","cancelBeforeMaterialization":true,"cancelBeforeWriter":true,"freshGuestResumes":restarts,"missingXmlRestoredExactly":true,"artifacts":storage.journal.artifacts.len(),"files":count,"bulkQueries":reads});std::fs::write(folder.join(if independent{"compiled-recovery-independent.json"}else{"compiled-recovery.json"}),serde_json::to_vec_pretty(&result).unwrap()).unwrap();println!("{result}");drop(storage);temporary.close().unwrap();
  }
 }

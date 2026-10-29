@@ -223,10 +223,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C18".into(),
+            category: "report-behavior".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C18".into(),
+                category: "report-behavior".into(),
                 kind: "PersistedReportStyleRule".into(),
                 scope: Scope::Company {
                     company: "C".into(),

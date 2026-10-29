@@ -31,15 +31,15 @@ fn selected_stream(i:usize,state:&Value)->Result<bool,Diagnostic>{let family=fam
 fn selected_identity(identity:&Identity,state:&Value)->Result<bool,Diagnostic>{let i=FAMILIES.iter().position(|f|f.0==identity.kind||identity.kind=="NativeAutomationEvidence"&&identity.keys.get("Family").is_some_and(|v|v==f.0)).ok_or_else(||err("Unknown automation output owner."))?;selected_stream(i,state)}
 fn native_fallback_admission(native:&Value,i:usize,company:&str)->Result<(),Diagnostic>{
     let tables=FAMILIES[i].2;let root=tables[0];let keys:&[&str]=match i{0=>&["AgentID"],1=>&["Company","SystemCode","ProcessID"],2=>&["Company","MessageTemplateID","LangNameID"],_=>&["Company","Alertnum"]};
-    for table in tables.iter().filter(|table|**table!="ProcessTaskParam"){let rows=native[*table].as_array().ok_or_else(||err("Native fallback omitted a required table."))?;let mut ids=BTreeSet::new();for row in rows{let id=row["SysRowID"].as_str().filter(|id|!id.is_empty()).ok_or_else(||err("Native fallback omitted a physical identity."))?;if !ids.insert(id.to_ascii_lowercase()){return Err(err("Native fallback repeats a physical identity."));}}}
-    let roots=native[root].as_array().ok_or_else(||err("Native fallback omitted automation roots."))?;let mut seen=BTreeSet::new();
-    for row in roots{if !seen.insert(rowkey(row,keys)?){return Err(err("Native fallback repeats an automation root."));}if matches!(i,1|2)&&row["SystemFlag"]!=false{return Err(err("Native fallback contains an unadmitted system root."));}if i!=0{let owner=row["Company"].as_str().ok_or_else(||err("Native fallback omitted company."))?;if owner!=""&&owner!=company&&!(i==2&&matches!(row["CompanyVisibility"].as_u64(),Some(5|10))){return Err(err("Native fallback contains a foreign automation owner."));}}}
+    for table in tables.iter().filter(|table|**table!="ProcessTaskParam"){let rows=native[*table].as_array().ok_or_else(||err("Epicor fallback omitted a required table."))?;let mut ids=BTreeSet::new();for row in rows{let id=row["SysRowID"].as_str().filter(|id|!id.is_empty()).ok_or_else(||err("Epicor fallback omitted a physical identity."))?;if !ids.insert(id.to_ascii_lowercase()){return Err(err("Epicor fallback repeats a physical identity."));}}}
+    let roots=native[root].as_array().ok_or_else(||err("Epicor fallback omitted automation roots."))?;let mut seen=BTreeSet::new();
+    for row in roots{if !seen.insert(rowkey(row,keys)?){return Err(err("Epicor fallback repeats an automation root."));}if matches!(i,1|2)&&row["SystemFlag"]!=false{return Err(err("Epicor fallback contains an unadmitted system root."));}if i!=0{let owner=row["Company"].as_str().ok_or_else(||err("Epicor fallback omitted company."))?;if owner!=""&&owner!=company&&!(i==2&&matches!(row["CompanyVisibility"].as_u64(),Some(5|10))){return Err(err("Epicor fallback contains a foreign automation owner."));}}}
     for table in tables.iter().skip(1).filter(|table|**table!="ProcessTaskParam"){
-        let rows=native[*table].as_array().ok_or_else(||err("Native fallback omitted automation children."))?;let mut seen=BTreeSet::new();
-        for row in rows{let child_keys:&[&str]=match *table{"SysAgentSched"=>&["AgentID","AgentSchedNum"],"SysAgentTask"=>&["AgentID","AgentSchedNum","AgentTaskNum"],"SysAgentTaskParam"=>&["AgentID","AgentSchedNum","AgentTaskNum","ParamName"],_=>&["Company","SystemCode","ProcessID","SysTaskNum"]};if !seen.insert(rowkey(row,child_keys)?){return Err(err("Native fallback repeats an automation child."));}if !roots.iter().any(|root|matches(row,root,keys)){return Err(err("Native fallback child has no admitted root."));}if let Some(owner)=row.get("Company"){if owner!=""&&owner!=company{return Err(err("Native fallback contains a foreign task owner."));}}
-            if *table=="ProcessTask"&&(row["SystemFlag"]!=false||row["History"]!=false){return Err(err("Native fallback contains a system/history process task."));}
-            if *table=="SysAgentTask"&&(row["IsSystemTask"]!=false||!native["SysAgentSched"].as_array().unwrap().iter().any(|parent|matches(row,parent,&["AgentID","AgentSchedNum"]))){return Err(err("Native fallback task has no admitted schedule."));}
-            if *table=="SysAgentTaskParam"&&!native["SysAgentTask"].as_array().unwrap().iter().any(|parent|matches(row,parent,&["AgentID","AgentSchedNum","AgentTaskNum"])){return Err(err("Native fallback parameter has no admitted task."));}
+        let rows=native[*table].as_array().ok_or_else(||err("Epicor fallback omitted automation children."))?;let mut seen=BTreeSet::new();
+        for row in rows{let child_keys:&[&str]=match *table{"SysAgentSched"=>&["AgentID","AgentSchedNum"],"SysAgentTask"=>&["AgentID","AgentSchedNum","AgentTaskNum"],"SysAgentTaskParam"=>&["AgentID","AgentSchedNum","AgentTaskNum","ParamName"],_=>&["Company","SystemCode","ProcessID","SysTaskNum"]};if !seen.insert(rowkey(row,child_keys)?){return Err(err("Epicor fallback repeats an automation child."));}if !roots.iter().any(|root|matches(row,root,keys)){return Err(err("Epicor fallback child has no allowed to start root."));}if let Some(owner)=row.get("Company"){if owner!=""&&owner!=company{return Err(err("Epicor fallback contains a foreign task owner."));}}
+            if *table=="ProcessTask"&&(row["SystemFlag"]!=false||row["History"]!=false){return Err(err("Epicor fallback contains a system/history process task."));}
+            if *table=="SysAgentTask"&&(row["IsSystemTask"]!=false||!native["SysAgentSched"].as_array().unwrap().iter().any(|parent|matches(row,parent,&["AgentID","AgentSchedNum"]))){return Err(err("Epicor fallback task has no allowed to start schedule."));}
+            if *table=="SysAgentTaskParam"&&!native["SysAgentTask"].as_array().unwrap().iter().any(|parent|matches(row,parent,&["AgentID","AgentSchedNum","AgentTaskNum"])){return Err(err("Epicor fallback parameter has no allowed to start task."));}
         }
     }
     Ok(())
@@ -123,7 +123,7 @@ fn metadata(response: &Value, stream: usize) -> Result<Value, Diagnostic> {
     }
     let roots = b["ZDataTable"]
         .as_array()
-        .ok_or_else(|| err("The native schema omitted tables."))?;
+        .ok_or_else(|| err("The Epicor schema omitted tables."))?;
     let mut found = BTreeSet::new();
     for r in roots {
         let t = r["DataTableID"]
@@ -149,13 +149,13 @@ fn metadata(response: &Value, stream: usize) -> Result<Value, Diagnostic> {
     }
     for f in b["ZDataField"]
         .as_array()
-        .ok_or_else(|| err("The native schema omitted fields."))?
+        .ok_or_else(|| err("The Epicor schema omitted fields."))?
     {
         let t = f["DataTableID"]
             .as_str()
             .ok_or_else(|| err("A schema field has no table."))?;
         if !tables.contains(&t) {
-            return Err(err("Foreign schema field."));
+            return Err(err("Epicor described a field that does not belong to this definition, so Herbert did not save it."));
         }
         if f["External"] == true {
             continue;
@@ -190,16 +190,16 @@ fn metadata(response: &Value, stream: usize) -> Result<Value, Diagnostic> {
 }
 fn payload(fs: &Value, alias: &str, filter: bool) -> Result<String, Diagnostic> {
     let mut cells = vec![];
-    for f in fs.as_array().ok_or_else(|| err("Invalid graph fields."))? {
+    for f in fs.as_array().ok_or_else(|| err("Epicor returned a definition in a form Herbert does not recognize, so it was not saved."))? {
         let name = f["FieldName"]
             .as_str()
-            .ok_or_else(|| err("Missing graph field name."))?;
+            .ok_or_else(|| err("Missing record set field name."))?;
         if !crate::report_query::identifier(name) {
-            return Err(err("Invalid graph field identifier."));
+            return Err(err("Invalid record set field identifier."));
         }
         let ty = f["DataType"]
             .as_str()
-            .ok_or_else(|| err("Missing graph field type."))?;
+            .ok_or_else(|| err("Missing record set field type."))?;
         let col = format!("{alias}.{name}");
         let value = match ty {
             "nvarchar" | "varchar" | "nchar" | "char" | "xml" | "uniqueidentifier" | "datetime"
@@ -220,7 +220,7 @@ fn payload(fs: &Value, alias: &str, filter: bool) -> Result<String, Diagnostic> 
             "float" | "real" => format!("CONVERT(nvarchar(max),{col},3)"),
             _ => {
                 return Err(err(
-                    "A native graph field type has no lossless JSON projection.",
+                    "An Epicor record set field type has no lossless JSON projection.",
                 ));
             }
         };
@@ -367,7 +367,10 @@ fn build(
                 }
             }
 
-            // Persist only rows admitted by the native service under this caller.
+            // Persist only rows admitted by the native service under this caller. The query is
+            // restricted to the admitted SysRowIDs so unadmitted rows never reach the response:
+            // the host retains native response bodies verbatim as raw evidence before decoding.
+            // decode's local admission filter remains as a second guard.
             let (visibility_table, visibility_alias) = if *table == "ProcessTaskParam" {
                 ("ProcessTask", task_owner.as_str())
             } else {
@@ -375,7 +378,7 @@ fn build(
             };
             let admitted = visible[visibility_table]
                 .as_array()
-                .ok_or_else(|| err("Missing native service visibility contract."))?;
+                .ok_or_else(|| err("Missing Epicor service visibility contract."))?;
             if admitted.is_empty() {
                 criterion(
                     &alias,
@@ -389,7 +392,7 @@ fn build(
                 for (vi, id) in admitted.iter().enumerate() {
                     let value = id
                         .as_str()
-                        .ok_or_else(|| err("Invalid admitted native row identity."))?;
+                        .ok_or_else(|| err("Invalid allowed to start Epicor row identity."))?;
                     criterion(
                         visibility_alias,
                         "SysRowID",
@@ -443,17 +446,32 @@ fn decode(
     meta: &Value,
     company: &str,
     stream: usize,
+    visible: &Value,
 ) -> Result<Value, Diagnostic> {
     if response["returnObj"]["Errors"]
         .as_array()
         .is_some_and(|v| !v.is_empty())
     {
-        return Err(err("The native automation graph returned errors."));
+        return Err(err("The Epicor automation record set returned errors."));
     }
     let tables = FAMILIES[stream].2;
+    // Admitted SysRowIDs per table; ProcessTaskParam is restricted server-side instead.
+    let mut admitted: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for t in tables.iter().filter(|t| **t != "ProcessTaskParam") {
+        let ids = visible[*t]
+            .as_array()
+            .ok_or_else(|| err("Missing Epicor service visibility contract."))?;
+        let set = ids
+            .iter()
+            .map(|v| v.as_str().map(str::to_ascii_lowercase))
+            .collect::<Option<BTreeSet<_>>>()
+            .ok_or_else(|| err("Invalid allowed to start Epicor row identity."))?;
+        admitted.insert(*t, set);
+    }
+    let mut returned: BTreeMap<&str, usize> = BTreeMap::new();
     let rows = response["returnObj"]["Results"]
         .as_array()
-        .ok_or_else(|| err("The graph omitted Results."))?;
+        .ok_or_else(|| err("The record set omitted Results."))?;
     let mut graph = json!({});
     for t in tables {
         graph[*t] = json!([]);
@@ -464,30 +482,30 @@ fn decode(
         let table = wire["Kind"]
             .as_str()
             .filter(|t| tables.contains(t))
-            .ok_or_else(|| err("Unknown automation graph table."))?;
+            .ok_or_else(|| err("Unknown automation record set table."))?;
         let n = wire["Total"]
             .as_i64()
-            .ok_or_else(|| err("Missing automation graph total."))?;
+            .ok_or_else(|| err("Missing automation record set total."))?;
         if n >= 0 {
             if !wire["Payload"].is_null() || totals.insert(table, n as usize).is_some() {
-                return Err(err("Invalid graph count manifest."));
+                return Err(err("Invalid record set count manifest."));
             }
             continue;
         }
         if n != -1 {
-            return Err(err("Invalid graph row marker."));
+            return Err(err("Invalid record set row marker."));
         }
         let cells: Vec<Value> = serde_json::from_str(
             wire["Payload"]
                 .as_str()
-                .ok_or_else(|| err("Missing graph payload."))?,
+                .ok_or_else(|| err("Epicor's response did not include the definition data. Nothing was saved for this item."))?,
         )
-        .map_err(|_| err("Invalid graph JSON."))?;
+        .map_err(|_| err("Epicor returned a definition in a form Herbert does not recognize, so it was not saved."))?;
         let fs = meta[table]
             .as_array()
-            .ok_or_else(|| err("Missing graph schema."))?;
+            .ok_or_else(|| err("Epicor's response did not describe the definition's fields. Nothing was saved for this item."))?;
         if cells.len() != fs.len() {
-            return Err(err("Graph field count differs from native schema."));
+            return Err(err("Record set field count differs from Epicor schema."));
         }
         let mut row: Value = Value::Object(
             fs.iter()
@@ -509,22 +527,29 @@ fn decode(
         let id = row["SysRowID"]
             .as_str()
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| err("Missing physical graph identity."))?;
+            .ok_or_else(|| err("Missing physical record set identity."))?;
         if !seen.insert((table, id.to_ascii_lowercase())) {
-            return Err(err("Duplicate graph identity."));
+            return Err(err("Epicor returned the same record more than once, so Herbert cannot tell which copy is correct. This item was not saved."));
+        }
+        *returned.entry(table).or_default() += 1;
+        if admitted
+            .get(table)
+            .is_some_and(|ids| !ids.contains(&id.to_ascii_lowercase()))
+        {
+            continue;
         }
         if row.get("Company").is_some()
             && row["Company"] != company
             && row["Company"] != ""
             && !(stream == 2 && matches!(row["CompanyVisibility"].as_u64(), Some(5 | 10)))
         {
-            return Err(err("Foreign automation company."));
+            return Err(err("Epicor returned an automation definition that belongs to a different company than the one selected. It was not saved."));
         }
         graph[table].as_array_mut().unwrap().push(row);
     }
     for t in tables {
-        if totals.get(t) != Some(&graph[*t].as_array().unwrap().len()) {
-            return Err(err("The graph is missing rows or its count manifest."));
+        if totals.get(t) != Some(returned.get(t).unwrap_or(&0)) {
+            return Err(err("The record set is missing rows or its count manifest."));
         }
         graph[*t]
             .as_array_mut()
@@ -545,13 +570,13 @@ fn rowkey(row: &Value, keys: &[&str]) -> Result<Vec<String>, Diagnostic> {
         .map(|k| {
             let v = row
                 .get(*k)
-                .ok_or_else(|| err("A native automation key is missing."))?;
+                .ok_or_else(|| err("An Epicor automation key is missing."))?;
             if let Some(s) = v.as_str() {
                 Ok(s.to_ascii_lowercase())
             } else if v.is_i64() || v.is_u64() {
                 Ok(v.to_string())
             } else {
-                Err(err("A native automation key has an invalid type."))
+                Err(err("An Epicor automation key has an invalid type."))
             }
         })
         .collect()
@@ -568,7 +593,7 @@ fn records(
     let root_table = tables[0];
     let roots = graph[root_table]
         .as_array()
-        .ok_or_else(|| err("Missing automation roots."))?;
+        .ok_or_else(|| err("Epicor's response contained no automation definitions where some were expected. Nothing was saved for this page."))?;
     let keys: &[&str] = match stream {
         0 => &["AgentID"],
         1 => &["Company", "SystemCode", "ProcessID"],
@@ -580,11 +605,11 @@ fn records(
     for root in roots {
         let k = rowkey(root, keys)?;
         if !seen.insert(k) {
-            return Err(err("The automation graph repeats a native root identity."));
+            return Err(err("The automation record set repeats an Epicor root identity."));
         }
         if matches!(stream, 1 | 2) && root["SystemFlag"] != false {
             return Err(err(
-                "A system-marked definition reached the authored graph.",
+                "A system-marked definition reached the authored record set.",
             ));
         }
         let owner = if stream == 0 {
@@ -592,7 +617,7 @@ fn records(
         } else {
             root["Company"]
                 .as_str()
-                .ok_or_else(|| err("Missing automation company."))?
+                .ok_or_else(|| err("Epicor did not say which company this automation definition belongs to, so it was not saved."))?
         };
         if !owner.is_empty()
             && owner != company
@@ -607,7 +632,7 @@ fn records(
             return Err(err("Foreign automation root company."));
         }
         let identity = Identity {
-            category: "C25".into(),
+            category: "automation-and-integrations".into(),
             kind: kind.into(),
             scope: if owner.is_empty() {
                 Scope::Global
@@ -640,7 +665,7 @@ fn records(
             data[*t] = json!(
                 graph[*t]
                     .as_array()
-                    .ok_or_else(|| err("Missing automation children."))?
+                    .ok_or_else(|| err("Epicor returned an automation definition without its parts, so it was not saved."))?
                     .iter()
                     .filter(|r| matches(r, root, keys))
                     .cloned()
@@ -652,7 +677,7 @@ fn records(
             let mut sk = BTreeSet::new();
             for s in schedules {
                 if !sk.insert(rowkey(s, &["AgentID", "AgentSchedNum"])?) {
-                    return Err(err("Duplicate schedule identity."));
+                    return Err(err("Epicor returned the same schedule more than once, so Herbert cannot tell which copy is correct. The automation was not saved."));
                 }
             }
             let tasks = data["SysAgentTask"].as_array().unwrap();
@@ -805,7 +830,7 @@ fn complete(
                     .cloned()
                     .collect();
                 for field in unsupported {
-                    source_only_fields.push(json!({"table":table,"sysRowID":row["SysRowID"],"field":field,"reason":"Physical source field is absent from the native typed service row; no native write compatibility is established."}));
+                    source_only_fields.push(json!({"table":table,"sysRowID":row["SysRowID"],"field":field,"reason":"Physical source field is absent from the Epicor typed service row; no change in Epicor compatibility is established."}));
                     row.as_object_mut().unwrap().remove(&field);
                 }
                 for (k, v) in original.as_object().unwrap() {
@@ -884,7 +909,7 @@ fn process_recovery(data: &Value) -> Result<Value, Diagnostic> {
     let mut out = vec![];
     for task in data["ProcessTask"]
         .as_array()
-        .ok_or_else(|| err("Missing process tasks."))?
+        .ok_or_else(|| err("Epicor did not return the tasks of this process set, so it was not saved."))?
     {
         let params = data["ProcessTaskParam"]
             .as_array()
@@ -909,14 +934,14 @@ fn process_recovery(data: &Value) -> Result<Value, Diagnostic> {
         let Some((system, dataset)) = system.zip(dataset).filter(|(s, d)| {
             crate::report_query::identifier(s) && crate::report_query::identifier(d)
         }) else {
-            out.push(json!({"task":task,"recovery":"source-only","reason":"Native parameter dataset provenance is missing or invalid.","parameters":params}));
+            out.push(json!({"task":task,"recovery":"source-only","reason":"Epicor parameter dataset provenance is missing or invalid.","parameters":params}));
             continue;
         };
         let route = match task["TaskType"].as_str() {
             Some("Report") => "Rpt",
             Some("Process") => "Proc",
             _ => {
-                out.push(json!({"task":task,"recovery":"source-only","reason":"TaskType has no established native save-service mapping.","parameters":params}));
+                out.push(json!({"task":task,"recovery":"source-only","reason":"TaskType has no established Epicor save-service mapping.","parameters":params}));
                 continue;
             }
         };
@@ -984,10 +1009,10 @@ fn output(mut state: Value) -> Result<GuestReply, Diagnostic> {
     }
     let i = state["index"]
         .as_u64()
-        .ok_or_else(|| err("Invalid automation output continuation."))? as usize;
+        .ok_or_else(|| err("Invalid automation output resume point."))? as usize;
     let count = state["records"]
         .as_array()
-        .ok_or_else(|| err("Missing prepared records."))?
+        .ok_or_else(|| err("Herbert could not continue this download from its saved progress (prepared automation records). Start the download again."))?
         .len();
     if i == count {
         return Ok(GuestReply::Inventory {
@@ -1031,8 +1056,8 @@ fn stream(r: &GuestRequest) -> Result<usize, Diagnostic> {
             .identity
             .as_ref()
             .ok_or_else(|| err("An exact automation identity is required."))?;
-        if id.category != "C25" {
-            return Err(err("Foreign automation identity."));
+        if id.category != "automation-and-integrations" {
+            return Err(err("Epicor returned an automation definition that was not requested. It was not saved."));
         }
         FAMILIES
             .iter()
@@ -1044,9 +1069,9 @@ fn stream(r: &GuestRequest) -> Result<usize, Diagnostic> {
     };
     let i = value
         .parse::<usize>()
-        .map_err(|_| err("Invalid automation source continuation."))?;
+        .map_err(|_| err("Invalid automation source resume point."))?;
     if i >= FAMILIES.len() {
-        return Err(err("Unavailable automation source."));
+        return Err(err("Epicor did not return this automation definition. It may have been deleted, or this account may not be allowed to read it."));
     }
     Ok(i)
 }
@@ -1056,7 +1081,7 @@ mod bulk_output_tests {
     use super::*;
     #[test]
     fn automation_bulk_preserves_original_files_partial_diagnostics_and_cursor() {
-        let records:Vec<(Identity,Value)>=(0..37).map(|n|(Identity{category:"C25".into(),kind:"ProcessSet".into(),scope:Scope::Global,keys:BTreeMap::from([("ProcessSetID".into(),n.to_string())])},json!({"herbertSources":{"files":[{"name":"recovery.json","text":"é exact"}]},"sensitive":{"original":"preserve"},"unknown":[n]}))).collect();
+        let records:Vec<(Identity,Value)>=(0..37).map(|n|(Identity{category:"automation-and-integrations".into(),kind:"ProcessSet".into(),scope:Scope::Global,keys:BTreeMap::from([("ProcessSetID".into(),n.to_string())])},json!({"herbertSources":{"files":[{"name":"recovery.json","text":"é exact"}]},"sensitive":{"original":"preserve"},"unknown":[n]}))).collect();
         let diagnostics=vec![Diagnostic::new("TEST_PARTIAL","Retain exact coverage.")];
         let mut legacy=json!({"records":records,"index":0,"next":"2","diagnostics":diagnostics});
         let mut expected=Vec::new();
@@ -1082,11 +1107,11 @@ fn visibility_action(r: &GuestRequest, i: usize, s: Value) -> Result<GuestReply,
     let page = s["page"]
         .as_u64()
         .filter(|p| *p > 0 && *p <= i32::MAX as u64)
-        .ok_or_else(|| err("Native visibility page must fit a positive Int32."))?;
+        .ok_or_else(|| err("Herbert could not continue this download from its saved progress (page position). Start the download again."))?;
     let size = r
         .page_size
         .filter(|s| *s > 0 && *s <= i32::MAX as u32)
-        .ok_or_else(|| err("Native visibility page size must fit a positive Int32."))?;
+        .ok_or_else(|| err("Page size must be a whole number from 1 to 2147483647."))?;
     let mut a = json!({"pageSize":size,"absolutePage":page});
     for t in tables.iter().filter(|t| **t != "ProcessTaskParam") {
         a[format!("whereClause{t}")] = json!("");
@@ -1126,7 +1151,7 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
     if !matches!(r.operation.as_str(), "discover" | "acquire") {
         return Err(Diagnostic::new(
             "UNSUPPORTED_OPERATION",
-            "C25 supports bulk discovery, exact-identity acquisition and prepared materialization.",
+            "The Automation and integrations plugin received a request it does not support. Make sure the plugin and Herbert come from the same release.",
         ));
     }
     if let Some(d) = r.error.take() {
@@ -1147,14 +1172,14 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
     let response = r
         .response
         .clone()
-        .ok_or_else(|| err("Missing automation native response."))?;
+        .ok_or_else(|| err("Missing automation Epicor response."))?;
     if s["phase"] == "visibility" {
         let tables = FAMILIES[i].2;
         let b = &response["returnObj"];
         let native_tables = if i == 1 { &tables[..2] } else { tables };
         for (name, value) in b
             .as_object()
-            .ok_or_else(|| err("Invalid native visibility body."))?
+            .ok_or_else(|| err("Invalid Epicor visibility body."))?
         {
             if let Some(rows) = value.as_array() {
                 if !s["native"][name].is_array() {
@@ -1174,27 +1199,34 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
         for t in native_tables {
             let rows = b[*t]
                 .as_array()
-                .ok_or_else(|| err("The native visibility page omitted a required table."))?;
+                .ok_or_else(|| err("The Epicor visibility page omitted a required table."))?;
             if !s["visible"][*t].is_array() {
                 s["visible"][*t] = json!([]);
             }
+            // Exact-string set of ids from earlier pages; same key as the former linear scan.
+            let mut known: BTreeSet<String> = s["visible"][*t]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
             for row in rows {
                 let id = row["SysRowID"]
                     .as_str()
                     .filter(|v| !v.is_empty())
-                    .ok_or_else(|| err("A native visible row omitted SysRowID."))?;
-                if s["visible"][*t].as_array().unwrap().iter().any(|v| v == id) {
-                    return Err(err("Native visibility repeated a row."));
+                    .ok_or_else(|| err("An Epicor visible row omitted SysRowID."))?;
+                if !known.insert(id.to_string()) {
+                    return Err(err("Epicor visibility repeated a row."));
                 }
                 s["visible"][*t].as_array_mut().unwrap().push(json!(id));
             }
         }
         let more = response["parameters"]["morePages"]
             .as_bool()
-            .ok_or_else(|| err("Native visibility omitted morePages."))?;
+            .ok_or_else(|| err("Epicor visibility omitted morePages."))?;
         if more {
             if b[tables[0]].as_array().is_none_or(Vec::is_empty) {
-                return Err(err("Native visibility page did not advance."));
+                return Err(err("Epicor visibility page did not advance."));
             }
             s["page"] = json!(s["page"].as_u64().unwrap() + 1);
             return visibility_action(&r, i, s);
@@ -1218,7 +1250,7 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
                 state: s,
                 ..r.clone()
             };
-            return Ok(fallback(&partial,i,err("The native service returned populated tables without an established persisted ownership mapping; native evidence is retained."))
+            return Ok(fallback(&partial,i,err("The Epicor service returned populated tables without an established saved ownership mapping; Epicor evidence is retained."))
                 .unwrap_or_else(||GuestReply::Failure{diagnostic:err("Missing native fallback evidence.")}));
         }
         s["phase"] = json!("schema");
@@ -1249,9 +1281,9 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
         ));
     }
     if s["phase"] != "graph" {
-        return Err(err("Unknown automation phase."));
+        return Err(err("Herbert could not continue this download from its saved progress (automation step). Start the download again."));
     }
-    let g = decode(&response, &s["metadata"], &r.company, i)?;
+    let g = decode(&response, &s["metadata"], &r.company, i, &s["visible"])?;
     for t in FAMILIES[i].2 {
         if *t != "ProcessTaskParam" {
             let actual: BTreeSet<_> = g[*t]
@@ -1272,15 +1304,15 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
                     .unwrap()
                     .iter()
                     .find(|n| matches(n, row, &["SysRowID"]))
-                    .ok_or_else(|| err("Missing native source row."))?;
+                    .ok_or_else(|| err("Missing Epicor source row."))?;
                 if original["SysRevID"] != row["SysRevID"] {
                     return Err(err(
-                        "Automation source changed between native visibility and persisted acquisition; native evidence is retained.",
+                        "Automation source changed between Epicor visibility and saved download; Epicor evidence is retained.",
                     ));
                 }
             }
             if actual != expected {
-                return Err(err("Stored and native service-visible membership differ."));
+                return Err(err("Stored and Epicor service-visible membership differ."));
             }
         }
     }
@@ -1295,12 +1327,12 @@ fn drive(mut r: GuestRequest, i: usize) -> Result<GuestReply, Diagnostic> {
     if r.operation == "acquire" {
         let id = r
             .identity
-            .ok_or_else(|| err("Missing automation identity."))?;
+            .ok_or_else(|| err("Epicor returned an automation definition without its ID, so it was not saved."))?;
         let (_, definition) = records
             .into_iter()
             .find(|(found, _)| *found == id)
             .ok_or_else(|| {
-                err("The requested automation identity is absent from native-visible source.")
+                err("The requested automation identity is absent from Epicor-visible source.")
             })?;
         return Ok(GuestReply::Definition {
             identity: id,
@@ -1364,7 +1396,7 @@ fn fallback(r: &GuestRequest, i: usize, diagnostic: Diagnostic) -> Option<GuestR
     if let Err(admission)=native_fallback_admission(native,i,&r.company){return Some(GuestReply::Inventory{identities:vec![],next_cursor:(i+1<FAMILIES.len()).then(||(i+1).to_string()),authoritative:false,diagnostics:vec![diagnostic,admission]});}
     let kind = FAMILIES[i].0;
     let identity = Identity {
-        category: "C25".into(),
+        category: "automation-and-integrations".into(),
         kind: "NativeAutomationEvidence".into(),
         scope: Scope::Company {
             company: r.company.clone(),
@@ -1430,7 +1462,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C25".into(),
+            category: "automation-and-integrations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1495,12 +1527,13 @@ mod tests {
     #[test]
     fn manifests_detect_truncation_duplicate_and_undeclared_fields() {
         let meta = json!({"MessageTemplate":[{"FieldName":"Company","DataType":"nvarchar"},{"FieldName":"SysRowID","DataType":"uniqueidentifier"}]});
+        let visible = json!({"MessageTemplate":["id"]});
         let mut rows = vec![json!({"Kind":"MessageTemplate","Total":1,"Payload":null})];
-        assert!(decode(&json!({"returnObj":{"Results":rows}}), &meta, "C", 2).is_err());
+        assert!(decode(&json!({"returnObj":{"Results":rows}}), &meta, "C", 2, &visible).is_err());
         rows.push(json!({"Kind":"MessageTemplate","Total":-1,"Payload":"[\"C\",\"id\"]"}));
-        assert!(decode(&json!({"returnObj":{"Results":rows}}), &meta, "C", 2).is_ok());
+        assert!(decode(&json!({"returnObj":{"Results":rows}}), &meta, "C", 2, &visible).is_ok());
         rows.push(rows[1].clone());
-        assert!(decode(&json!({"returnObj":{"Results":rows}}), &meta, "C", 2).is_err());
+        assert!(decode(&json!({"returnObj":{"Results":rows}}), &meta, "C", 2, &visible).is_err());
     }
     #[test]
     fn native_service_denial_advances_independent_family() {
@@ -1580,10 +1613,79 @@ mod tests {
         );
         let q = build("C", 0, &meta, false, &visible).unwrap();
         assert_eq!(q["queryDS"]["QuerySubQuery"].as_array().unwrap().len(), 8);
+        // The server read is restricted to admitted ids (raw retention keeps the body verbatim).
         for t in tables {
             assert!(q.to_string().contains(&format!("id-{t}")));
         }
+        let mut empty = visible.clone();
+        empty["SysAgentSched"] = json!([]);
+        let q = build("C", 0, &meta, false, &empty).unwrap();
+        assert!(q["queryDS"]["QueryWhereItem"].as_array().unwrap().iter().any(|c| c["FieldName"] == "SysRowID" && c["TableID"] == "Source2" && c["RValue"] == "N'00000000-0000-0000-0000-000000000000'"));
         assert!(build("", 0, &meta, false, &visible).is_err());
+    }
+    #[test]
+    fn every_table_query_is_restricted_to_exactly_the_admitted_sysrowids() {
+        // The host retains each native response body verbatim as raw evidence before the plugin
+        // decodes it, so the server read itself must exclude unadmitted rows.
+        let meta: Value = Value::Object(
+            FAMILIES[1].2.iter().map(|t| ((*t).into(), json!([{"FieldName":"SysRowID","DataType":"uniqueidentifier"}]))).collect(),
+        );
+        let ids: Vec<String> = (0..5).map(|n| format!("row-{n}")).collect();
+        let visible = json!({"ProcessSet":ids,"ProcessTask":["task-a","task-b"]});
+        let q = build("C", 1, &meta, false, &visible).unwrap();
+        let items = q["queryDS"]["QueryWhereItem"].as_array().unwrap();
+        let sub = |b: usize| format!("00000000-0000-0000-0000-{:012}", b + 1);
+        let restricted = |b: usize, owner: &str| items.iter().filter(|c| c["SubQueryID"] == sub(b) && c["FieldName"] == "SysRowID" && c["TableID"] == owner).map(|c| c["RValue"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        let literals = |ids: &[&str]| ids.iter().map(|id| crate::report_query::literal(id)).collect::<Vec<_>>();
+        assert_eq!(restricted(0, "Source0"), literals(&["row-0", "row-1", "row-2", "row-3", "row-4"]));
+        assert_eq!(restricted(2, "Source2"), literals(&["task-a", "task-b"]));
+        assert_eq!(restricted(4, "TaskOwner4"), literals(&["task-a", "task-b"]));
+    }
+    #[test]
+    fn unadmitted_returned_rows_are_excluded_locally_with_complete_counts() {
+        let meta = json!({"MessageTemplate":[{"FieldName":"Company","DataType":"nvarchar"},{"FieldName":"CompanyVisibility","DataType":"int"},{"FieldName":"SysRowID","DataType":"uniqueidentifier"}]});
+        let rows = json!([
+            {"Kind":"MessageTemplate","Total":3,"Payload":null},
+            {"Kind":"MessageTemplate","Total":-1,"Payload":"[\"C\",0,\"OWN\"]"},
+            {"Kind":"MessageTemplate","Total":-1,"Payload":"[\"Other\",0,\"private\"]"},
+            {"Kind":"MessageTemplate","Total":-1,"Payload":"[\"C\",0,\"hidden\"]"}
+        ]);
+        let response = json!({"returnObj":{"Results":rows}});
+        let g = decode(&response, &meta, "C", 2, &json!({"MessageTemplate":["own"]})).unwrap();
+        assert_eq!(g["MessageTemplate"].as_array().unwrap().len(), 1);
+        assert_eq!(g["MessageTemplate"][0]["SysRowID"], "OWN");
+        // The count manifest still covers every returned row, so truncation is detected.
+        let mut short = response.clone();
+        short["returnObj"]["Results"][0]["Total"] = json!(1);
+        assert!(decode(&short, &meta, "C", 2, &json!({"MessageTemplate":["own"]})).is_err());
+        // An admitted foreign private row still fails exactly as before.
+        assert!(decode(&response, &meta, "C", 2, &json!({"MessageTemplate":["private"]})).is_err());
+        let mut repeated = response.clone();
+        repeated["returnObj"]["Results"][0]["Total"] = json!(4);
+        repeated["returnObj"]["Results"].as_array_mut().unwrap().push(rows[2].clone());
+        assert!(decode(&repeated, &meta, "C", 2, &json!({"MessageTemplate":["own"]})).is_err());
+    }
+    #[test]
+    fn repeated_visibility_row_across_pages_still_errors() {
+        let mut r = request();
+        let GuestReply::Action { state, .. } = handle(r.clone()) else { panic!() };
+        r.state = state;
+        r.response = Some(json!({"returnObj":agent(),"parameters":{"morePages":true}}));
+        let GuestReply::Action { state, .. } = handle(r.clone()) else { panic!() };
+        assert_eq!(state["page"], 2);
+        let mut next = agent();
+        next["SysAgent"][0]["SysRowID"] = json!("root-2");
+        next["SysAgentSched"] = json!([]);
+        next["SysAgentTask"] = json!([]);
+        next["SysAgentTaskParam"] = json!([]);
+        let mut fresh = r.clone();
+        fresh.state = state.clone();
+        fresh.response = Some(json!({"returnObj":next,"parameters":{"morePages":false}}));
+        let GuestReply::Action { state: done, .. } = handle(fresh) else { panic!() };
+        assert_eq!(done["visible"]["SysAgent"], json!(["root","root-2"]));
+        r.state = state;
+        r.response = Some(json!({"returnObj":agent(),"parameters":{"morePages":false}}));
+        assert!(matches!(drive(r, 0), Err(d) if d.message == "Epicor visibility repeated a row."));
     }
     #[test]
     fn process_recovery_preserves_typed_values_and_records_context() {
@@ -1765,13 +1867,15 @@ mod tests {
                 .iter()
                 .any(|c| c["FieldName"] == "Company")
         );
+        // Other companies' private templates are excluded by the server read itself.
         assert!(
             q["queryDS"]["QueryWhereItem"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|c| c["FieldName"] == "SysRowID")
+                .any(|c| c["FieldName"] == "SysRowID" && c["RValue"] == crate::report_query::literal("s"))
         );
+        assert!(q["queryDS"]["QueryWhereItem"].as_array().unwrap().iter().any(|c| c["FieldName"] == "SystemFlag" && c["RValue"] == "0"));
         let GuestReply::Action {
             action: HostAction::NativeRead { arguments, .. },
             ..
@@ -1823,6 +1927,236 @@ mod tests {
                 .iter()
                 .any(|f| f["table"] == "SysAgent" && f["field"] == "UnknownFutureField")
         );
+    }
+
+    // Acceptance condition: rows that the native service did not admit never reach any
+    // reply that this plugin returns to the host (records and their files, Inventory
+    // identities and diagnostics, saved state, partial evidence and failures), and the
+    // Execute request is restricted to admitted SysRowIDs so the host's verbatim raw copy
+    // of the response cannot hold them either (raw_execute_body_holds_no_unadmitted_rows...).
+    const UNADMITTED_MARKER: &str = "UNADMITTED_PRIVATE_MARKER";
+    const AGENT_FIELDS: &[(&str, &[(&str, &str)])] = &[
+        ("SysAgent", &[("AgentID", "nvarchar"), ("SysPassWord", "nvarchar"), ("SysRowID", "uniqueidentifier")]),
+        ("SysAgentSched", &[("AgentID", "nvarchar"), ("AgentSchedNum", "int"), ("Enabled", "bit"), ("SysRowID", "uniqueidentifier")]),
+        ("SysAgentTask", &[("AgentID", "nvarchar"), ("AgentSchedNum", "int"), ("AgentTaskNum", "int"), ("Company", "nvarchar"), ("IsSystemTask", "bit"), ("SysRowID", "uniqueidentifier")]),
+        ("SysAgentTaskParam", &[("AgentID", "nvarchar"), ("AgentSchedNum", "int"), ("AgentTaskNum", "int"), ("ParamName", "nvarchar"), ("ParamCharacter", "nvarchar"), ("ParamToken", "nvarchar"), ("ParamLong", "bigint"), ("SysRowID", "uniqueidentifier")]),
+    ];
+    fn assert_no_unadmitted(step: &str, value: Value) {
+        let text = value.to_string().to_ascii_lowercase();
+        assert!(
+            !text.contains(&UNADMITTED_MARKER.to_ascii_lowercase()),
+            "{step} exposed an unadmitted row: {text}"
+        );
+    }
+    /// Native-service rows. With the filter on, the database projection nulls these fields.
+    fn admitted_agent(filter: bool) -> Value {
+        let mut g = agent();
+        if filter {
+            g["SysAgent"][0]["SysPassWord"] = Value::Null;
+            g["SysAgentTaskParam"][0]["ParamCharacter"] = Value::Null;
+            g["SysAgentTaskParam"][0]["ParamToken"] = Value::Null;
+        }
+        g
+    }
+    fn admitted_agent_rows(filter: bool) -> Vec<(&'static str, Value)> {
+        let g = admitted_agent(filter);
+        AGENT_FIELDS
+            .iter()
+            .flat_map(|(t, _)| g[*t].as_array().unwrap().iter().map(|r| (*t, r.clone())).collect::<Vec<_>>())
+            .collect()
+    }
+    /// Returned by the condition-based query but absent from native visibility.
+    /// Children use the admitted root's keys, a foreign company and a
+    /// sensitive-looking parameter name. Without the exclusion they would attach
+    /// to the retained definition or trigger a value-bearing check.
+    fn unadmitted_agent_rows() -> Vec<(&'static str, Value)> {
+        let m = UNADMITTED_MARKER;
+        vec![
+            ("SysAgent", json!({"AgentID":format!("{m}-agent"),"SysPassWord":format!("{m}-password"),"SysRowID":format!("{m}-root")})),
+            ("SysAgentSched", json!({"AgentID":"Agent","AgentSchedNum":99,"Enabled":true,"SysRowID":format!("{m}-schedule")})),
+            ("SysAgentTask", json!({"AgentID":"Agent","AgentSchedNum":7,"AgentTaskNum":3,"Company":format!("{m}-company"),"IsSystemTask":false,"SysRowID":format!("{m}-task")})),
+            ("SysAgentTaskParam", json!({"AgentID":"Agent","AgentSchedNum":7,"AgentTaskNum":1,"ParamName":format!("{m} Password"),"ParamCharacter":format!("{m}-secret"),"ParamToken":format!("{m}-token"),"ParamLong":1,"SysRowID":format!("{m}-param")})),
+        ]
+    }
+    fn agent_schema_response() -> Value {
+        let tables: Vec<Value> = AGENT_FIELDS
+            .iter()
+            .map(|(t, _)| json!({"DataTableID":t,"SystemCode":"Ice"}))
+            .collect();
+        let fields: Vec<Value> = AGENT_FIELDS
+            .iter()
+            .flat_map(|(t, fs)| {
+                fs.iter()
+                    .map(move |(f, ty)| json!({"DataTableID":t,"DBTableName":t,"FieldName":f,"DataType":ty,"External":false}))
+            })
+            .collect();
+        json!({"returnObj":{"ZDataTable":tables,"ZDataField":fields},"parameters":{"morePages":false}})
+    }
+    /// The DynamicQuery Execute wire form: per-table count manifest plus positional payloads.
+    fn agent_graph_response(rows: &[(&str, Value)]) -> Value {
+        let mut results = vec![];
+        for (table, fields) in AGENT_FIELDS {
+            let mine: Vec<&Value> = rows.iter().filter(|(t, _)| t == table).map(|(_, r)| r).collect();
+            results.push(json!({"Kind":table,"Total":mine.len(),"Payload":null}));
+            for row in mine {
+                let cells: Vec<Value> = fields
+                    .iter()
+                    .map(|(f, _)| row.get(*f).cloned().unwrap_or(Value::Null))
+                    .collect();
+                results.push(json!({"Kind":table,"Total":-1,"Payload":serde_json::to_string(&cells).unwrap()}));
+            }
+        }
+        json!({"returnObj":{"Results":results,"Errors":[]}})
+    }
+    /// Drive visibility, schema, graph and every later materialize step through
+    /// the public entry point. Return every reply the host would receive.
+    fn unadmitted_run(filter: bool, prepare: bool, bulk: bool, identity: Option<Identity>, graph: &Value) -> Vec<GuestReply> {
+        let mut r = request();
+        r.state = json!({"_hostPreparePage":prepare,"_hostIndependentWorkItems":bulk,"_pluginSettings":{"filterSensitiveFields":filter}});
+        if identity.is_some() {
+            r.operation = "acquire".into();
+            r.identity = identity;
+        }
+        let mut replies = vec![handle(r.clone())];
+        for response in [
+            json!({"returnObj":admitted_agent(filter),"parameters":{"morePages":false}}),
+            agent_schema_response(),
+            graph.clone(),
+        ] {
+            let GuestReply::Action { state, .. } = replies.last().unwrap().clone() else {
+                panic!("{:?}", replies.last())
+            };
+            r.state = state;
+            r.response = Some(response);
+            replies.push(handle(r.clone()));
+        }
+        loop {
+            let state = match replies.last().unwrap().clone() {
+                GuestReply::PreparedPage { state, .. } | GuestReply::ReadyRecords { state, .. } => state,
+                _ => break,
+            };
+            let mut m = request();
+            m.operation = "materialize".into();
+            m.state = state;
+            replies.push(handle(m));
+        }
+        replies
+    }
+    #[test]
+    fn raw_execute_body_holds_no_unadmitted_rows_because_the_read_is_restricted() {
+        // The host retains the Execute response body verbatim as raw evidence before this plugin
+        // decodes it, so the request itself must admit only the native service's visible rows.
+        let marker = UNADMITTED_MARKER.to_ascii_lowercase();
+        for filter in [false, true] {
+            let mut r = request();
+            r.state = json!({"_pluginSettings":{"filterSensitiveFields":filter}});
+            let mut reply = handle(r.clone());
+            for response in [json!({"returnObj":admitted_agent(filter),"parameters":{"morePages":false}}), agent_schema_response()] {
+                let GuestReply::Action { state, .. } = reply else { panic!("{reply:?}") };
+                r.state = state;
+                r.response = Some(response);
+                reply = handle(r.clone());
+            }
+            let GuestReply::Action { action: HostAction::NativeRead { service, method, arguments, .. }, .. } = reply else { panic!("{reply:?}") };
+            assert_eq!((service.as_str(), method.as_str()), ("Ice.BO.DynamicQuerySvc", "Execute"));
+            assert!(!arguments.to_string().to_ascii_lowercase().contains(&marker));
+            let admitted: BTreeSet<String> = admitted_agent_rows(filter).iter().map(|(_, row)| crate::report_query::literal(row["SysRowID"].as_str().unwrap())).collect();
+            let restricted: BTreeSet<String> = arguments["queryDS"]["QueryWhereItem"].as_array().unwrap().iter()
+                .filter(|c| c["FieldName"] == "SysRowID").map(|c| c["RValue"].as_str().unwrap().to_owned()).collect();
+            assert_eq!(restricted, admitted, "every table read is restricted to exactly the admitted SysRowIDs");
+            // A server that honours the where clause returns, and the host therefore retains, no unadmitted row.
+            let complete: Vec<_> = admitted_agent_rows(filter).into_iter().chain(unadmitted_agent_rows()).collect();
+            let served: Vec<_> = complete.into_iter().filter(|(_, row)| restricted.contains(&crate::report_query::literal(row["SysRowID"].as_str().unwrap()))).collect();
+            assert_no_unadmitted("retained raw Execute body", agent_graph_response(&served));
+        }
+    }
+    #[test]
+    fn unadmitted_rows_never_reach_records_files_state_identities_or_diagnostics() {
+        let marker = UNADMITTED_MARKER.to_ascii_lowercase();
+        for filter in [false, true] {
+            let admitted = admitted_agent_rows(filter);
+            let unadmitted = unadmitted_agent_rows();
+            let complete: Vec<_> = admitted.iter().chain(&unadmitted).cloned().collect();
+            let graph = agent_graph_response(&complete);
+            assert!(graph.to_string().to_ascii_lowercase().contains(&marker), "the fixture must carry the marker");
+            // Successful discovery in every output form: prepared/direct, bulk/legacy.
+            let mut identity = None;
+            for (prepare, bulk) in [(true, false), (true, true), (false, false), (false, true)] {
+                let replies = unadmitted_run(filter, prepare, bulk, None, &graph);
+                for (step, reply) in replies.iter().enumerate() {
+                    assert_no_unadmitted(&format!("filter={filter} prepare={prepare} bulk={bulk} step={step}"), json!(reply));
+                    assert!(!matches!(reply, GuestReply::Failure { .. }), "{reply:?}");
+                    assert!(
+                        !matches!(reply, GuestReply::Inventory { diagnostics, .. } if !diagnostics.is_empty()),
+                        "{reply:?}"
+                    );
+                }
+                let records: Vec<(Identity, Value)> = replies
+                    .iter()
+                    .flat_map(|reply| match reply {
+                        GuestReply::ReadyRecords { records, .. } | GuestReply::InventoryData { records, .. } => records.clone(),
+                        _ => vec![],
+                    })
+                    .collect();
+                // The admitted definition is still retained whole, so this check is meaningful.
+                assert_eq!(records.len(), 1, "{replies:?}");
+                let (id, data) = &records[0];
+                assert_eq!(id.keys["AgentID"], "Agent");
+                assert_eq!(data["SysAgent"].as_array().unwrap().len(), 1);
+                assert_eq!(data["SysAgentSched"].as_array().unwrap().len(), 1);
+                assert_eq!(data["SysAgentTask"].as_array().unwrap().len(), 2);
+                assert_eq!(data["SysAgentTaskParam"].as_array().unwrap().len(), 1);
+                assert_eq!(data["automationPolicy"]["filterSensitiveFields"], filter);
+                identity = Some(id.clone());
+            }
+            // Exact acquisition of the admitted definition.
+            let identity = identity.unwrap();
+            let replies = unadmitted_run(filter, true, false, Some(identity.clone()), &graph);
+            for (step, reply) in replies.iter().enumerate() {
+                assert_no_unadmitted(&format!("filter={filter} acquire step={step}"), json!(reply));
+            }
+            assert!(
+                matches!(replies.last().unwrap(), GuestReply::Definition { identity: found, .. } if *found == identity),
+                "{replies:?}"
+            );
+            // Failure paths: an admitted row is missing (membership diagnostic plus
+            // native partial evidence), and an unadmitted row repeats (decode
+            // diagnostic raised before admission).
+            let missing: Vec<_> = admitted
+                .iter()
+                .filter(|(_, r)| r["SysRowID"] != "task")
+                .chain(&unadmitted)
+                .cloned()
+                .collect();
+            let mut repeated = complete.clone();
+            repeated.push(unadmitted[0].clone());
+            for (name, rows, message) in [
+                ("missing admitted row", &missing, "Stored and Epicor service-visible membership differ."),
+                ("repeated unadmitted row", &repeated, "Epicor returned the same record more than once, so Herbert cannot tell which copy is correct. This item was not saved."),
+            ] {
+                let graph = agent_graph_response(rows);
+                assert!(graph.to_string().to_ascii_lowercase().contains(&marker));
+                for (prepare, bulk) in [(true, false), (false, false), (true, true)] {
+                    let replies = unadmitted_run(filter, prepare, bulk, None, &graph);
+                    for (step, reply) in replies.iter().enumerate() {
+                        assert_no_unadmitted(&format!("{name} filter={filter} prepare={prepare} bulk={bulk} step={step}"), json!(reply));
+                    }
+                    let text = json!(replies).to_string();
+                    assert!(text.contains(message), "{name}: {text}");
+                    // Partial evidence comes from the native-service graph, which has only admitted rows.
+                    assert!(text.contains("NativeAutomationEvidence"), "{name}: {text}");
+                    assert!(text.contains("native-source-only.json"), "{name}: {text}");
+                }
+                let replies = unadmitted_run(filter, true, false, Some(identity.clone()), &graph);
+                for (step, reply) in replies.iter().enumerate() {
+                    assert_no_unadmitted(&format!("{name} filter={filter} acquire step={step}"), json!(reply));
+                }
+                assert!(
+                    matches!(replies.last().unwrap(), GuestReply::Failure { diagnostic } if diagnostic.message == message),
+                    "{name}: {replies:?}"
+                );
+            }
+        }
     }
 }
 

@@ -14,8 +14,8 @@ assert.ok(executable && plugins && evidencePath, "Supply executable, plugins and
 const root = await mkdtemp(join(tmpdir(), "herbert-isolation-"));
 const company = wire.returnObj.UDCodeType[0].Company;
 const good = wire.returnObj.UDCodeType[0].CodeTypeID;
-const identity = (id) => ({category:"C01",kind:"UDCodeType",scope:{type:"company",company},keys:{CodeTypeID:id}});
-const later = {category:"C02",kind:"UDMapping",scope:{type:"company",company},keys:{MapTableID:"7"}};
+const identity = (id) => ({category:"ud-codes",kind:"UDCodeType",scope:{type:"company",company},keys:{CodeTypeID:id}});
+const later = {category:"ud-schema",kind:"UDMapping",scope:{type:"company",company},keys:{MapTableID:"7"}};
 const checks = [], errors = [], requests = [];
 let scenario = "refusal", client;
 const send = (response, status, value) => { response.writeHead(status, {"content-type":"application/json"}); response.end(JSON.stringify(value)); };
@@ -76,7 +76,7 @@ try {
       assert.equal(status.artifacts.length,3);
       const first = status.artifacts.find(item=>item.identity.keys.CodeTypeID==="REFUSED");
       const sibling = status.artifacts.find(item=>item.identity.keys.CodeTypeID===good);
-      const next = status.artifacts.find(item=>item.identity.category==="C02");
+      const next = status.artifacts.find(item=>item.identity.category==="ud-schema");
       assert.equal(first.acquisition,scenario === "refusal" ? "inaccessible" : "partial");
       assert.notEqual(first.processing,"derived");
       for (const item of [sibling,next]) { assert.equal(item.acquisition,"collected",JSON.stringify(item)); assert.equal(item.processing,"derived"); assert.ok(item.files.length>0); }
@@ -89,12 +89,12 @@ try {
       checks.push({mode,scenario,passed:true,outcomes:status.artifacts.map(item=>({identity:item.identity,acquisition:item.acquisition,processing:item.processing})),requestOrder:[refusedIndex,siblingIndex,laterIndex]});
     }
     for (scenario of ["discovery-malformed","discovery-later-refusal"]) {
-      const run = successful(await client.call("backup.start",{requestId:randomUUID(),destination:join(root,mode+"-"+scenario),outputMode:"separate",categories:["C01"],temporaryAccess:false}));
+      const run = successful(await client.call("backup.start",{requestId:randomUUID(),destination:join(root,mode+"-"+scenario),outputMode:"separate",categories:["ud-codes"],temporaryAccess:false}));
       let status;
       do { status = successful(await client.call("run.status",{id:run.runId})); if (status.executionActive) await new Promise(resolve=>setTimeout(resolve,10)); } while (status.executionActive);
       assert.equal(status.phase,"partial",JSON.stringify(status));
-      assert.equal(status.categoryOutcomes.C01,"discoveryFailed");
-      assert.notEqual(status.categoryOutcomes.C01,"verifiedAbsent");
+      assert.equal(status.categoryOutcomes["ud-codes"],"discoveryFailed");
+      assert.notEqual(status.categoryOutcomes["ud-codes"],"verifiedAbsent");
       assert.equal(status.artifacts.length,scenario === "discovery-later-refusal" ? 1 : 0);
       if (status.artifacts.length) {
         assert.equal(status.artifacts[0].acquisition,"collected");
@@ -102,18 +102,18 @@ try {
         assert.equal(status.artifacts[0].identity.keys.CodeTypeID,good);
       }
       assert.deepEqual(errors,[]);
-      checks.push({mode,scenario,passed:true,outcome:status.categoryOutcomes.C01,retainedArtifacts:status.artifacts.length});
+      checks.push({mode,scenario,passed:true,outcome:status.categoryOutcomes["ud-codes"],retainedArtifacts:status.artifacts.length});
       const failedScenario = scenario;
       scenario = "discovery-recovered";
       successful(await client.call("run.retryFailed",{id:run.runId}));
       do { status = successful(await client.call("run.status",{id:run.runId})); if (status.executionActive) await new Promise(resolve=>setTimeout(resolve,10)); } while (status.executionActive);
       assert.equal(status.phase,"completed",JSON.stringify(status));
-      assert.equal(status.categoryOutcomes.C01,"discovered");
+      assert.equal(status.categoryOutcomes["ud-codes"],"discovered");
       assert.equal(status.artifacts.length,1);
       assert.equal(status.artifacts[0].acquisition,"collected");
       assert.equal(status.artifacts[0].processing,"derived");
       assert.deepEqual(errors,[]);
-      checks.push({mode,scenario:"retry-"+failedScenario,passed:true,outcome:status.categoryOutcomes.C01,retainedArtifacts:status.artifacts.length});
+      checks.push({mode,scenario:"retry-"+failedScenario,passed:true,outcome:status.categoryOutcomes["ud-codes"],retainedArtifacts:status.artifacts.length});
 
     }
     successful(await client.call("connection.disconnect")); await client.close(); client=null;

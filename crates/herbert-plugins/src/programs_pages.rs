@@ -1,17 +1,39 @@
-//! C22 bulk metadata, locally grouped source, and exact native assembly/symbol bytes.
+//! Programs and extensions bulk metadata, locally grouped source, and exact native assembly/symbol bytes.
 use herbert_contract::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 fn err(s: &str) -> Diagnostic {
     Diagnostic::new("PROGRAMS_INVALID", s)
 }
+/// The helper's own text stays as technical detail beside the static message.
+fn helper_detail(diagnostic: Diagnostic, response: &Value) -> Diagnostic {
+    match response["oMessage"].as_str().filter(|s| !s.is_empty()) {
+        Some(text) => diagnostic.with_context("serverMessage", text),
+        None => diagnostic,
+    }
+}
 fn selection(state:&Value)->Result<(&str,&str),Diagnostic>{
     let options=&state["_pluginSettings"];let family=match options.get("definitionFamily"){None=>"all",Some(Value::String(value)) if matches!(value.as_str(),"all"|"services"|"datasets"|"extensions"|"externals")=>value,_=>return Err(err("Select a declared program definition family."))};
     let prefix=match options.get("definitionIdPrefix"){None=>"",Some(Value::String(value))=>value,_=>return Err(err("The program definition prefix must be a string."))};Ok((family,prefix))
 }
-fn selected(identity:&Identity,state:&Value)->Result<bool,Diagnostic>{if state["_target"].is_object(){return Ok(true);}let (family,prefix)=selection(state)?;let (group,key)=match identity.kind.as_str(){"ServiceDefinition"=>("services","ClassName"),"DatasetDefinition"=>("datasets","DataSetID"),"ExtensionSet"=>("extensions","ExtensionSetID"),"ExternalAssemblyReference"=>("externals","Name"),_=>return Err(err("Unknown program owner."))};Ok((family=="all"||family==group)&&identity.keys.get(key).is_some_and(|value|value.starts_with(prefix)))}
+fn selected(identity:&Identity,state:&Value)->Result<bool,Diagnostic>{if state["_target"].is_object(){return Ok(true);}let (family,prefix)=selection(state)?;let (group,key)=match identity.kind.as_str(){"ServiceDefinition"=>("services","ClassName"),"DatasetDefinition"=>("datasets","DataSetID"),"ExtensionSet"=>("extensions","ExtensionSetID"),"ExternalAssemblyReference"=>("externals","Name"),_=>return Err(err("Herbert could not continue this download from its saved progress (program owner). Start the download again."))};Ok((family=="all"||family==group)&&identity.keys.get(key).is_some_and(|value|value.starts_with(prefix)))}
 fn select_records(records:Vec<(Identity,Value)>,state:&Value)->Result<(Vec<(Identity,Value)>,Vec<Diagnostic>),Diagnostic>{
     let mut output=Vec::new();let mut diagnostics=Vec::new();for (identity,data) in records {if selected(&identity,state)?{output.push((identity,data));}else{let errors=data["herbertCollectionStatus"]["diagnostics"].as_array().cloned().unwrap_or_default();let mut errors=errors;if let Some(error)=data.get("hiddenMetadataError").filter(|value|!value.is_null()){errors.push(error.clone());}for error in errors{let mut diagnostic:Diagnostic=serde_json::from_value(error).map_err(|_|err("Invalid acquired program diagnostic."))?;diagnostic.identity=Some(identity.clone());diagnostics.push(diagnostic);}}}Ok((output,diagnostics))
+}
+/// Discovery prefix in force; exact targeted reads are never filtered.
+fn active_prefix(state:&Value)->&str{if state["_target"].is_object(){return "";}selection(state).map(|(_,prefix)|prefix).unwrap_or("")}
+/// Broad server superset for the exact local starts_with check: the literal
+/// part before any LIKE metacharacter. An empty literal adds no server filter.
+fn like_clause(column:&str,state:&Value)->String{let literal=active_prefix(state).split(['%','_','[',']']).next().unwrap_or("");if literal.is_empty(){String::new()}else{format!("{column} LIKE '{}%'",literal.replace('\'',"''"))}}
+fn and_like(base:&str,column:&str,state:&Value)->String{match like_clause(column,state){c if c.is_empty()=>base.to_owned(),c if base.is_empty()=>c,c=>format!("{base} AND {c}")}}
+/// Drop unselected roots and their children before any validation, so rows
+/// outside the prefix are neither validated nor diagnosed.
+fn prune(body:&mut Value,service:bool,state:&Value){
+    let prefix=active_prefix(state);if prefix.is_empty(){return;}
+    let (root,key,children)=if service{("ZBODef","ClassName",&["ZBODataSets","ZServiceLicenseType"][..])}else{("ZDataSet","DataSetID",&["ZRelation","ZRelationField","ZSubDataSet"][..])};
+    let keep=|row:&Value,field:&str|row[field].as_str().is_some_and(|v|v.starts_with(prefix));
+    if let Some(rows)=body.get_mut(root).and_then(Value::as_array_mut){rows.retain(|r|keep(r,key));}
+    for t in children{let owner=if *t=="ZSubDataSet"{"ParentDataSetID"}else{key};if let Some(rows)=body.get_mut(*t).and_then(Value::as_array_mut){rows.retain(|c|keep(c,owner));}}
 }
 fn settings(mut state:Value,from:&Value)->Value{if let Some(value)=from.get("_pluginSettings"){if !state.is_object(){state=json!({});}state["_pluginSettings"]=value.clone();}state}
 fn carry(reply:GuestReply,from:&Value)->GuestReply{match reply{GuestReply::Action {action,state}=>GuestReply::Action {action,state:settings(state,from)},GuestReply::ReadyRecords {records,state}=>GuestReply::ReadyRecords {records,state:settings(state,from)},GuestReply::PreparedPage {mut state,next_cursor,next_state}=>{if let Some(items)=state.get_mut("_hostWorkItems").and_then(Value::as_array_mut){for item in items{*item=settings(item.take(),from);}}GuestReply::PreparedPage {state:settings(state,from),next_cursor,next_state:settings(next_state,from)}},other=>other}}
@@ -42,7 +64,7 @@ pub fn policies() -> Vec<NativeResponsePolicy> {
 }
 fn id(kind: &str, row: &Value, keys: &[&str]) -> Result<Identity, Diagnostic> {
     Ok(Identity {
-        category: "C22".into(),
+        category: "programs-and-extensions".into(),
         kind: kind.into(),
         scope: Scope::Global,
         keys: keys
@@ -53,7 +75,7 @@ fn id(kind: &str, row: &Value, keys: &[&str]) -> Result<Identity, Diagnostic> {
                     row[*k]
                         .as_str()
                         .filter(|s| !s.is_empty())
-                        .ok_or_else(|| err("Missing native program key."))?
+                        .ok_or_else(|| err("Missing Epicor program key."))?
                         .into(),
                 ))
             })
@@ -122,17 +144,17 @@ fn bytes(name: String, v: &Value) -> Result<Option<Value>, Diagnostic> {
                 v.as_u64()
                     .filter(|n| *n <= 255)
                     .map(|n| n as u8)
-                    .ok_or_else(|| err("Invalid native assembly byte."))
+                    .ok_or_else(|| err("Invalid Epicor assembly byte."))
             })
             .collect::<Result<Vec<_>, _>>()?;
         base64::engine::general_purpose::STANDARD.encode(b)
     } else {
-        return Err(err("Invalid native assembly bytes."));
+        return Err(err("Invalid Epicor assembly bytes."));
     };
     use base64::Engine;
     let b = base64::engine::general_purpose::STANDARD
         .decode(&encoded)
-        .map_err(|_| err("Invalid native assembly encoding."))?;
+        .map_err(|_| err("Invalid Epicor assembly encoding."))?;
     if b.is_empty() {
         return Ok(None);
     }
@@ -156,7 +178,7 @@ fn records(body: &Value, service: bool) -> Result<Vec<(Identity, Value)>, Diagno
     };
     let roots = body[root]
         .as_array()
-        .ok_or_else(|| err("Missing native program definitions."))?;
+        .ok_or_else(|| err("Missing Epicor program definitions."))?;
     let mut out = vec![];
     let mut seen = BTreeSet::new();
     for r in roots {
@@ -169,7 +191,7 @@ fn records(body: &Value, service: bool) -> Result<Vec<(Identity, Value)>, Diagno
         for t in &children {
             let rows = body[*t]
                 .as_array()
-                .ok_or_else(|| err("Missing native program children."))?;
+                .ok_or_else(|| err("Missing Epicor program children."))?;
             ds[*t] = json!(
                 rows.iter()
                     .filter(|c| eq(c, r, "SystemCode")
@@ -192,14 +214,14 @@ fn records(body: &Value, service: bool) -> Result<Vec<(Identity, Value)>, Diagno
         {
             if c["SystemFlag"].as_bool() == Some(true) {
                 return Err(err(
-                    "A custom-only native child read returned system content.",
+                    "A custom-only Epicor child read returned system content.",
                 ));
             }
             let rid = c["SysRowID"]
                 .as_str()
-                .ok_or_else(|| err("Missing child identity."))?;
+                .ok_or_else(|| err("Epicor returned a program part without its ID, so the program was not saved."))?;
             if !ids.insert(rid) {
-                return Err(err("Duplicate program child."));
+                return Err(err("Epicor returned the same program part more than once, so Herbert cannot tell which copy is correct. The program was not saved."));
             }
             if !roots.iter().any(|r| {
                 eq(c, r, "SystemCode")
@@ -222,16 +244,16 @@ fn finish(
 ) -> Result<GuestReply, Diagnostic> {
     if s["_target"].is_object() {
         let target: Identity = serde_json::from_value(s["_target"].clone())
-            .map_err(|_| err("Invalid program target."))?;
+            .map_err(|_| err("Herbert could not continue this download from its saved progress (selected program). Start the download again."))?;
         let (_, data) = records.into_iter().find(|r| r.0 == target).ok_or_else(|| {
-            err("The requested custom program no longer exists in its native scope.")
+            err("The requested custom program no longer exists in its Epicor scope.")
         })?;
         let completeness =
             serde_json::from_value(data["herbertCollectionStatus"]["completeness"].clone())
-                .map_err(|_| err("Invalid target completeness."))?;
+                .map_err(|_| err("Herbert could not continue this download from its saved progress (selected program status). Start the download again."))?;
         let diagnostics =
             serde_json::from_value(data["herbertCollectionStatus"]["diagnostics"].clone())
-                .map_err(|_| err("Invalid target diagnostics."))?;
+                .map_err(|_| err("Herbert could not continue this download from its saved progress (selected program problems). Start the download again."))?;
         return Ok(GuestReply::Definition {
             identity: target,
             format: "programs-and-extensions-json".into(),
@@ -392,7 +414,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     }
 
     if !matches!(r.operation.as_str(), "discover" | "materialize") {
-        return Err(err("Unsupported program operation."));
+        return Err(err("The Programs and extensions plugin received a request it does not support. Make sure the plugin and Herbert come from the same release."));
     }
     let mut s = r.state;
     if s["phase"].is_null() && r.error.is_some() { return Err(r.error.take().unwrap()); }
@@ -404,7 +426,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             .filter(|v| v.starts_with('{'))
             .map(serde_json::from_str::<Value>)
             .transpose()
-            .map_err(|_| err("Invalid program recovery cursor."))?;
+            .map_err(|_| err("Invalid program recovery saved position."))?;
         let stream = resume
             .as_ref()
             .and_then(|v| v["stream"].as_str())
@@ -419,7 +441,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let after = v["after"]
                 .as_str()
                 .filter(|v| !v.is_empty())
-                .ok_or_else(|| err("Recovery cursor omitted its exact identity."))?;
+                .ok_or_else(|| err("Recovery saved position omitted its exact identity."))?;
             s["afterIdentity"] = json!(after);
         }
         if !s["_target"].is_object()&&r.response.is_none()&&r.error.is_none(){let (family,_)=selection(&s)?;let current=stream.as_deref().unwrap_or("services");if family!="all"&&family!=current&&matches!(current,"services"|"datasets"|"extensions"|"externals"){let next=match current{"services"=>Some("datasets"),"datasets"=>Some("extensions"),"extensions"=>Some("externals"),_=>None};return Ok(GuestReply::Inventory {identities:vec![],next_cursor:next.map(str::to_owned),authoritative:true,diagnostics:vec![]});}}
@@ -429,7 +451,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 return Ok(crate::native(
                     "Ice.BO.ZBODefSvc",
                     "GetRows",
-                    json!({"whereClauseZBODef":"SystemFlag = false","whereClauseZBODataSets":"SystemFlag = false","whereClauseZServiceLicenseType":"","pageSize":0,"absolutePage":1}),
+                    json!({"whereClauseZBODef":and_like("SystemFlag = false","ClassName",&s),"whereClauseZBODataSets":and_like("SystemFlag = false","ClassName",&s),"whereClauseZServiceLicenseType":and_like("","ClassName",&s),"pageSize":0,"absolutePage":1}),
                     false,
                     s,
                 ));
@@ -439,7 +461,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 return Ok(crate::native(
                     "Ice.BO.ZDataSetSvc",
                     "GetRows",
-                    json!({"whereClauseZDataSet":"SystemFlag = false","whereClauseZRelation":"SystemFlag = false","whereClauseZRelationField":"SystemFlag = false","whereClauseZSubDataSet":"SystemFlag = false","pageSize":0,"absolutePage":1}),
+                    json!({"whereClauseZDataSet":and_like("SystemFlag = false","DataSetID",&s),"whereClauseZRelation":and_like("SystemFlag = false","DataSetID",&s),"whereClauseZRelationField":and_like("SystemFlag = false","DataSetID",&s),"whereClauseZSubDataSet":and_like("SystemFlag = false","ParentDataSetID",&s),"pageSize":0,"absolutePage":1}),
                     false,
                     s,
                 ));
@@ -449,7 +471,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 return Ok(crate::native(
                     "Ice.BO.ExtensionSvc",
                     "GetList",
-                    json!({"whereClause":"SystemFlag = false","pageSize":0,"absolutePage":1}),
+                    json!({"whereClause":and_like("SystemFlag = false","ExtensionSetID",&s),"pageSize":0,"absolutePage":1}),
                     false,
                     s,
                 ));
@@ -464,7 +486,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     s,
                 ));
             }
-            _ => return Err(err("Invalid program cursor.")),
+            _ => return Err(err("Herbert could not continue this download from its saved progress (program list position). Start the download again.")),
         }
     }
     let phase = s["phase"].as_str().unwrap_or("").to_owned();
@@ -480,7 +502,10 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             return Err(error);
         }
     }
-    let response = r.response.unwrap_or(Value::Null);
+    let mut response = r.response.unwrap_or(Value::Null);
+    if matches!(phase.as_str(), "services" | "datasets") {
+        if let Some(body) = response.get_mut("returnObj") { prune(body, phase == "services", &s); }
+    }
     if response["parameters"]["morePages"] == true {
         return Err(err("Complete program read reported more pages."));
     }
@@ -540,7 +565,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     .ok_or_else(|| err("The helper omitted supplemental SDK fields."))?;
                 for row in body[table]
                     .as_array_mut()
-                    .ok_or_else(|| err("The native SDK table is missing."))?
+                    .ok_or_else(|| err("The Epicor SDK table is missing."))?
                 {
                     let matches: Vec<_> = values
                         .iter()
@@ -548,16 +573,16 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                         .collect();
                     if matches.len() != 1 {
                         return Err(err(
-                            "Stored SDK fields have missing or duplicate native ownership.",
+                            "Stored SDK fields have missing or duplicate Epicor ownership.",
                         ));
                     }
                     for (k, v) in matches[0]
                         .as_object()
-                        .ok_or_else(|| err("Invalid SDK supplement."))?
+                        .ok_or_else(|| err("Epicor returned the extra SDK details for these programs in a form Herbert does not recognize. The program definitions were still saved without them."))?
                     {
                         if let Some(original) = row.get(k) {
                             if original != v {
-                                return Err(err("SDK supplement disagrees with a native field."));
+                                return Err(err("SDK supplement disagrees with an Epicor field."));
                             }
                         } else {
                             row[k] = v.clone();
@@ -565,11 +590,12 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     }
                 }
             } else if s["hiddenError"].is_null() {
-                s["hiddenError"] = json!(Diagnostic::new(
-                    "PROGRAM_STORED_SDK_FIELDS_UNAVAILABLE",
-                    response["oMessage"]
-                        .as_str()
-                        .unwrap_or("The helper is unavailable; native SDK fields remain retained.")
+                s["hiddenError"] = json!(helper_detail(
+                    Diagnostic::new(
+                        "PROGRAM_STORED_SDK_FIELDS_UNAVAILABLE",
+                        "Epicor did not return the stored SDK fields for these programs. Program definitions and files were still saved."
+                    ),
+                    &response
                 ));
             }
             let mut output = records(&body, service)?;
@@ -586,11 +612,16 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             );
         }
         "extension-list" => {
-            let roots = response["returnObj"]["ExtensionList"]
+            let prefix = active_prefix(&s);
+            let roots: Vec<Value> = response["returnObj"]["ExtensionList"]
                 .as_array()
-                .ok_or_else(|| err("Missing custom extension inventory."))?;
+                .ok_or_else(|| err("Missing custom extension inventory."))?
+                .iter()
+                .filter(|row| prefix.is_empty() || row["ExtensionSetID"].as_str().is_some_and(|v| v.starts_with(prefix)))
+                .cloned()
+                .collect();
             let mut seen = BTreeSet::new();
-            for row in roots {
+            for row in &roots {
                 if row["SystemFlag"] == true
                     || !seen.insert(
                         serde_json::to_string(&id("ExtensionSet", row, &["ExtensionSetID"])?)
@@ -640,14 +671,14 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     "SysRowID",
                 ] {
                     if !row[key].is_string() {
-                        return Err(err("Incomplete native extension reference."));
+                        return Err(err("Incomplete Epicor extension reference."));
                     }
                 }
                 s["refs"].as_array_mut().unwrap().push(row.clone());
             }
             let got = s["refs"].as_array().unwrap().len() as u64;
             if got > total || (rows.is_empty() && got < total) {
-                return Err(err("Truncated extension references."));
+                return Err(err("Epicor returned only part of an extension's references, so it was not saved."));
             }
             if got < total {
                 s["refPage"] = json!(s["refPage"].as_u64().unwrap() + 1);
@@ -689,6 +720,8 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         }
         "extension-hidden" => {
             let g = s["graph"].take();
+            let prefix = active_prefix(&s).to_owned();
+            let prefix = prefix.as_str();
             let extension_names:BTreeSet<_>=g["Extension"].as_array().unwrap().iter().filter_map(|r|r["ExtensionSetID"].as_str().map(str::to_ascii_lowercase)).collect();
             let extension_row_ids:BTreeSet<_>=g["Extension"].as_array().unwrap().iter().map(|r|r["SysRowID"].to_string()).collect();
             let visible_extensions:BTreeSet<_>=s["roots"].as_array().unwrap().iter().filter_map(|r|Some((r["ExtensionSetID"].as_str()?.to_ascii_lowercase(),r["SysRowID"].to_string()))).collect();
@@ -715,13 +748,18 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                         if row["SystemFlag"] == true {
                             return Err(err("Hidden metadata returned system content."));
                         }
+                        // The helper reads every custom extension; with a
+                        // prefix, rows owned by unselected extensions are not
+                        // validated. Runtime rows carry only the owner row ID.
                         if t == "RuntimeExtension"
+                            && prefix.is_empty()
                             && !extension_row_ids.contains(&row["ExtensionSetRowID"].to_string())
                         {
                             return Err(err("Runtime registration has no custom extension owner."));
                         }
                         if t == "ExtensionDataSetTable"
-                            && row["ExtensionSetID"].as_str().is_none_or(|id|!extension_names.contains(&id.to_ascii_lowercase()))
+                            && row["ExtensionSetID"].as_str().is_none_or(|id|!extension_names.contains(&id.to_ascii_lowercase())
+                                && (prefix.is_empty() || id.starts_with(prefix)))
                         {
                             return Err(err("Dataset link has no custom extension owner."));
                         }
@@ -729,7 +767,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 }
             } else {
                 if s["hiddenError"].is_null() {
-                    s["hiddenError"]=json!(Diagnostic::new("PROGRAM_INTERNAL_METADATA_UNAVAILABLE",response["oMessage"].as_str().unwrap_or("The hidden metadata helper is unavailable; direct definitions and binaries remain collected.")));
+                    s["hiddenError"]=json!(helper_detail(Diagnostic::new("PROGRAM_INTERNAL_METADATA_UNAVAILABLE","Herbert could not read the hidden program details on the Epicor server. Program definitions and files were still saved."),&response));
                 }
             }
             for t in [
@@ -741,7 +779,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     if row["ExtensionSetID"].as_str().is_none_or(|id|!extension_names.contains(&id.to_ascii_lowercase()))
                     {
                         return Err(err(
-                            "The extension graph returned an orphaned relationship.",
+                            "The extension record set returned an orphaned relationship.",
                         ));
                     }
                 }
@@ -757,7 +795,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 if root["ExtensionSetID"].as_str().is_none_or(|id|!visible_extensions.contains(&(id.to_ascii_lowercase(),root["SysRowID"].to_string())))
                 {
                     return Err(err(
-                        "The graph returned an extension outside native caller-visible scope.",
+                        "The record set returned an extension outside Epicor user-visible scope.",
                     ));
                 }
                 let id = id("ExtensionSet", root, &["ExtensionSetID"])?;
@@ -781,7 +819,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 out.push((id, d));
             }
             if out.len() != s["roots"].as_array().unwrap().len() {
-                return Err(err("Extension graph omitted an inventoried root."));
+                return Err(err("Extension record set omitted an inventoried root."));
             }
             out.sort_by(|a, b| a.0.keys["ExtensionSetID"].cmp(&b.0.keys["ExtensionSetID"]));
             if let Some(after) = s["afterIdentity"].as_str() {
@@ -789,7 +827,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             }
             if s["_target"].is_object() {
                 let target: Identity = serde_json::from_value(s["_target"].clone())
-                    .map_err(|_| err("Invalid extension target."))?;
+                    .map_err(|_| err("Herbert could not continue this download from its saved progress (selected extension). Start the download again."))?;
                 out.retain(|r| r.0 == target);
                 if out.is_empty() {
                     return Err(err("The requested extension is no longer visible."));
@@ -810,7 +848,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let i = s["binaryIndex"].as_u64().unwrap() as usize;
             let (id, mut d): (Identity, Value) =
                 serde_json::from_value(s["extensionRecords"][i].take())
-                    .map_err(|_| err("Invalid extension output checkpoint."))?;
+                    .map_err(|_| err("Invalid extension output saved progress."))?;
             let mut files = vec![];
             let mut native_files = vec![];
             let mut diagnostics = vec![];
@@ -822,7 +860,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             }
             if let Some(e) = s.get("binaryError").filter(|v| !v.is_null()) {
                 diagnostics.push(
-                    serde_json::from_value(e.clone()).map_err(|_| err("Invalid binary error."))?,
+                    serde_json::from_value(e.clone()).map_err(|_| err("Herbert could not continue this download from its saved progress (program file problem record). Start the download again."))?,
                 );
             } else {
                 let body = &response["returnObj"];
@@ -851,7 +889,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                         .as_str()
                         .is_some_and(|s| !s.is_empty())
                 {
-                    diagnostics.push(Diagnostic::new("EXTENSION_BYTES_UNAVAILABLE","The extension registers an assembly but the native byte route returned no nonempty assembly content."));
+                    diagnostics.push(Diagnostic::new("EXTENSION_BYTES_UNAVAILABLE","The extension registers an assembly but the Epicor byte route returned no nonempty assembly content."));
                 }
                 d["nativeAssembly"] = body.clone();
             }
@@ -865,7 +903,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         "externals" => {
             let rows = response["returnObj"]
                 .as_array()
-                .ok_or_else(|| err("Missing Externals catalog."))?;
+                .ok_or_else(|| err("Epicor did not return the list of external assemblies, so they were not saved. Other program definitions were."))?;
             let mut seen = BTreeSet::new();
             for row in rows {
                 if ["FileName", "Version"]
@@ -873,7 +911,7 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     .any(|k| !row.get(*k).is_some_and(|v| v.is_null() || v.is_string()))
                 {
                     return Err(err(
-                        "External reference metadata has an invalid native shape.",
+                        "External reference metadata has an invalid Epicor shape.",
                     ));
                 }
                 let id = id("ExternalAssemblyReference", row, &["Name"])?;
@@ -921,12 +959,12 @@ fn drive(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let mut files = vec![];
             if let Some(e) = s.get("binaryError").filter(|v| !v.is_null()) {
                 diagnostics.push(
-                    serde_json::from_value(e.clone()).map_err(|_| err("Invalid binary error."))?,
+                    serde_json::from_value(e.clone()).map_err(|_| err("Herbert could not continue this download from its saved progress (program file problem record). Start the download again."))?,
                 );
             } else if let Some(file) = bytes(name.clone(), &response["returnObj"])? {
                 files.push(file);
             } else if response.pointer("/returnObj/nativeFile").is_none() {
-                diagnostics.push(Diagnostic::new("REFERENCE_BYTES_UNAVAILABLE","The Externals catalog lists this reference but the native byte route returned no readable assembly."));
+                diagnostics.push(Diagnostic::new("REFERENCE_BYTES_UNAVAILABLE","The Externals catalog lists this reference but the Epicor byte route returned no readable assembly."));
             }
             let mut d = complete(
                 json!({"catalog":row,"coverage":"Native Externals reference and exact readable assembly bytes. No original source or separate external symbols API is exposed."}),
@@ -955,7 +993,7 @@ fn handle_inner(mut r: GuestRequest) -> GuestReply {
                 diagnostic: err("Select an exact program identity."),
             };
         };
-        let valid = target.category == "C22"
+        let valid = target.category == "programs-and-extensions"
             && target.scope == Scope::Global
             && match target.kind.as_str() {
                 "ServiceDefinition" => {
@@ -1068,7 +1106,7 @@ mod qualification_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C22".into(),
+            category: "programs-and-extensions".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1185,7 +1223,7 @@ mod targeted_tests {
         let r = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C22".into(),
+            category: "programs-and-extensions".into(),
             company: "C".into(),
             identity: Some(target.clone()),
             cursor: None,
@@ -1237,7 +1275,7 @@ mod targeted_tests {
             (json!({"nativeFile":file}),Value::Null,true,false),
             (Value::Null,Value::Null,false,false),
         ] {
-            let r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"C22".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(1),state:json!({"phase":"extension-bytes","binaryIndex":0,"prepare":true,"extensionRecords":[[identity,{"Extension":[{"Assembly":if registered {"Expected"}else{""}}]}]]}),response:Some(json!({"returnObj":{"Assembly":assembly,"Symbols":symbols}})),error:None};
+            let r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"programs-and-extensions".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(1),state:json!({"phase":"extension-bytes","binaryIndex":0,"prepare":true,"extensionRecords":[[identity,{"Extension":[{"Assembly":if registered {"Expected"}else{""}}]}]]}),response:Some(json!({"returnObj":{"Assembly":assembly,"Symbols":symbols}})),error:None};
             let GuestReply::PreparedPage{state,..}=handle(r) else {panic!()};
             let data=&state["records"][0][1];
             assert_eq!(data["herbertCollectionStatus"]["completeness"],if partial{"partial"}else{"collected"});
@@ -1251,7 +1289,7 @@ mod targeted_tests {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
-    fn request(state:Value)->GuestRequest{GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"C22".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None}}
+    fn request(state:Value)->GuestRequest{GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"programs-and-extensions".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None}}
     fn native_services()->Value{json!({"ZBODef":[{"SystemCode":"Ice","ClassName":" Ω%_ ","SystemFlag":false,"SysRowID":"a"},{"SystemCode":"Erp","ClassName":" Ω%_ ","SystemFlag":false,"SysRowID":"b"},{"SystemCode":"Ice","ClassName":"Other","SystemFlag":false,"SysRowID":"c"}],"ZBODataSets":[],"ZServiceLicenseType":[]})}
     #[test]
     fn native_variants_and_literal_selection_preserve_complete_output(){
@@ -1269,7 +1307,22 @@ mod selection_tests {
         let mut r=request(json!({"phase":"externals","_pluginSettings":{"definitionFamily":"externals","definitionIdPrefix":"A"}}));let mut bad=catalog;bad[1]["Version"]=json!(false);r.response=Some(json!({"returnObj":bad}));assert!(matches!(handle(r),GuestReply::Failure{..}));
     }
     #[test]
+    fn prefix_pushes_down_literal_like_and_skips_unselected_rows(){
+        let first=|prefix:&str,cursor:Option<&str>|{let mut r=request(json!({"_pluginSettings":{"definitionFamily":"all","definitionIdPrefix":prefix}}));r.cursor=cursor.map(str::to_owned);let GuestReply::Action{action:HostAction::NativeRead{arguments,..},..}=handle(r)else{panic!()};arguments};
+        let a=first("Ab%c",None);assert_eq!(a["whereClauseZBODef"],"SystemFlag = false AND ClassName LIKE 'Ab%'");assert_eq!(a["whereClauseZServiceLicenseType"],"ClassName LIKE 'Ab%'");
+        assert_eq!(first("O'B",Some("datasets"))["whereClauseZSubDataSet"],"SystemFlag = false AND ParentDataSetID LIKE 'O''B%'");
+        assert_eq!(first("Ab",Some("extensions"))["whereClause"],"SystemFlag = false AND ExtensionSetID LIKE 'Ab%'");
+        let a=first("%x",None);assert_eq!(a["whereClauseZBODef"],"SystemFlag = false");assert_eq!(a["whereClauseZServiceLicenseType"],"");
+        // Unselected invalid rows (including LIKE-superset rows) yield no diagnostics.
+        let mut r=request(json!({"phase":"services","_pluginSettings":{"definitionFamily":"services","definitionIdPrefix":"Ab%c"}}));
+        r.response=Some(json!({"returnObj":{"ZBODef":[{"SystemCode":"Ice","ClassName":"Zed","SystemFlag":true},{"ClassName":"Abx"}],"ZBODataSets":[{"ClassName":"Zed"}],"ZServiceLicenseType":[]}}));
+        assert!(matches!(handle(r),GuestReply::Inventory{authoritative:true,ref diagnostics,ref identities,..} if diagnostics.is_empty()&&identities.is_empty()));
+        let mut r=request(json!({"phase":"extension-list","_pluginSettings":{"definitionFamily":"extensions","definitionIdPrefix":"Ab"}}));
+        r.response=Some(json!({"returnObj":{"ExtensionList":[{"ExtensionSetID":"Zed","SystemFlag":true},{"ExtensionSetID":"Zed","SystemFlag":true}]}}));
+        assert!(matches!(handle(r),GuestReply::Inventory{authoritative:true,ref diagnostics,..} if diagnostics.is_empty()));
+    }
+    #[test]
     fn exact_four_native_kinds_ignore_invalid_discovery_settings_across_initial_action(){
-        for (kind,keys) in [("ServiceDefinition",json!({"SystemCode":"Ice","ClassName":"A"})),("DatasetDefinition",json!({"SystemCode":"Ice","DataSetID":"A"})),("ExtensionSet",json!({"ExtensionSetID":"A"})),("ExternalAssemblyReference",json!({"Name":"A"}))]{let identity=Identity{category:"C22".into(),kind:kind.into(),scope:Scope::Global,keys:serde_json::from_value(keys).unwrap()};let mut r=request(json!({"_pluginSettings":{"definitionFamily":"invalid","definitionIdPrefix":false}}));r.operation="acquire".into();r.identity=Some(identity.clone());let GuestReply::Action{state,..}=handle(r)else{panic!()};assert_eq!(state["_target"],json!(identity));assert!(selected(&identity,&state).unwrap());}
+        for (kind,keys) in [("ServiceDefinition",json!({"SystemCode":"Ice","ClassName":"A"})),("DatasetDefinition",json!({"SystemCode":"Ice","DataSetID":"A"})),("ExtensionSet",json!({"ExtensionSetID":"A"})),("ExternalAssemblyReference",json!({"Name":"A"}))]{let identity=Identity{category:"programs-and-extensions".into(),kind:kind.into(),scope:Scope::Global,keys:serde_json::from_value(keys).unwrap()};let mut r=request(json!({"_pluginSettings":{"definitionFamily":"invalid","definitionIdPrefix":false}}));r.operation="acquire".into();r.identity=Some(identity.clone());let GuestReply::Action{state,..}=handle(r)else{panic!()};assert_eq!(state["_target"],json!(identity));assert!(selected(&identity,&state).unwrap());}
     }
 }

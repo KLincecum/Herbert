@@ -146,7 +146,7 @@ pub(crate) fn verify_bound_bytes(
     if !native_absence_confirmed {
         return Err(refused(
             "HELPER_RECOVERY_ABSENCE_REQUIRED",
-            "A successful exact native identity read must prove absence before restoration.",
+            "A successful exact Epicor ID read must prove absence before restoration.",
         ));
     }
     let json = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).ok_or_else(|| {
@@ -261,6 +261,7 @@ mod tests {
             ],
             package_sha256: None,
             frozen_package: None,
+            authorization: None,
         };
         let package = template.installation.as_ref().unwrap().packages[0]
             .package

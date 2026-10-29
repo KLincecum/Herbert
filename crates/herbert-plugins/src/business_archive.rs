@@ -1,4 +1,4 @@
-//! C20 native recovery files constructed from complete received definitions.
+//! Business rules and mappings native recovery files constructed from complete received definitions.
 //! Posting XML follows PEABTExport's hierarchy, exclusions and COA substitutions.
 use crate::xml_document::{Content, Element};
 use herbert_contract::Diagnostic;
@@ -528,13 +528,13 @@ pub fn posting_xml(source: &Value) -> Result<String, Diagnostic> {
             .any(|(i, _)| !g.used.contains(&(table.to_string(), i)))
         {
             return Err(error(&format!(
-                "A {table} row is outside the native hierarchy. Its source is retained; recovery XML was not emitted."
+                "A {table} row is outside the Epicor hierarchy. Its source is retained; recovery XML was not emitted."
             )));
         }
     }
     let mut writer = quick_xml::Writer::new(Vec::new());
     root.write(&mut writer)?;
-    String::from_utf8(writer.into_inner()).map_err(|_| error("Posting XML is not UTF-8."))
+    String::from_utf8(writer.into_inner()).map_err(|_| error("The posting rule definition is not readable text, so no import file was built. The downloaded source was kept."))
 }
 pub fn append(kind: &str, data: &mut Value) -> Result<(), Diagnostic> {
     if data["herbertNativePageExtensions"]
@@ -542,7 +542,7 @@ pub fn append(kind: &str, data: &mut Value) -> Result<(), Diagnostic> {
         .is_some_and(|r| !r.is_empty())
     {
         return Err(error(
-            "Native extension data is retained with the received page. Its per-definition import ownership could not be established.",
+            "Epicor extension data is retained with the received page. Its per-definition import ownership could not be established.",
         ));
     }
     let (name, content) = if kind == "PostingRules" {
@@ -550,7 +550,7 @@ pub fn append(kind: &str, data: &mut Value) -> Result<(), Diagnostic> {
     } else {
         let mut ds = data.clone();
         ds.as_object_mut()
-            .ok_or_else(|| error("Missing native tableset."))?
+            .ok_or_else(|| error("Epicor returned this business rule without its data, so no import file was built. The downloaded source was kept."))?
             .retain(|k, _| !k.starts_with("herbert"));
         if kind == "BPMDataForm" {
             prepare_insert(&mut ds);
@@ -562,7 +562,7 @@ pub fn append(kind: &str, data: &mut Value) -> Result<(), Diagnostic> {
                 "StructuredOutput.json"
             },
             serde_json::to_string_pretty(&ds)
-                .map_err(|_| error("Native tableset serialization failed."))?,
+                .map_err(|_| error("Epicor tableset serialization failed."))?,
         )
     };
     data["herbertSources"] = json!({"files":[{"name":name,"text":content}]});
@@ -597,7 +597,7 @@ mod tests {
     use super::*;
     #[test]
     fn supplied_posting_source_builds_native_recovery_without_service_calls() {
-        let Ok(base) = std::env::var("HERBERT_C20_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {

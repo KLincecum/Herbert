@@ -39,5 +39,15 @@ pub(crate) fn documents() -> Result<Vec<HelpDocument>, Diagnostic> {
             paragraphs: vec![include_str!("../../../docs/MCP-GUIDE.md").into()],
         }],
     });
+    documents.push(HelpDocument {
+        id: "agent-instructions".into(),
+        title: "Installed Herbert instructions for agents".into(),
+        audience: "Agents operating an installed package".into(),
+        status: "Release-user instructions. Load explicitly when the client does not read AGENTS.md.".into(),
+        sections: vec![HelpSection {
+            title: "Instructions".into(),
+            paragraphs: vec![include_str!("../../../docs/RELEASE-AGENTS.md").into()],
+        }],
+    });
     Ok(documents)
 }

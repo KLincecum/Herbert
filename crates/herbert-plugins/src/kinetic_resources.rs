@@ -109,7 +109,7 @@ pub(crate) fn jsonc(text: &str) -> Result<Value, Diagnostic> {
             }
         }
     }
-    { let mut parser = serde_json::Deserializer::from_slice(&output); parser.disable_recursion_limit(); Value::deserialize(&mut parser).and_then(|value| parser.end().map(|_| value)) }.map_err(|_|error("KINETIC_RESOURCE_JSON_UNVERIFIED","An authored document is not a supported JSON/JSONC object; original bytes remain retained and dependency closure is not claimed.")).and_then(|value| if value.is_object() { Ok(value) } else { Err(error("KINETIC_RESOURCE_JSON_UNVERIFIED", "The native JSONC loader requires an object document; original bytes are preserved.")) })
+    { let mut parser = serde_json::Deserializer::from_slice(&output); parser.disable_recursion_limit(); Value::deserialize(&mut parser).and_then(|value| parser.end().map(|_| value)) }.map_err(|_|error("KINETIC_RESOURCE_JSON_UNVERIFIED","An authored document is not a supported JSON/JSONC object; original bytes remain retained and dependency closure is not claimed.")).and_then(|value| if value.is_object() { Ok(value) } else { Err(error("KINETIC_RESOURCE_JSON_UNVERIFIED", "The Epicor JSONC loader requires an object document; original bytes are preserved.")) })
 }
 fn reference_path(current: &str, reference: &str) -> Result<Option<String>, Diagnostic> {
     let Some(fragment) = reference.find('#') else {
@@ -128,7 +128,7 @@ fn reference_path(current: &str, reference: &str) -> Result<Option<String>, Diag
     if prefix.starts_with('/') || prefix.contains(':') {
         return Err(error(
             "KINETIC_RESOURCE_PATH_UNVERIFIED",
-            "An authored reference names an absolute/external path outside the native MetaUI row contract.",
+            "An authored reference names an absolute/external path outside the Epicor MetaUI row contract.",
         ));
     }
     let directory = current
@@ -158,7 +158,7 @@ fn reference_path(current: &str, reference: &str) -> Result<Option<String>, Diag
                 if parts.pop().is_none() {
                     return Err(error(
                         "KINETIC_RESOURCE_PATH_UNVERIFIED",
-                        "The native database key depends on a server directory above Apps and cannot be verified locally.",
+                        "The Epicor database key depends on a server directory above Apps and cannot be verified locally.",
                     ));
                 }
             }
@@ -175,7 +175,7 @@ fn reference_path(current: &str, reference: &str) -> Result<Option<String>, Diag
     .map_err(|_| {
         error(
             "KINETIC_RESOURCE_PATH_UNVERIFIED",
-            "The native key prefix ends inside a Unicode character.",
+            "The Epicor key prefix ends inside a Unicode character.",
         )
     })?;
     let native_key = native_key.trim_start_matches('\\');
@@ -435,7 +435,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 error(
                     "KINETIC_RESOURCE_IDENTITY_UNVERIFIED",
                     format!(
-                        "Referenced document {path} has {} global native source rows; tenant-specific or filesystem fallback is not established.",
+                        "Referenced document {path} has {} global Epicor source rows; tenant-specific or filesystem fallback is not established.",
                         rows.len()
                     ),
                 ),
@@ -460,7 +460,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                     &mut state,
                     error(
                         "KINETIC_RESOURCE_IDENTITY_MISMATCH",
-                        "The shared resource read returned a different native identity.",
+                        "The shared resource read returned a different Epicor ID.",
                     ),
                 );
             }
@@ -501,7 +501,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                     &mut state,
                     error(
                         "KINETIC_RESOURCE_LENGTH_MISMATCH",
-                        "The referenced body is absent or differs from its persisted UTF-16 length.",
+                        "The referenced body is absent or differs from its saved UTF-16 length.",
                     ),
                 );
             } else if valid {
@@ -517,7 +517,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             &mut state,
             error(
                 "KINETIC_RESOURCE_ROWS_MISSING",
-                "The referenced native document query omitted its rows.",
+                "The referenced Epicor document query omitted its rows.",
             ),
         );
     }
@@ -579,10 +579,10 @@ mod tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C12".into(),
+                category: "kinetic-applications-and-layers".into(),
                 kind: "MetaFXApplication".into(),
                 scope: Scope::Company {
                     company: "C".into(),

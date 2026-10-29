@@ -38,7 +38,7 @@ mod tests {
         ] {
             let row = json!({"Company":"","ProductID":"EP","TypeCode":code,"Key1":"Custom","Key2":"Custom\\layout.jsonc","Key3":"","CGCCode":"","SystemFlag":false,"SysRowID":"row","Content":"{}","SysCharacter01":"","SysCharacter03":"","HerbertContentBytes":"4","HerbertParentsBytes":"0","HerbertDraftBytes":"0"});
             let id = Identity {
-                category: "C12".into(),
+                category: "kinetic-applications-and-layers".into(),
                 kind: kind.into(),
                 scope: Scope::Global,
                 keys: [
@@ -57,7 +57,7 @@ mod tests {
             let request = GuestRequest {
                 abi: PLUGIN_ABI,
                 operation: "acquire".into(),
-                category: "C12".into(),
+                category: "kinetic-applications-and-layers".into(),
                 company: "C".into(),
                 identity: Some(id),
                 cursor: None,
@@ -71,7 +71,7 @@ mod tests {
                 completeness,
                 diagnostics,
                 ..
-            } = crate::handle("C12", request)
+            } = crate::handle("kinetic-applications-and-layers", request)
             else {
                 panic!("The downloaded row must not start an application or owner download");
             };

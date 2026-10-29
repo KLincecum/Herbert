@@ -211,10 +211,10 @@ mod tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C17".into(),
+                category: "report-styles-and-layouts".into(),
                 kind: "PersistedReportHistory".into(),
                 scope: Scope::Global,
                 keys: std::collections::BTreeMap::from([

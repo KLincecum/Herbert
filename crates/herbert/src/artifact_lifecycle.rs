@@ -45,7 +45,7 @@ impl Host {
             let existing = journal
                 .native_artifacts
                 .iter()
-                .find(|r| r.plugin == plugin.category.id);
+                .find(|r| crate::legacy_category_ids::same(&r.plugin, &plugin.category.id));
             let snapshots = if existing.is_some() {
                 Ok(Vec::new())
             } else {
@@ -105,7 +105,7 @@ impl Host {
                 .journal
                 .native_artifacts
                 .iter_mut()
-                .find(|r| r.plugin == record.plugin)
+                .find(|r| crate::legacy_category_ids::same(&r.plugin, &record.plugin))
             {
                 *old = record;
             } else {
@@ -144,7 +144,7 @@ impl Host {
             _ => {
                 return Err(issue(
                     "INVALID_ACTION",
-                    "This action is not a native artifact operation.",
+                    "This action is not an Epicor artifact operation.",
                 ));
             }
         };
@@ -157,7 +157,7 @@ impl Host {
             .ok_or_else(|| {
                 issue(
                     "ARTIFACT_NOT_DECLARED",
-                    "This operation has no frozen native artifacts for the plugin.",
+                    "This operation has no frozen Epicor artifacts for the plugin.",
                 )
             })?;
         let mut file = operation.lock().await;
@@ -184,14 +184,14 @@ impl Host {
             }}
             for i in required {self.install_native_artifact(&mut file,i,run,connection,cancel).await?;}
             let record=&file.record.artifacts[index];
-            let identity=record.identity.clone().ok_or_else(||issue("ARTIFACT_IDENTITY_UNVERIFIED","The installed artifact has no verified native identity."))?;
+            let identity=record.identity.clone().ok_or_else(||issue("ARTIFACT_IDENTITY_UNVERIFIED","The installed artifact has no verified Epicor ID."))?;
             let declaration=record.declaration.clone();
             // The private host instance was installed and verified for this run.
             // Chunk reads reuse that exact identity instead of adding a metadata
             // request to every transfer request. Teardown still verifies ownership.
             if owner != super::host_utility::OWNER {
-                let current=backend::probe(connection,declaration.artifact_type,&identity.id,cancel).await?.ok_or_else(||issue("ARTIFACT_NOT_FOUND","The operation's native instance was removed before use."))?;
-                if !backend::owns(&current.0,&identity) {return Err(issue("ARTIFACT_OWNER_MISMATCH","The installed artifact changed native identity or ownership. It will not be executed."));}
+                let current=backend::probe(connection,declaration.artifact_type,&identity.id,cancel).await?.ok_or_else(||issue("ARTIFACT_NOT_FOUND","The operation's Epicor instance was removed before use."))?;
+                if !backend::owns(&current.0,&identity) {return Err(issue("ARTIFACT_OWNER_MISMATCH","The installed artifact changed Epicor ID or ownership. It will not be executed."));}
             }
             // Reject unsupported actions before recording a server invocation.
             match &action {
@@ -200,7 +200,7 @@ impl Host {
                 HostAction::ArtifactQueryUpdate { .. } if declaration.artifact_type != NativeArtifactType::Ubaq || !declaration.effects.submits_updates => return Err(issue("ARTIFACT_UPDATE_NOT_DECLARED", "This plugin must declare UBAQ update effects before submitting updates.")),
                 HostAction::ArtifactQueryAction { parameters, .. } => {
                     if declaration.artifact_type != NativeArtifactType::Ubaq || !declaration.effects.invokes_custom_actions { return Err(issue("ARTIFACT_ACTION_NOT_DECLARED", "This plugin must declare UBAQ custom-action effects before invoking an action.")); }
-                    if !parameters.is_null() && !parameters.as_object().is_some_and(|p| p.is_empty()) { return Err(issue("ARTIFACT_ACTION_PARAMETERS_UNSUPPORTED", "Put action inputs in the native result dataset. Separate parameters are not supported.")); }
+                    if !parameters.is_null() && !parameters.as_object().is_some_and(|p| p.is_empty()) { return Err(issue("ARTIFACT_ACTION_PARAMETERS_UNSUPPORTED", "Put action inputs in the Epicor result dataset. Separate parameters are not supported.")); }
                 }
                 _ => {}
             }
@@ -214,6 +214,9 @@ impl Host {
             } else { None };
             let source=file.source(index,&version)?;
             self.require_artifact_change(run,connection,owner,&declaration,&source,&version).await?;
+            // D2: after this run's server lease is lost, no new helper invocation
+            // starts; one that was in flight at the loss is uncertain.
+            let lost=if matches!(&action,HostAction::ArtifactInstall{..}) {None} else {self.lease_gate(run).await?};
             let result = match action {
                 HostAction::ArtifactInstall {..}=>response(json!({"alias":alias,"id":identity.id,"type":declaration.artifact_type,"company":identity.company})),
                 HostAction::ArtifactFunctionCall {function,arguments,..}=>{
@@ -232,11 +235,12 @@ impl Host {
                 }
                 HostAction::ArtifactQueryAction {action,dataset,parameters,..}=>{
                     if declaration.artifact_type!=NativeArtifactType::Ubaq||!declaration.effects.invokes_custom_actions {return Err(issue("ARTIFACT_ACTION_NOT_DECLARED","This plugin must declare UBAQ custom-action effects before invoking an action."));}
-                    if !parameters.is_null()&&!parameters.as_object().is_some_and(|p|p.is_empty()) {return Err(issue("ARTIFACT_ACTION_PARAMETERS_UNSUPPORTED","RunCustomActionByID accepts its action ID and native result dataset. Put action inputs in that dataset; separate parameters are not supported by this native route."));}
+                    if !parameters.is_null()&&!parameters.as_object().is_some_and(|p|p.is_empty()) {return Err(issue("ARTIFACT_ACTION_PARAMETERS_UNSUPPORTED","RunCustomActionByID accepts its action ID and Epicor result dataset. Put action inputs in that dataset; separate parameters are not supported by this Epicor route."));}
                     connection.artifact_call(backend::QUERY,"RunCustomActionByID",json!({"queryID":identity.id,"actionID":action,"queryResultDataset":dataset}),cancel).await
                 }
                 _=>unreachable!(),
             };
+            let result=super::server_leases::after_leased_call(&lost,result);
             if let Some(permit) = collection_permit { permit.settle(&result)?; }
             result
         }.await;
@@ -249,7 +253,7 @@ impl Host {
         }
         result
     }
-    // Kevin approved three retries after the initial attempt (2026-10-25).
+    // Three retries after the initial attempt (selected 2026-10-25).
     // This is a helper setup policy, not a blanket replay policy for plugin calls.
     async fn install_native_artifact(
         &self, file: &mut OperationFile, index: usize, run: &Arc<Run>,
@@ -283,7 +287,9 @@ impl Host {
                     file.checkpoint()?;
                     self.checkpoint_native_artifacts(run, file.record.clone()).await?;
                     if retries == 3 {
-                        error.message = format!("{} Helper setup failed after three retries; its identity and recovery state were retained.", error.message);
+                        // The message stays the helper's static sentence; the retry outcome is detail.
+                        error.context.insert("attempts".into(), serde_json::json!(retries));
+                        error.context.insert("recoveryRecordKept".into(), serde_json::json!(true));
                         return Err(error);
                     }
                     // Exponential pacing prevents immediate repeated pressure on a failing server.
@@ -358,7 +364,7 @@ impl Host {
         if record.phase == "importAbsent" {
             return Err(record.diagnostic.clone().unwrap_or_else(|| issue(
                 "ARTIFACT_IMPORT_UNRESOLVED",
-                "Native readback found no imported artifact. Start a new operation; this import will not be replayed.",
+                "Epicor readback found no imported artifact. Start a new operation; this import will not be replayed.",
             )));
         }
         let method = run.storage.lock().map_err(|_| issue("RUN_STATE_FAILED", "Run state is unavailable."))?
@@ -381,7 +387,7 @@ impl Host {
         ) {
             return Err(issue(
                 "ARTIFACT_CLEANUP_PENDING",
-                "This native instance is being restored or removed. Finish cleanup before starting a new operation.",
+                "This Epicor instance is being restored or removed. Finish cleanup before starting a new operation.",
             ));
         }
         if matches!(record.phase.as_str(), "removed" | "restored") {
@@ -470,7 +476,7 @@ impl Host {
                     return Err(issue(
                         "ARTIFACT_REFERENCE_TARGET_REQUIRED",
                         format!(
-                            "Artifact {} references dependency {} by native library ID {}. Set that dependency's explicit target to {} or update the exported reference. Its generated target {} cannot satisfy the reference; custom code was not rewritten.",
+                            "Artifact {} references dependency {} by Epicor library ID {}. Set that dependency's explicit target to {} or update the exported reference. Its generated target {} cannot satisfy the reference; custom code was not rewritten.",
                             record.declaration.alias,
                             dependency,
                             other_prepared.source_id,
@@ -502,7 +508,7 @@ impl Host {
                 {
                     return Err(issue(
                         "ARTIFACT_RESTORE_OWNER_UNSUPPORTED",
-                        "The native importer rewrites ownership to the admitted caller. A temporary replacement cannot preserve this other owner; use a separate instance.",
+                        "The Epicor importer rewrites ownership to the allowed to start Epicor user. A temporary replacement cannot preserve this other owner; use a separate instance.",
                     ));
                 }
                 match record.declaration.policy {
@@ -510,7 +516,7 @@ impl Host {
                         return Err(issue(
                             "ARTIFACT_TARGET_EXISTS",
                             format!(
-                                "Native target {} already exists. No replacement was authorized.",
+                                "Epicor target {} already exists. No replacement was authorized.",
                                 record.target
                             ),
                         ));
@@ -523,14 +529,14 @@ impl Host {
                             )
                         })?;
                         if old.scope != file.record.scope
-                            || old.plugin != file.record.plugin
+                            || !crate::legacy_category_ids::same(&old.plugin, &file.record.plugin)
                             || old.alias != record.declaration.alias
                             || old.artifact.phase != "ready"
                             || old.artifact.identity.as_ref() != Some(identity)
                         {
                             return Err(issue(
                                 "ARTIFACT_OWNER_MISMATCH",
-                                "The named artifact does not match Herbert's verified installation for this plugin and caller.",
+                                "The named artifact does not match Herbert's verified installation for this plugin and Epicor user.",
                             ));
                         }
                     }
@@ -577,11 +583,16 @@ impl Host {
             // The durable target, owner marker and backup exist before import.
             file.retain_installation(index)?;
             _installing.step("Uploading and importing helper package");
-            self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await?;
+            if let Err(error)=self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await {
+                file.phase(index,"reserved")?;return Err(error);
+            }
             if file.record.artifacts[index].authorization.is_none() {
                 file.record.artifacts[index].authorization=Some(authorization.reference());
                 file.checkpoint()?;
                 self.checkpoint_native_artifacts(run,file.record.clone()).await?;
+            }
+            if let Err(error)=self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await {
+                file.phase(index,"reserved")?;return Err(error);
             }
             let imported = backend::import(
                 connection,
@@ -602,10 +613,10 @@ impl Host {
             .await?;
             let Some((identity, readback)) = observed else {
                 file.phase(index, "importAbsent")?;
-                return Err(imported.err().unwrap_or_else(||issue("ARTIFACT_IMPORT_UNVERIFIED","Native readback found no imported artifact. This import will not be replayed.")));
+                return Err(imported.err().unwrap_or_else(||issue("ARTIFACT_IMPORT_UNVERIFIED","Epicor readback found no imported artifact. This import will not be replayed.")));
             };
             if !record.matches_import(&file.record.scope, &identity) {
-                return Err(imported.err().unwrap_or_else(||issue("ARTIFACT_OWNER_MISMATCH","Native readback did not prove ownership of the imported artifact. It was preserved.")));
+                return Err(imported.err().unwrap_or_else(||issue("ARTIFACT_OWNER_MISMATCH","Epicor readback did not prove ownership of the imported artifact. It was preserved.")));
             }
             file.record.artifacts[index].identity = Some(identity);
             file.phase(index, "installed")?;
@@ -652,17 +663,16 @@ impl Host {
                             "The imported Function identity is absent.",
                         )
                     })?;
-                file.phase(index, "compilePending")?;
-                _installing.step("Compiling and enabling helper");
+                _installing.step("Preparing native helper compilation rows");
+                let arguments=backend::enable_arguments(connection,&record.target,&identity,&prepared.metadata,cancel).await?;
                 self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await?;
-                backend::enable(
-                    connection,
-                    &record.target,
-                    &identity,
-                    &prepared.metadata,
-                    cancel,
-                )
-                .await?;
+                file.phase(index,"compilePending")?;
+                if let Err(error)=self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await {
+                    // The final check ran before any enable write was initiated.
+                    file.phase(index,"installed")?;return Err(error);
+                }
+                _installing.step("Compiling and enabling helper");
+                backend::apply_enable(connection,arguments,cancel).await?;
                 file.phase(index, "compiled")?;
             }
             if file.record.artifacts[index].phase == "compilePending" {
@@ -680,7 +690,9 @@ impl Host {
             if file.record.artifacts[index].phase == "compiled" {
                 file.phase(index, "publishPending")?;
                 _installing.step("Publishing helper and verifying its functions");
-                self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await?;
+                if let Err(error)=self.require_artifact_change(run,connection,&file.record.plugin,&record.declaration,&source,&version).await {
+                    file.phase(index,"compiled")?;return Err(error);
+                }
                 let result = backend::publish(connection, &record.target, cancel).await;
                 let bytes = backend::export(
                     connection,
@@ -715,7 +727,7 @@ impl Host {
                 .map_err(|_| {
                     issue(
                         "ARTIFACT_READBACK_INVALID",
-                        "The native Function export is malformed.",
+                        "The Epicor Function export is malformed.",
                     )
                 })?;
                 backend::verify_functions(&record.declaration, &package, true)?;
@@ -723,7 +735,7 @@ impl Host {
         } else if file.record.artifacts[index].phase != "installed" {
             return Err(issue(
                 "ARTIFACT_IMPORT_UNRESOLVED",
-                "The native query installation is not verified.",
+                "The Epicor query installation is not verified.",
             ));
         }
         if record.declaration.artifact_type != NativeArtifactType::FunctionLibrary {
@@ -778,7 +790,7 @@ async fn native_query_parameters(
     let supplied = provided.as_object().ok_or_else(|| {
         issue(
             "ARTIFACT_PARAMETERS_INVALID",
-            "Query parameters must be a named object or a native ExecutionParameter tableset.",
+            "Query parameters must be a named object or an Epicor ExecutionParameter tableset.",
         )
     })?;
     let response = connection
@@ -795,7 +807,7 @@ async fn native_query_parameters(
         .ok_or_else(|| {
             issue(
                 "ARTIFACT_PARAMETERS_INVALID",
-                "The native query omitted its execution-parameter table.",
+                "The Epicor query omitted its execution-parameter table.",
             )
         })?;
     for (name, value) in supplied {
@@ -829,7 +841,7 @@ fn decode_function(bytes: &[u8]) -> Result<Value, Diagnostic> {
     serde_json::from_slice(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes)).map_err(|_| {
         issue(
             "ARTIFACT_READBACK_INVALID",
-            "The native Function export is malformed.",
+            "The Epicor Function export is malformed.",
         )
     })
 }
@@ -932,32 +944,38 @@ impl Host {
                 let dependent = file.record.artifacts.iter().find(|other| {
                     other.declaration.dependencies.contains(&alias)
                         && !matches!(other.phase.as_str(), "reserved" | "removed" | "restored")
-                });
-                let result = if let Some(other) = dependent {
-                    Err(issue(
-                        "ARTIFACT_DEPENDENCY_CLEANUP_PENDING",
-                        format!(
-                            "Dependency {alias} remains installed because {} still depends on it. Finish that artifact's cleanup before removing this dependency.",
-                            other.declaration.alias
-                        ),
-                    ))
-                } else if leased_helper {
-                    let artifact = &file.record.artifacts[index];
-                    match (lease_host.as_deref(), artifact.identity.as_ref().and_then(|id| id.global_id.as_deref())) {
-                        (Some(host), Some(generation)) => {
-                            match self.cleanup_leased_helper(connection, host, &artifact.target, generation).await {
-                                Ok(true) => file.phase(index, "removed"),
-                                Ok(false) => {
-                                    run.activity.note(&progress_name, "Lease released; another run still uses the helper");
-                                    file.phase(index, "released")
-                                },
-                                Err(error) => Err(error),
+                }).map(|other|other.declaration.alias.clone());
+                let reference=file.record.artifacts[index].authorization.clone();
+                let result=match reference {
+                    Some(reference)=>self.with_owned_cleanup(run,connection,reference,async {
+                        if let Some(other) = dependent {
+                            Err(issue(
+                                "ARTIFACT_DEPENDENCY_CLEANUP_PENDING",
+                                format!(
+                                    "Dependency {alias} remains installed because {} still depends on it. Finish that artifact's cleanup before removing this dependency.",
+                                    other
+                                ),
+                            ))
+                        } else if leased_helper {
+                            let artifact = &file.record.artifacts[index];
+                            match (lease_host.as_deref(), artifact.identity.as_ref().and_then(|id| id.global_id.as_deref())) {
+                                (Some(host), Some(generation)) => {
+                                    match self.cleanup_leased_helper(connection, host, &artifact.target, generation).await {
+                                        Ok(true) => file.phase(index, "removed"),
+                                        Ok(false) => {
+                                            run.activity.note(&progress_name, "Lease released; another run still uses the helper");
+                                            file.phase(index, "released")
+                                        },
+                                        Err(error) => Err(error),
+                                    }
+                                }
+                                _ => Err(issue("SERVER_LEASE_FAILED", "The helper has no verified server lease. Cleanup preserved it for server reconciliation.")),
                             }
+                        } else {
+                            cleanup_one(&mut file, index, connection).await
                         }
-                        _ => Err(issue("SERVER_LEASE_FAILED", "The helper has no verified server lease. Cleanup preserved it for server reconciliation.")),
-                    }
-                } else {
-                    cleanup_one(&mut file, index, connection).await
+                    }).await,
+                    None=>Err(issue("SERVER_CHANGE_AUTHORIZATION_REQUIRED","This resource has no original authorization reference. Preserve its ownership evidence and explicitly authorize scoped recovery.")),
                 };
                 if result.is_ok() {
                     let phase = file.record.artifacts[index].phase.as_str();
@@ -969,13 +987,9 @@ impl Host {
                 }
                 if let Err(mut error) = result {
                     run.activity.note(&progress_name, "Helper cleanup needs attention");
-                    error.message = format!(
-                        "{} (plugin {}, alias {}, native target {}).",
-                        error.message,
-                        file.record.plugin,
-                        file.record.artifacts[index].declaration.alias,
-                        file.record.artifacts[index].target
-                    );
+                    error.context.insert("plugin".into(), serde_json::json!(file.record.plugin));
+                    error.context.insert("helper".into(), serde_json::json!(file.record.artifacts[index].declaration.alias));
+                    error.context.insert("serverObject".into(), serde_json::json!(file.record.artifacts[index].target));
                     file.record.artifacts[index].diagnostic = Some(error.clone());
                     errors.push(error);
                 }
@@ -1003,9 +1017,12 @@ impl Host {
                 match backend::probe(connection, NativeArtifactType::FunctionLibrary, library, &cancel).await {
                     Ok(Some((identity, _))) => {
                         if let Some(generation) = identity.global_id.as_deref() {
-                            if let Err(error) = self.cleanup_leased_helper(connection, library, library, generation).await {
-                                errors.push(error);
-                            }
+                            let reference=journal.native_artifacts.iter().flat_map(|operation|operation.artifacts.iter()).find(|artifact|artifact.target==library).and_then(|artifact|artifact.authorization.clone());
+                            let result=match reference {
+                                Some(reference)=>self.with_owned_cleanup(run,connection,reference,self.cleanup_leased_helper(connection,library,library,generation)).await.map(|_|()),
+                                None=>Err(issue("SERVER_CHANGE_AUTHORIZATION_REQUIRED","The control helper has no original authorization reference. Preserve it for explicit scoped recovery.")),
+                            };
+                            if let Err(error)=result {errors.push(error);}
                         }
                     }
                     Ok(None) => (),
@@ -1057,7 +1074,7 @@ async fn cleanup_one(
             if !backend::owns(identity, expected) {
                 return Err(issue(
                     "ARTIFACT_OWNER_MISMATCH",
-                    "Cleanup found a changed native identity. It was preserved.",
+                    "Cleanup found a changed Epicor ID. It was preserved.",
                 ));
             }
         } else if !record.matches_import(&file.record.scope, identity) {
@@ -1072,7 +1089,7 @@ async fn cleanup_one(
             }
             return Err(issue(
                 "ARTIFACT_OWNER_MISMATCH",
-                "The import did not establish owned native identity. Cleanup preserved the target.",
+                "The import did not establish owned Epicor ID. Cleanup preserved the target.",
             ));
         }
     }
@@ -1081,7 +1098,7 @@ async fn cleanup_one(
             if record.phase == "deletePending" {
                 return Err(issue(
                     "ARTIFACT_CLEANUP_PENDING",
-                    "An interrupted delete still has a native target. Its write was not replayed.",
+                    "An interrupted delete still has an Epicor target. Its write was not replayed.",
                 ));
             }
             file.record.artifacts[index].identity = Some(identity.clone());
@@ -1108,14 +1125,14 @@ async fn cleanup_one(
             .ok_or_else(|| {
                 issue(
                     "ARTIFACT_RESTORE_UNVERIFIED",
-                    "Native restoration did not produce a target. Its backup is retained.",
+                    "Epicor restoration did not produce a target. Its backup is retained.",
                 )
             })?;
         if !restored_identity(&current.0, original) {
             return Err(result.err().unwrap_or_else(|| {
                 issue(
                     "ARTIFACT_RESTORE_UNVERIFIED",
-                    "The restored native target does not match the original ownership.",
+                    "The restored Epicor target does not match the original ownership.",
                 )
             }));
         }
@@ -1190,7 +1207,7 @@ fn database_version(response: &Value) -> Result<String, Diagnostic> {
     let value=&response["returnObj"];
     if let Some(text)=value.as_str().filter(|text|!text.trim().is_empty()) {return Ok(text.to_owned());}
     let parts=["_Major","_Minor","_Build","_Revision"].iter().map(|key|value[*key].as_u64().map(|v|v.to_string())).collect::<Option<Vec<_>>>();
-    parts.map(|parts|parts.join(".")).ok_or_else(||issue("ARTIFACT_VERSION_UNAVAILABLE","The native database version was missing or malformed."))
+    parts.map(|parts|parts.join(".")).ok_or_else(||issue("ARTIFACT_VERSION_UNAVAILABLE","The Epicor database version was missing or malformed."))
 }
 #[cfg(test)]
 mod version_tests {

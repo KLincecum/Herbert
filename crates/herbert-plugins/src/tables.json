@@ -1,6 +1,6 @@
 [
   {
-    "category": "C09",
+    "category": "classic-customizations",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedXXXDef",
@@ -53,7 +53,7 @@
     ]
   },
   {
-    "category": "C10",
+    "category": "classic-personalizations",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedXXXDef",
@@ -91,7 +91,7 @@
     "owner_required": true
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedXXXDef",
@@ -129,7 +129,7 @@
     "owner_required": true
   },
   {
-    "category": "C11",
+    "category": "classic-dashboards",
     "schema": "Ice",
     "table": "DashBdDef",
     "kind": "PersistedDashBdDef",
@@ -189,7 +189,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "ContextMenu",
     "kind": "PersistedContextMenu",
@@ -211,7 +211,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "ContextMenuItem",
     "kind": "PersistedContextMenuItem",
@@ -235,7 +235,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "ContextValidation",
     "kind": "PersistedContextValidation",
@@ -257,7 +257,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "SearchOption",
     "kind": "PersistedSearchOption",
@@ -283,7 +283,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "ESSearch",
     "kind": "PersistedESSearch",
@@ -309,7 +309,7 @@
     "owner_field": "UserID"
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "ESSearchFields",
     "kind": "PersistedESSearchFields",
@@ -333,7 +333,7 @@
     ]
   },
   {
-    "category": "C18",
+    "category": "report-behavior",
     "schema": "Ice",
     "table": "ReportStyleRule",
     "kind": "PersistedReportStyleRule",
@@ -354,7 +354,7 @@
     ]
   },
   {
-    "category": "C24",
+    "category": "solutions-and-packages",
     "schema": "Ice",
     "table": "SolutionHeader",
     "kind": "PersistedSolutionHeader",
@@ -382,7 +382,7 @@
     "coverage": []
   },
   {
-    "category": "C24",
+    "category": "solutions-and-packages",
     "schema": "Ice",
     "table": "SolutionType",
     "kind": "PersistedSolutionType",
@@ -398,7 +398,7 @@
     "coverage": []
   },
   {
-    "category": "C24",
+    "category": "solutions-and-packages",
     "schema": "Ice",
     "table": "SolutionTypeDetail",
     "kind": "PersistedSolutionTypeDetail",
@@ -412,7 +412,7 @@
     "coverage": []
   },
   {
-    "category": "C12",
+    "category": "kinetic-applications-and-layers",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedKineticCustomization",
@@ -448,7 +448,7 @@
     "coverage": []
   },
   {
-    "category": "C12",
+    "category": "kinetic-applications-and-layers",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedKineticApplicationFile",
@@ -485,7 +485,7 @@
     "coverage": []
   },
   {
-    "category": "C12",
+    "category": "kinetic-applications-and-layers",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedKineticEventLayout",
@@ -521,7 +521,7 @@
     "coverage": []
   },
   {
-    "category": "C12",
+    "category": "kinetic-applications-and-layers",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedKineticLayerBackup",
@@ -557,7 +557,7 @@
     "coverage": []
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedKineticPersonalization",
@@ -595,7 +595,7 @@
     "coverage": []
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "schema": "Erp",
     "table": "PcInputVar",
     "kind": "PersistedPcInputVar",
@@ -610,7 +610,7 @@
     "coverage": []
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "schema": "Erp",
     "table": "PcMethodVar",
     "kind": "PersistedPcMethodVar",
@@ -625,7 +625,7 @@
     "coverage": []
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "schema": "Erp",
     "table": "PcRuleSet",
     "kind": "PersistedPcRuleSet",
@@ -640,7 +640,7 @@
     "coverage": []
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "schema": "Erp",
     "table": "PcRules",
     "kind": "PersistedPcRules",
@@ -655,7 +655,7 @@
     "coverage": []
   },
   {
-    "category": "C19",
+    "category": "configurators",
     "schema": "Erp",
     "table": "PcRulesExpr",
     "kind": "PersistedPcRulesExpr",
@@ -670,7 +670,7 @@
     "coverage": []
   },
   {
-    "category": "C20",
+    "category": "business-rules-and-mappings",
     "schema": "Erp",
     "table": "ACTType",
     "kind": "PostingRules",
@@ -798,7 +798,7 @@
     "coverage": []
   },
   {
-    "category": "C17",
+    "category": "report-styles-and-layouts",
     "schema": "Ice",
     "table": "CustomReportStoreHistory",
     "kind": "PersistedReportHistory",
@@ -815,7 +815,7 @@
     "coverage": []
   },
   {
-    "category": "C20",
+    "category": "business-rules-and-mappings",
     "schema": "Ice",
     "table": "RptStructuredOutputDef",
     "kind": "StructuredOutput",
@@ -865,7 +865,7 @@
     "coverage": []
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "ShellLayout",
     "kind": "PersistedShellLayout",
@@ -891,7 +891,7 @@
     }
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "ShellLayoutPersonal",
     "kind": "PersistedShellLayoutPersonal",
@@ -917,7 +917,7 @@
     "owner_required": true
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "HomeUserOption",
     "kind": "PersistedHomeUserOption",
@@ -939,7 +939,7 @@
     "owner_required": true
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "FavFolder",
     "kind": "PersistedFavFolder",
@@ -959,7 +959,7 @@
     "owner_required": true
   },
   {
-    "category": "C13",
+    "category": "kinetic-personalizations",
     "schema": "Ice",
     "table": "FavItems",
     "kind": "PersistedFavItems",
@@ -981,7 +981,7 @@
     "owner_required": true
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "QuickSearch",
     "kind": "PersistedQuickSearch",
@@ -1007,7 +1007,7 @@
     "owner_field": "UserID"
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "QuickSearchCriteria",
     "kind": "PersistedQuickSearchCriteria",
@@ -1033,7 +1033,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "QuickSearchValueList",
     "kind": "PersistedQuickSearchValueList",
@@ -1061,7 +1061,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "NamedSearch",
     "kind": "PersistedNamedSearch",
@@ -1088,7 +1088,7 @@
     "owner_field": "UserID"
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "ControlSetting",
     "kind": "PersistedControlSetting",
@@ -1117,7 +1117,7 @@
     "owner_field": "UserID"
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "WhereClause",
     "kind": "PersistedWhereClause",
@@ -1146,7 +1146,7 @@
     "owner_field": "UserID"
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "AlternateKeyLike",
     "kind": "PersistedAlternateKeyLike",
@@ -1172,7 +1172,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "LaunchOption",
     "kind": "PersistedLaunchOption",
@@ -1198,7 +1198,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "AlternateKeyBinding",
     "kind": "PersistedAlternateKeyBinding",
@@ -1228,7 +1228,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "AlternateKey",
     "kind": "PersistedAlternateKey",
@@ -1256,7 +1256,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "WhereClauseBinding",
     "kind": "PersistedWhereClauseBinding",
@@ -1284,7 +1284,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "WhereClauseToken",
     "kind": "PersistedWhereClauseToken",
@@ -1314,7 +1314,7 @@
     ]
   },
   {
-    "category": "C15",
+    "category": "menus-and-launch-definitions",
     "schema": "Ice",
     "table": "Menu",
     "kind": "PersistedMenu",
@@ -1336,7 +1336,7 @@
     ]
   },
   {
-    "category": "C12",
+    "category": "kinetic-applications-and-layers",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedKineticApplicationRegistration",
@@ -1384,7 +1384,7 @@
     ]
   },
   {
-    "category": "C14",
+    "category": "searches-and-navigation",
     "schema": "Ice",
     "table": "XXXDef",
     "kind": "PersistedContextMenuXml",

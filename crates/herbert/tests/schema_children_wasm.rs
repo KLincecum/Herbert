@@ -1,18 +1,18 @@
-//! Offline acceptance of the actual packaged C02 module through the host runtime.
+//! Offline acceptance of the actual packaged UD schema module through the host runtime.
 use herbert_contract::*;
 use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
-#[ignore = "Requires HERBERT_C02_WASM pointing to the built release module; no server is used"]
+#[ignore = "Requires HERBERT_UD_SCHEMA_WASM pointing to the built release module; no server is used"]
 async fn compiled_schema_children_preserve_completed_paging() {
-    let path = PathBuf::from(std::env::var("HERBERT_C02_WASM").unwrap());
+    let path = PathBuf::from(std::env::var("HERBERT_UD_SCHEMA_WASM").unwrap());
     let plugin = herbert::plugins::Plugin::load(&path).await.unwrap();
     let mut request = GuestRequest {
-        abi: PLUGIN_ABI, operation: "acquire".into(), category: "C02".into(),
+        abi: PLUGIN_ABI, operation: "acquire".into(), category: "ud-schema".into(),
         company: "TESTCO".into(),
-        identity: Some(Identity { category: "C02".into(), kind: "UDTableSchema".into(),
+        identity: Some(Identity { category: "ud-schema".into(), kind: "UDTableSchema".into(),
             scope: Scope::Global, keys: BTreeMap::from([
                 ("SystemCode".into(), "ICE".into()), ("DataTableID".into(), "UD01".into())]) }),
         cursor: None, page_size: Some(2), state: json!({}),
@@ -51,10 +51,10 @@ async fn compiled_schema_children_preserve_completed_paging() {
                     assert_eq!(values.len(), 2);
                     assert!(values.iter().all(|r| r["DataTableID"] == "UD01" && r["Value"] == "Unchanged Ω"));
                 }
-                println!("Packaged C02 {}: six tables, twelve paged reads, exact owner rows retained", plugin.hash);
+                println!("Packaged UD schema {}: six tables, twelve paged reads, exact owner rows retained", plugin.hash);
                 break;
             }
-            other => panic!("Unexpected compiled C02 reply: {other:?}"),
+            other => panic!("Unexpected compiled UD schema reply: {other:?}"),
         }
     }
 }

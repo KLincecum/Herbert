@@ -1,4 +1,4 @@
-//! C27 indexes explicit table references in collected JSON, never business rows.
+//! Configuration references indexes explicit table references in collected JSON, never business rows.
 use herbert_contract::*;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ pub fn handle(request: GuestRequest) -> GuestReply {
         let Some(source) = request
             .identity
             .as_ref()
-            .filter(|id| id.category != "C27" && !id.kind.is_empty() && !id.keys.is_empty())
+            .filter(|id| id.category != "configuration-references" && !id.kind.is_empty() && !id.keys.is_empty())
         else {
             return super::failure(
                 "IDENTITY_REQUIRED",
@@ -109,7 +109,7 @@ pub fn handle(request: GuestRequest) -> GuestReply {
     if request.operation != "acquire" {
         return super::failure(
             "OPERATION_UNSUPPORTED",
-            "Configuration references support local discovery, exact acquisition and definition processing.",
+            "Configuration references support local discovery, exact download and definition processing.",
         );
     }
     let Some(id) = request.identity.filter(valid_identity) else {
@@ -137,7 +137,7 @@ pub fn handle(request: GuestRequest) -> GuestReply {
 }
 
 fn valid_identity(id: &Identity) -> bool {
-    id.category == "C27"
+    id.category == "configuration-references"
         && matches!(
             id.kind.as_str(),
             "DatabaseTableReference" | "DataViewTableReference"
@@ -158,7 +158,7 @@ fn valid_record(record: &Value, id: &Identity) -> bool {
                         .and_then(|v| serde_json::from_value::<Identity>(v.clone()).ok());
                     let pointer = row.get("pointer").and_then(Value::as_str);
                     source.is_some_and(|s| {
-                        s.category != "C27"
+                        s.category != "configuration-references"
                             && !s.kind.is_empty()
                             && !s.keys.is_empty()
                             && s.scope == id.scope
@@ -180,7 +180,7 @@ pub fn scan(source: &Identity, definition: &Value) -> (Vec<Value>, Vec<Diagnosti
     scanner.document(definition, "", None);
     let mut coverage = Diagnostic::new(
         "REFERENCE_SCAN_COVERAGE",
-        "Explicit table references were indexed locally from structured JSON and JSON/XML text. Original names and unqualified names are preserved. SQL/code inference, business-row reads and dependency closure are outside this index.",
+        "Herbert listed the tables that saved definitions name explicitly. Names are kept exactly as written, with or without a schema prefix. Tables used only inside SQL or code, and business data, are not included.",
     );
     coverage.identity = Some(source.clone());
     coverage.context = BTreeMap::from([
@@ -224,7 +224,7 @@ impl Scanner<'_> {
             keys.insert("Schema".into(), schema.into());
         }
         let id = Identity {
-            category: "C27".into(),
+            category: "configuration-references".into(),
             kind: if fields.get("schema").is_some() {
                 "DataViewTableReference"
             } else {
@@ -405,7 +405,7 @@ mod tests {
     use super::*;
     fn source() -> Identity {
         Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "BAQ".into(),
             scope: Scope::Company {
                 company: "C".into(),
@@ -484,7 +484,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: op.into(),
-            category: "C27".into(),
+            category: "configuration-references".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

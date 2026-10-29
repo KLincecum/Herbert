@@ -9,7 +9,7 @@ fn invalid(message: &str) -> Diagnostic {
 }
 
 /// Epicor packages external holds and BPM forms separately. Let its exporter
-/// gather those resources until their local serialization is qualified.
+/// gather those resources until their local serialization is verified.
 pub fn needs_native_export(dataset: &Value) -> Result<bool, Diagnostic> {
     for row in dataset["BpDirective"].as_array().into_iter().flatten() {
         let body = row["Body"]
@@ -55,7 +55,7 @@ pub fn needs_native_export(dataset: &Value) -> Result<bool, Diagnostic> {
 pub fn build(dataset: &Value, version: &str) -> Result<Vec<u8>, Diagnostic> {
     if version.is_empty() || needs_native_export(dataset)? {
         return Err(invalid(
-            "This directive package requires the native dependency exporter.",
+            "This directive package requires the Epicor dependency exporter.",
         ));
     }
     let xml = crate::baq_archive::dataset_xml(

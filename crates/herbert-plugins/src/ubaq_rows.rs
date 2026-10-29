@@ -24,7 +24,7 @@ pub fn next(mut state: Value, page_size: Option<u32>) -> GuestReply {
 }
 
 pub fn append(state: &mut Value, response: &Value) -> Result<bool, Diagnostic> {
-    let invalid = || Diagnostic::new("UBAQ_METHODS_INVALID", "The native update-method page is incomplete.");
+    let invalid = || Diagnostic::new("UBAQ_METHODS_INVALID", "The Epicor update-method page is incomplete.");
     for table in ["BpMethod", "BpArgument", "BpDirective"] {
         let rows = response["returnObj"][table].as_array().ok_or_else(invalid)?;
         if !state["bpm"][table].is_array() { state["bpm"][table] = json!([]); }

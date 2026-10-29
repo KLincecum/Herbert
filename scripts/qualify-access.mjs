@@ -24,7 +24,7 @@ assert.ok(executable && plugins && evidencePath,
 const codeType = wire.returnObj.UDCodeType[0].CodeTypeID;
 const company = wire.returnObj.UDCodeType[0].Company;
 const identity = {
-  category: "C01",
+  category: "ud-codes",
   kind: "UDCodeType",
   scope: { type: "company", company },
   keys: { CodeTypeID: codeType },

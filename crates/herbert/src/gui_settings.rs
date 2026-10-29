@@ -47,27 +47,42 @@ mod tests {
         form.server_concurrency = "0".into();
         assert!(form.value().is_err());
     }
+    #[test]
+    fn page_size_errors_name_the_page_size_and_its_int32_range() {
+        let mut form = SettingsForm::new(&OperatingSettings::default());
+        for (text, expected) in [("", None), ("1", Some(1)), ("2147483647", Some(i32::MAX as u32))] {
+            form.page = text.into();
+            assert_eq!(form.value().unwrap().page_size, expected, "{text}");
+        }
+        for text in ["0", "2147483648", "4294967296", "abc", "1.5", "-1"] {
+            form.page = text.into();
+            assert_eq!(form.value().unwrap_err().message, herbert_contract::PAGE_SIZE_MESSAGE, "{text}");
+        }
+        form.page = "500".into();
+        form.connection = "soon".into();
+        assert!(form.value().unwrap_err().message.starts_with("Timeouts"));
+    }
 }
-fn optional(text: &str) -> Result<Option<u64>, Diagnostic> {
+fn whole(text: &str, message: &str) -> Result<Option<u64>, Diagnostic> {
     if text.trim().is_empty() {
         return Ok(None);
     }
-    text.trim().parse().map(Some).map_err(|_| {
-        Diagnostic::new(
-            "INVALID_SETTING",
-            "Enter a whole number, or leave the optional value blank.",
-        )
-    })
+    text.trim().parse().map(Some).map_err(|_| Diagnostic::new("INVALID_SETTING", message))
 }
-fn small(text: &str) -> Result<Option<u32>, Diagnostic> {
-    optional(text)?
+fn optional(text: &str) -> Result<Option<u64>, Diagnostic> {
+    whole(
+        text,
+        "Timeouts, request interval and retry wait must be whole numbers of milliseconds, or blank to use the default.",
+    )
+}
+/// Epicor's page-size parameters are Int32; plugins and BAQ reject anything larger.
+fn page_size(text: &str) -> Result<Option<u32>, Diagnostic> {
+    whole(text, herbert_contract::PAGE_SIZE_MESSAGE)?
         .map(|n| {
-            u32::try_from(n).map_err(|_| {
-                Diagnostic::new(
-                    "INVALID_SETTING",
-                    "The setting exceeds its u32 representation.",
-                )
-            })
+            u32::try_from(n)
+                .ok()
+                .filter(|n| (1..=i32::MAX as u32).contains(n))
+                .ok_or_else(|| Diagnostic::new("INVALID_SETTING", herbert_contract::PAGE_SIZE_MESSAGE))
         })
         .transpose()
 }
@@ -104,10 +119,10 @@ impl SettingsForm {
             inactivity_timeout_ms: optional(&self.inactivity)?,
             minimum_request_interval_ms: optional(&self.interval)?,
             retry_attempts: self.retries.trim().parse().map_err(|_| {
-                Diagnostic::new("INVALID_SETTING", "Retry attempts must be a whole number.")
+                Diagnostic::new("INVALID_SETTING", "Retry attempts must be a whole number of 0 or more.")
             })?,
             retry_backoff_ms: optional(&self.backoff)?,
-            page_size: small(&self.page)?,
+            page_size: page_size(&self.page)?,
         };
         value.validate()?;
         Ok(value)

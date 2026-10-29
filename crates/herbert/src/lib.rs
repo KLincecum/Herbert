@@ -19,6 +19,9 @@ mod archives;
 pub mod baq;
 mod checkpoint_log;
 pub mod connection;
+pub mod transport_trust;
+#[cfg(test)]
+mod test_http;
 #[cfg(feature = "gui")]
 pub mod gui;
 mod help;
@@ -26,7 +29,9 @@ mod helper_libraries;
 mod helper_recovery;
 mod helpers;
 pub mod input;
+mod legacy_category_ids;
 mod native_access;
+mod next_steps;
 pub mod native_export;
 mod persisted_chunks;
 mod output_layout;
@@ -62,6 +67,8 @@ mod baq_local_native_tests;
 mod configurator_wasm_tests;
 #[cfg(test)]
 mod business_wasm_tests;
+#[cfg(test)]
+mod test_targets;
 
 mod support_packet;
 

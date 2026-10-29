@@ -147,7 +147,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
         issue(
             request,
             "SHELL_BASE_UNVERIFIED",
-            "The linked base read did not return its one exact native identity.",
+            "The linked base read did not return its one exact Epicor ID.",
         );
         return start_images(request);
     };
@@ -380,7 +380,7 @@ pub fn complete_images(request: &mut GuestRequest) -> Option<HostAction> {
             issue(
                 request,
                 "INVALID_PLUGIN_STATE",
-                "The home image checkpoint is invalid.",
+                "The home image saved progress is invalid.",
             );
             request.state["phase"] = json!("shellComplete");
             None
@@ -406,7 +406,7 @@ fn guid(value: &str) -> Result<Option<String>, Diagnostic> {
             }
         })
     {
-        return Err(invalid("A home image reference is not a native GUID."));
+        return Err(invalid("A home image reference is not an Epicor GUID."));
     }
     let value = value.to_ascii_lowercase();
     Ok((value != "00000000-0000-0000-0000-000000000000").then_some(value))
@@ -543,10 +543,19 @@ mod tests {
             .into_iter()
             .map(|f| (f.into(), row[f].as_str().unwrap().into()))
             .collect();
+        // Acquisition first freezes the native recovery format (GetBaseLevel).
+        let GuestReply::Action { action: HostAction::SharedNativeRead { method, .. }, state } =
+            crate::handle("kinetic-personalizations", r.clone())
+        else {
+            panic!("recovery format read expected")
+        };
+        assert_eq!(method, "GetBaseLevel");
+        r.state = state;
+        r.response = Some(json!({"returnObj":{"_Major":4,"_Minor":3,"_Build":200,"_Revision":39}}));
         let GuestReply::Action {
             action: HostAction::Query { query } | HostAction::SharedQuery { query },
             state,
-        } = crate::handle("C13", r.clone())
+        } = crate::handle("kinetic-personalizations", r.clone())
         else {
             panic!()
         };
@@ -566,7 +575,7 @@ mod tests {
             completeness,
             diagnostics,
             ..
-        } = crate::handle("C13", r)
+        } = crate::handle("kinetic-personalizations", r)
         else {
             panic!()
         };
@@ -593,10 +602,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C13".into(),
+                category: "kinetic-personalizations".into(),
                 kind: "PersistedShellLayoutPersonal".into(),
                 scope: Scope::Personal {
                     company: "C".into(),

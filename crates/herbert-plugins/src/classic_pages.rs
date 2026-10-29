@@ -10,7 +10,7 @@ const TYPES: [&str; 5] = [
     "Localization",
 ];
 fn types(category: &str) -> &[&str] {
-    if category == "C10" {
+    if category == "classic-personalizations" {
         &["Personalization"]
     } else {
         &TYPES
@@ -26,13 +26,21 @@ fn invalid(message: &str) -> Diagnostic {
     Diagnostic::new("CLASSIC_PAGE_INVALID", message)
 }
 fn selection(request: &GuestRequest) -> Result<(String, String), Diagnostic> {
-    let first = if request.category == "C10" { "userIdPrefix" } else { "layerNamePrefix" };
+    let first = if request.category == "classic-personalizations" { "userIdPrefix" } else { "layerNamePrefix" };
     let prefix = |key: &str| match request.state.get("_pluginSettings").and_then(|settings| settings.get(key)) {
         None => Ok(String::new()),
         Some(Value::String(value)) => Ok(value.clone()),
         Some(_) => Err(Diagnostic::new("INVALID_SETTING", "Classic selection prefixes must be strings.")),
     };
     Ok((prefix(first)?, prefix("formNamePrefix")?))
+}
+/// The prefix's leading run before any LIKE wildcard, bracket or non-ASCII character, for a
+/// server-side `LIKE 'stem%'` superset that needs no escape syntax. Non-ASCII stops the stem
+/// because the literal is not N-prefixed and could be converted lossily. None when nothing
+/// narrows the read.
+fn like_stem(prefix: &str) -> Option<&str> {
+    let stem = &prefix[..prefix.find(|c: char| matches!(c, '%' | '_' | '[' | ']') || !c.is_ascii()).unwrap_or(prefix.len())];
+    (!stem.is_empty()).then_some(stem)
 }
 fn with_settings(mut state: Value, from: &Value) -> Value {
     if let Some(settings) = from.get("_pluginSettings") {state["_pluginSettings"] = settings.clone();}
@@ -44,7 +52,7 @@ fn validate_content(row: &Value) -> Result<(), Diagnostic> {
         .ok_or_else(|| invalid("The Classic page omitted its Content length check."))?;
     let content = row["Content"].as_str().ok_or_else(|| invalid("The Classic Content is missing."))?;
     if expected != (content.encode_utf16().count() * 2) as u64 {
-        return Err(invalid("The downloaded Classic Content is truncated; its native XML was not built."));
+        return Err(invalid("The downloaded Classic Content is truncated; its Epicor XML was not built."));
     }
     Ok(())
 }
@@ -110,23 +118,35 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             if rows.len() > size {
                 return Err(invalid("The Classic page exceeded the requested size."));
             }
+            // Progress saved by the former scope-by-type branches has no lists.
+            if !request.state["companies"].is_array() || !request.state["codes"].is_array() {
+                return Err(invalid("Restart Classic discovery with the current saved position format."));
+            }
+            // Discovery validates only rows its literal prefixes keep. A row is skipped
+            // only when a string Key1/Key2 provably misses its prefix; anything unreadable
+            // may be selected and is validated. Exact acquisition validates every row.
+            let skip = |row: &Value| request.operation != "acquire"
+                && (row["Key1"].as_str().is_some_and(|k| !k.starts_with(&first_prefix))
+                    || row["Key2"].as_str().is_some_and(|k| !k.starts_with(&form_prefix)));
             let mut seen = BTreeSet::new();
+            let mut kept = Vec::new();
             let mut identities = Vec::new();
             for row in rows {
+                if skip(row) { continue; }
+                // Scope comes from the row's own Company, exactly as before;
+                // the merged query only widens which listed values may appear.
                 let id = identity(
                     row,
-                    &request.state["company"],
-                    &request.state["code"],
+                    &request.state["companies"],
+                    &request.state["codes"],
                     &request.category,
                 )?;
                 if !seen.insert(serde_json::to_string(&id).unwrap()) {
                     return Err(invalid("The Classic page repeats an identity."));
                 }
-                identities.push(id);
+                kept.push(row); identities.push(id);
             }
-            let branch = request.state["branch"].as_u64().unwrap_or(0) as usize;
-            let count =
-                request.state["scopes"].as_array().unwrap().len() * types(&request.category).len();
+            // One SysRowID keyset spans every scope and type: a short page ends discovery.
             let next = if request.operation == "acquire" {
                 None
             } else if rows.len() == size {
@@ -134,13 +154,11 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     .last()
                     .and_then(|r| r["SysRowID"].as_str())
                     .filter(|s| !s.is_empty())
-                    .ok_or_else(|| invalid("The full Classic page has no cursor."))?;
+                    .ok_or_else(|| invalid("The full Classic page has no saved position."))?;
                 if request.state["after"] == after {
-                    return Err(invalid("The Classic page cursor did not advance."));
+                    return Err(invalid("The Classic page saved position did not advance."));
                 }
-                Some(json!({"version":1,"branch":branch,"after":after}).to_string())
-            } else if branch + 1 < count {
-                Some(json!({"version":1,"branch":branch+1}).to_string())
+                Some(json!({"version":CURSOR_VERSION,"after":after}).to_string())
             } else {
                 None
             };
@@ -149,25 +167,12 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             {
                 return Err(invalid("The exact Classic identity was not returned."));
             }
-            let mut selected_rows = Vec::new();
-            let mut selected_ids = Vec::new();
-            let mut unselected_diagnostics = Vec::new();
-            for (row, id) in rows.iter().zip(identities) {
-                // Validate all acquired Content before narrowing the page.
-                // Unselected failures retain only identity and a static message.
-                let content_result = validate_content(row);
-                let selected = request.operation == "acquire"
-                    || id.keys["Key1"].starts_with(&first_prefix) && id.keys["Key2"].starts_with(&form_prefix);
-                if selected {
-                    selected_rows.push(row.clone()); selected_ids.push(id);
-                } else if let Err(mut diagnostic) = content_result {
-                    diagnostic.identity = Some(id); unselected_diagnostics.push(diagnostic);
-                }
-            }
+            // Every kept row has string keys matching both prefixes, so it is selected;
+            // process() validates its Content. Unselected rows leave no diagnostics.
             let mut state = request.state.clone();
-            state["rows"] = json!(selected_rows);
-            state["identities"] = json!(selected_ids);
-            state["_selectionDiagnostics"] = json!(unselected_diagnostics);
+            state["rows"] = json!(kept);
+            state["identities"] = json!(identities);
+            state["_selectionDiagnostics"] = json!([]);
             state["phase"] = json!("processing");
             state["targeted"] = json!(request.operation == "acquire");
             state["nextCursor"] = json!(next);
@@ -181,46 +186,51 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             request.state = state;
             process(request)
         }
-        _ => Err(invalid("The Classic page checkpoint is invalid.")),
+        _ => Err(invalid("The Classic page saved progress is invalid.")),
     }
 }
+// Version 2: one SysRowID keyset over every scope and type. Version 1 named one
+// of the former scope-by-type branches and cannot resume the merged stream.
+const CURSOR_VERSION: u64 = 2;
 fn read_page(request: &GuestRequest) -> Result<GuestReply, Diagnostic> {
     let cursor: Value = request
         .cursor
         .as_deref()
         .map(serde_json::from_str)
         .transpose()
-        .map_err(|_| invalid("The Classic page cursor is invalid."))?
-        .unwrap_or(json!({"version":1,"branch":0}));
-    if cursor["version"] != 1 {
+        .map_err(|_| invalid("The Classic page saved position is invalid."))?
+        .unwrap_or(json!({"version":CURSOR_VERSION}));
+    if cursor["version"] != CURSOR_VERSION {
         return Err(invalid(
-            "Restart Classic discovery with the current cursor format.",
+            "Restart Classic discovery with the current saved position format.",
         ));
+    }
+    if !cursor["after"].is_null() && !cursor["after"].as_str().is_some_and(|s| !s.is_empty()) {
+        return Err(invalid("The Classic page saved position is invalid."));
     }
     let scopes = request.state["scopes"]
         .as_array()
-        .ok_or_else(|| invalid("The Classic scope checkpoint is missing."))?;
-    let branch = cursor["branch"]
-        .as_u64()
-        .ok_or_else(|| invalid("The Classic page branch is missing."))? as usize;
-    let mut company = scopes
-        .get(branch / types(&request.category).len())
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid("The Classic page scope is invalid."))?;
-    let mut code = types(&request.category)[branch % types(&request.category).len()];
+        .ok_or_else(|| invalid("The Classic scope saved progress is missing."))?;
+    let all: Vec<&str> = scopes.iter().map(|v| v.as_str().ok_or_else(|| invalid("The Classic page scope is invalid.")))
+        .collect::<Result<_, _>>()?;
+    let mut companies = all.clone();
+    let mut codes = types(&request.category).to_vec();
+    if companies.is_empty() {
+        return Err(invalid("The Classic page scope is invalid."));
+    }
     if let Some(id) = &request.identity {
         if id.category != request.category || id.kind != "PersistedXXXDef" || id.keys.len() != 7 {
             return Err(invalid("Select an exact Classic identity."));
         }
-        company = id
+        let company = id
             .keys
             .get("Company")
             .ok_or_else(|| invalid("The Classic identity has no company."))?;
-        code = id
+        let code = id
             .keys
             .get("TypeCode")
             .ok_or_else(|| invalid("The Classic identity has no type."))?;
-        if !scopes.iter().any(|v| v == company) || !types(&request.category).contains(&code) {
+        if !all.contains(&company.as_str()) || !types(&request.category).contains(&code.as_str()) {
             return Err(invalid(
                 "The Classic identity is outside the selected scope.",
             ));
@@ -230,28 +240,64 @@ fn read_page(request: &GuestRequest) -> Result<GuestReply, Diagnostic> {
                 return Err(invalid("The Classic identity is incomplete."));
             }
         }
+        (companies, codes) = (vec![company.as_str()], vec![code.as_str()]);
     }
     if request.page_size == Some(0) {
         return Err(invalid("The Classic page size must be positive."));
     }
+    let original = request;
     let mut request = request.clone();
     request.page_size = Some(request.page_size.unwrap_or(24));
-    Ok(crate::tables::classic_page(
+    let label: Vec<&str> = companies.iter().map(|c| if c.is_empty() {"global"} else {*c}).collect();
+    let mut reply = crate::tables::classic_page(
         &request,
-        company,
-        code,
+        companies[0],
+        codes[0],
         cursor["after"].clone(),
-        with_settings(json!({"phase":"rows","scopes":scopes,"branch":branch,"company":company,"code":code,"after":cursor["after"],
-        "_progress":{"request":format!("Downloading {code} definitions ({})",if company.is_empty(){"global"}else{company}),"response":"Classic batch received; building XML and readable code"}}), &request.state),
-    ))
+        with_settings(json!({"phase":"rows","scopes":scopes,"companies":companies,"codes":codes,"after":cursor["after"],
+        "_progress":{"request":format!("Downloading {} definitions ({})",codes.join(", "),label.join(", ")),"response":"Classic batch received; building XML and readable code"}}), &request.state),
+    );
+    if original.identity.is_none() {
+        // Bulk-first: one bound Company list and one TypeCode list replace the former
+        // scope-by-type branches. The host expands each list into a parenthesized
+        // equality group of bound parameters, so values are never spliced into SQL.
+        // Layer/owner and form prefixes add a broad bound `LIKE 'stem%'` superset;
+        // the literal case-sensitive check stays local.
+        if !matches!(reply, GuestReply::Action { .. }) {
+            return Ok(reply);
+        }
+        let GuestReply::Action { action: HostAction::Query { query } | HostAction::SharedQuery { query }, .. } = &mut reply else {
+            return Err(invalid("The Classic page did not produce a query."));
+        };
+        for (field, values) in [("Company", &companies), ("TypeCode", &codes)] {
+            let mut found = query.criteria.iter()
+                .filter(|c| c.table == "DefinitionSource" && c.field == field && c.operator == "=");
+            let (Some(criterion), None) = (found.next(), found.next()) else {
+                return Err(invalid("The Classic page query lacks its company or type condition."));
+            };
+            let parameter = criterion.parameter.clone();
+            query.parameters.insert(parameter, if values.len() == 1 { json!(values[0]) } else { json!(values) });
+        }
+        // Key1 is the layer name or personalization owner; Key2 is the form.
+        let (first, form) = selection(original)?;
+        for (field, prefix) in [("Key1", &first), ("Key2", &form)] {
+            // The stem is a bound parameter value, so its quotes are not doubled.
+            let Some(stem) = like_stem(prefix) else { continue };
+            let parameter = format!("{field}Prefix");
+            query.criteria.push(QueryCriterion { table: "DefinitionSource".into(), field: field.into(), operator: "LIKE".into(), parameter: parameter.clone() });
+            query.parameters.insert(parameter, json!(format!("{stem}%")));
+        }
+    }
+    Ok(reply)
 }
 fn identity(
     row: &Value,
-    company: &Value,
-    code: &Value,
+    companies: &Value,
+    codes: &Value,
     category: &str,
 ) -> Result<Identity, Diagnostic> {
-    if row["Company"] != *company || row["TypeCode"] != *code || row["SystemFlag"] != false {
+    let within = |list: &Value, value: &Value| value.is_string() && list.as_array().is_some_and(|l| l.contains(value));
+    if !within(companies, &row["Company"]) || !within(codes, &row["TypeCode"]) || row["SystemFlag"] != false {
         return Err(invalid(
             "The Classic page returned a row outside its requested scope.",
         ));
@@ -269,7 +315,7 @@ fn identity(
     Ok(Identity {
         category: category.into(),
         kind: "PersistedXXXDef".into(),
-        scope: if category == "C10" {
+        scope: if category == "classic-personalizations" {
             if keys["Key1"].is_empty() {
                 return Err(invalid("The personalization owner is missing."));
             }
@@ -288,7 +334,7 @@ fn identity(
     })
 }
 fn export_filename(identity: &Identity) -> String {
-    if identity.category == "C10" {
+    if identity.category == "classic-personalizations" {
         // CustomPersonalizationPropertyPage uses FormNameKey and UserID.
         return crate::bpm_code::label(&format!(
             "{}_{}.xml",
@@ -324,7 +370,7 @@ fn process(request: GuestRequest) -> Result<GuestReply, Diagnostic> {
         let mut errors = crate::classic_sources::append_persisted_scripts(&mut definition);
         let xml = (|| {
             validate_content(row)?;
-            if request.category == "C10" {
+            if request.category == "classic-personalizations" {
                 crate::personalization_archive::build(row)
             } else {
                 crate::classic_archive::build(row)
@@ -350,7 +396,7 @@ fn process(request: GuestRequest) -> Result<GuestReply, Diagnostic> {
         return Ok(GuestReply::Definition {
             identity,
             definition,
-            format: if request.category == "C10" {
+            format: if request.category == "classic-personalizations" {
                 "native-classic-personalization"
             } else {
                 "native-classic-gen3"
@@ -382,7 +428,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C09".into(),
+            category: "classic-customizations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -397,14 +443,14 @@ mod tests {
     }
     fn page() -> GuestRequest {
         let mut r = request();
-        r.state = json!({"phase":"rows","branch":0,"company":"C","code":"Customization","scopes":["C","","T_67964"],"_hostPreparePage":true});
+        r.state = json!({"phase":"rows","companies":["C","","T_67964"],"codes":TYPES,"scopes":["C","","T_67964"],"_hostPreparePage":true});
         r.response = Some(json!({"rows":[row("C","US"),row("C","ZZ")]}));
         r
     }
     fn prefix_page(category: &str) -> GuestRequest {
         let mut r = page(); r.category = category.into(); r.page_size = Some(4);
-        let code = if category == "C10" {"Personalization"} else {"Customization"};
-        r.state["code"] = json!(code);
+        let code = if category == "classic-personalizations" {"Personalization"} else {"Customization"};
+        r.state["codes"] = json!(types(category));
         let rows: Vec<_> = [("Alpha","FormA","US"),("Alpha","FormB","ZZ"),("Beta","FormA","CA"),("Beta","FormB","UK")]
             .into_iter().enumerate().map(|(index,(first,form,country))| {
                 let mut value = row("C",country); value["TypeCode"] = json!(code); value["Key1"] = json!(first); value["Key2"] = json!(form);
@@ -420,7 +466,7 @@ mod tests {
     }
     fn prefix_settings(category: &str,first: Value,form: Value) -> Value {
         let mut settings = json!({"formNamePrefix":form});
-        settings[if category == "C10" {"userIdPrefix"} else {"layerNamePrefix"}] = first; settings
+        settings[if category == "classic-personalizations" {"userIdPrefix"} else {"layerNamePrefix"}] = first; settings
     }
     fn records(mut r: GuestRequest, prepared: bool) -> (Vec<(Identity,Value)>,bool,Vec<Diagnostic>,Option<String>) {
         r.state["_hostPreparePage"] = json!(prepared);
@@ -434,7 +480,7 @@ mod tests {
     }
     #[test]
     fn prefixes_select_complete_classic_xml_scripts_and_composite_owners_with_and_semantics() {
-        for category in ["C09","C10"] {
+        for category in ["classic-customizations","classic-personalizations"] {
             let r = prefix_page(category); let (baseline,complete,_,_) = records(r.clone(),false); assert!(complete);
             for (first,form,count) in [("","",4),("Alpha","",2),("","FormA",2),("Alpha","FormA",1),("alpha","FormA",0),(" Alpha","",0),("%","",0)] {
                 let mut selected = r.clone(); selected.state["_pluginSettings"] = prefix_settings(category,json!(first),json!(form));
@@ -454,8 +500,8 @@ mod tests {
         }
     }
     #[test]
-    fn prefixes_preserve_unselected_content_diagnostics_without_payload_or_output() {
-        for category in ["C09","C10"] {
+    fn prefixes_skip_unselected_content_without_diagnostics_and_keep_selected_diagnostics() {
+        for category in ["classic-customizations","classic-personalizations"] {
             for problem in ["missing","type","length-missing","length-type","length","utf16"] {
                 let mut r = prefix_page(category); r.state["_pluginSettings"] = prefix_settings(category,json!("Alpha"),json!("FormA"));
                 let bad = &mut r.response.as_mut().unwrap()["rows"][3];
@@ -473,24 +519,41 @@ mod tests {
                     let reply = handle(input.clone());
                     assert!(!serde_json::to_string(&reply).unwrap().contains("PRIVATE-MALFORMED-PAYLOAD"));
                     let (records,complete,diagnostics,_) = records(r.clone(),prepared);
-                    assert_eq!(records.len(),1);assert!(!complete);assert_eq!(diagnostics.len(),1);
-                    assert_eq!(diagnostics[0].identity.as_ref().unwrap().keys["Key1"],"Beta");
+                    // Unselected malformed Content is neither validated nor reported.
+                    assert_eq!(records.len(),1);assert!(complete);assert!(diagnostics.is_empty());
                     assert!(records[0].1["herbertSources"]["files"].as_array().unwrap().iter().any(|f|f["name"].as_str().unwrap().ends_with(".xml")));
                 }
             }
-            let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Missing"),json!(""));
+            {
+                let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Missing"),json!(""));
+                r.response.as_mut().unwrap()["rows"][3]["HerbertContentBytes"] = json!(0);
+                let (records,complete,diagnostics,_) = records(r,false);assert!(records.is_empty());assert!(complete);assert!(diagnostics.is_empty());
+            }
+            // A selected invalid row still reports its diagnostic.
+            let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Beta"),json!("FormB"));
             r.response.as_mut().unwrap()["rows"][3]["HerbertContentBytes"] = json!(0);
-            let (records,complete,diagnostics,_) = records(r,false);assert!(records.is_empty());assert!(!complete);assert_eq!(diagnostics.len(),1);
+            let (records,complete,diagnostics,_) = records(r,false);assert_eq!(records.len(),1);assert!(!complete);assert_eq!(diagnostics.len(),1);
+            assert_eq!(diagnostics[0].identity.as_ref().unwrap().keys["Key1"],"Beta");
         }
     }
     #[test]
-    fn prefixes_validate_unselected_identities_and_keep_selected_partial_results() {
-        for category in ["C09","C10"] {
+    fn prefixes_validate_selected_identities_skip_unselected_rows_and_keep_partial_results() {
+        for category in ["classic-customizations","classic-personalizations"] {
             for field in ["Company","TypeCode","SystemFlag","Key3"] {
-                let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Alpha"),json!("FormA"));
-                r.response.as_mut().unwrap()["rows"][3][field] = if field == "SystemFlag" {json!(true)} else {Value::Null};
-                assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "CLASSIC_PAGE_INVALID"));
+                for (index,skipped) in [(3,true),(0,false)] {
+                    let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Alpha"),json!("FormA"));
+                    r.response.as_mut().unwrap()["rows"][index][field] = if field == "SystemFlag" {json!(true)} else {Value::Null};
+                    if skipped {
+                        let (records,complete,diagnostics,_) = records(r,false);assert_eq!(records.len(),1);assert!(complete);assert!(diagnostics.is_empty());
+                    } else {
+                        assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "CLASSIC_PAGE_INVALID"));
+                    }
+                }
             }
+            // An unreadable Key1 with no form prefix cannot be proven unselected, so it is validated.
+            let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Alpha"),json!(""));
+            r.response.as_mut().unwrap()["rows"][3]["Key1"] = Value::Null;
+            assert!(matches!(handle(r),GuestReply::Failure {diagnostic} if diagnostic.code == "CLASSIC_PAGE_INVALID"));
             let mut r = prefix_page(category);r.state["_pluginSettings"] = prefix_settings(category,json!("Alpha"),json!(""));
             r.response.as_mut().unwrap()["rows"][1]["HerbertContentBytes"] = json!(0);
             let (records,complete,diagnostics,_) = records(r,false);assert_eq!(records.len(),2);assert!(!complete);assert_eq!(diagnostics.len(),1);
@@ -503,7 +566,7 @@ mod tests {
     }
     #[test]
     fn prefixes_continue_from_raw_cursor_through_empty_selection_and_frozen_scope_states() {
-        for category in ["C09","C10"] {
+        for category in ["classic-customizations","classic-personalizations"] {
             let mut r = prefix_page(category);let settings = prefix_settings(category,json!("Later"),json!("FormA"));r.state["_pluginSettings"] = settings.clone();
             let GuestReply::PreparedPage {state,next_state,next_cursor} = handle(r.clone()) else {panic!()};
             assert_eq!(state["rows"],json!([]));assert_eq!(next_state["_pluginSettings"],settings);
@@ -514,7 +577,8 @@ mod tests {
             let mut later = prefix_page(category).response.unwrap()["rows"][0].clone();later["Key1"] = json!("Later");later["SysRowID"] = json!("later");
             r.response = Some(json!({"rows":[later]}));
             let (records,complete,_,next) = records(r,false);assert_eq!(records.len(),1);assert!(complete);
-            assert_eq!(serde_json::from_str::<Value>(next.as_ref().unwrap()).unwrap()["branch"],1);
+            // One merged keyset: a short page ends discovery instead of opening the next branch.
+            assert_eq!(next,None);
             let mut initial = request();initial.category = category.into();initial.state = json!({"_pluginSettings":settings});
             let GuestReply::Action {state,..} = handle(initial.clone()) else {panic!()};assert_eq!(state["_pluginSettings"],settings);
             initial.state = state;initial.response = Some(json!({"parameters":{"companyID":"C","tenantID":"native"}}));
@@ -524,22 +588,24 @@ mod tests {
     }
     #[test]
     fn prefixes_do_not_narrow_exact_classic_composite_acquisition() {
-        for category in ["C09","C10"] {
+        for category in ["classic-customizations","classic-personalizations"] {
             let mut r = prefix_page(category);let row = r.response.as_ref().unwrap()["rows"][0].clone();
             r.response = Some(json!({"rows":[row.clone()]}));
-            r.identity = Some(identity(&row,&json!("C"),&r.state["code"],category).unwrap());r.operation = "acquire".into();
+            r.identity = Some(identity(&row,&json!(["C"]),&json!([row["TypeCode"]]),category).unwrap());r.operation = "acquire".into();
             let baseline = serde_json::to_value(handle(r.clone())).unwrap();assert_eq!(baseline["type"],"definition");
             let action = serde_json::to_value(read_page(&r).unwrap()).unwrap()["action"].clone();
             r.state["_pluginSettings"] = prefix_settings(category,json!("Missing"),json!("Missing"));
             assert_eq!(serde_json::to_value(handle(r.clone())).unwrap(),baseline);
             assert_eq!(serde_json::to_value(read_page(&r).unwrap()).unwrap()["action"],action);
+            let GuestReply::Action {action:HostAction::Query {query}|HostAction::SharedQuery {query},..} = read_page(&r).unwrap() else {panic!()};
+            assert!(!query.criteria.iter().any(|c| c.operator == "LIKE"),"Exact acquisition ignores prefixes");
         }
     }
     #[test]
     fn personalizations_use_the_owner_key_and_preserve_parent_variants() {
         let mut r = page();
-        r.category = "C10".into();
-        r.state["code"] = json!("Personalization");
+        r.category = "classic-personalizations".into();
+        r.state["codes"] = json!(["Personalization"]);
         for (index, row) in r.response.as_mut().unwrap()["rows"]
             .as_array_mut()
             .unwrap()
@@ -559,7 +625,7 @@ mod tests {
             panic!()
         };
         for (id, definition) in &records {
-            assert_eq!(id.category, "C10");
+            assert_eq!(id.category, "classic-personalizations");
             assert_eq!(
                 id.scope,
                 Scope::Personal {
@@ -668,7 +734,6 @@ mod tests {
     fn query_binds_tenant_and_full_identity_without_country_view_filtering() {
         let mut r = request();
         r.state = json!({"phase":"nextPage","scopes":["C","","T_67964"]});
-        r.cursor = Some(json!({"version":1,"branch":10}).to_string());
         let GuestReply::Action {
             action: HostAction::Query { query },
             ..
@@ -680,9 +745,100 @@ mod tests {
             query
                 .criteria
                 .iter()
-                .any(|c| c.field == "Company" && query.parameters[&c.parameter] == "T_67964")
+                .any(|c| c.field == "Company" && query.parameters[&c.parameter] == json!(["C","","T_67964"]))
         );
         assert!(!query.criteria.iter().any(|c| c.field == "CGCCode"));
         assert!(query.fields.iter().any(|f| f.field == "*"));
+    }
+    fn discovery_query(category: &str, cursor: Option<Value>, settings: Value) -> Result<(QuerySpec, Value), Diagnostic> {
+        let mut r = request();r.category = category.into();r.cursor = cursor.map(|c| c.to_string());
+        r.state = json!({"phase":"nextPage","scopes":["C","","T_67964"],"_pluginSettings":settings});
+        match handle(r) {
+            GuestReply::Action {action:HostAction::Query {query},state} => Ok((query,state)),
+            GuestReply::Failure {diagnostic} => Err(diagnostic),
+            other => panic!("{other:?}"),
+        }
+    }
+    #[test]
+    fn discovery_issues_one_query_over_every_scope_and_type_with_prefix_pushdown() {
+        for category in ["classic-customizations","classic-personalizations"] {
+            let (query,state) = discovery_query(category,None,prefix_settings(category,json!("Alpha"),json!("FormA"))).unwrap();
+            let only = |field: &str| {let found: Vec<_> = query.criteria.iter().filter(|c| c.field == field).collect(); assert_eq!(found.len(),1,"{field}"); assert_eq!(found[0].operator,"="); query.parameters[&found[0].parameter].clone()};
+            assert_eq!(only("Company"),json!(["C","","T_67964"]));
+            assert_eq!(only("TypeCode"),if category == "classic-personalizations" {json!("Personalization")} else {json!(TYPES)});
+            assert_eq!(only("SystemFlag"),json!(false));
+            // Layer/owner and form prefixes push a LIKE superset; no SysRowID keyset on the first page.
+            let like: Vec<_> = query.criteria.iter().filter(|c| matches!(c.field.as_str(),"Key1"|"Key2"))
+                .map(|c| (c.field.as_str(),c.operator.as_str(),query.parameters[&c.parameter].clone())).collect();
+            assert_eq!(like,vec![("Key1","LIKE",json!("Alpha%")),("Key2","LIKE",json!("FormA%"))]);
+            assert!(!query.criteria.iter().any(|c| matches!(c.field.as_str(),"SysRowID"|"CGCCode")));
+            assert_eq!(query.order.len(),1);assert_eq!(query.order[0].field,"SysRowID");assert!(!query.order[0].descending);
+            assert_eq!(query.page_size,Some(2));
+            assert_eq!(state["companies"],json!(["C","","T_67964"]));assert_eq!(state["codes"],json!(types(category)));
+            assert!(state.get("branch").is_none());
+        }
+    }
+    #[test]
+    fn prefixes_push_a_bound_like_stem_superset_through_continuation() {
+        for category in ["classic-customizations","classic-personalizations"] {
+            let like = |cursor: Option<Value>,first: &str,form: &str| {
+                let (query,_) = discovery_query(category,cursor,prefix_settings(category,json!(first),json!(form))).unwrap();
+                query.criteria.iter().filter(|c| c.operator == "LIKE").map(|c| format!("{} {}",c.field,query.parameters[&c.parameter].as_str().unwrap())).collect::<Vec<_>>()
+            };
+            // Bound parameters carry the quote verbatim; wildcard/bracket characters end the stem.
+            assert_eq!(like(None,"Ab'c","O'Form"),vec!["Key1 Ab'c%","Key2 O'Form%"]);
+            assert_eq!(like(None,"Q_1","F[x]"),vec!["Key1 Q%","Key2 F%"]);
+            // Non-ASCII ends the stem; a stem of only a space still narrows.
+            assert_eq!(like(None," Ω ",""),vec!["Key1  %"]);
+            assert!(like(None,"Ω","é").is_empty());
+            for (first,form) in [("",""),("%x","_y"),("[a","]b")] {assert!(like(None,first,form).is_empty(),"{first:?} {form:?}");}
+            assert_eq!(like(Some(json!({"version":2,"after":"row-ZZ"})),"Alpha","FormA"),vec!["Key1 Alpha%","Key2 FormA%"]);
+        }
+        // Personalizations read the owner from userIdPrefix, never layerNamePrefix.
+        let (query,_) = discovery_query("classic-personalizations",None,json!({"layerNamePrefix":"Layer","userIdPrefix":"alice"})).unwrap();
+        assert_eq!(query.criteria.iter().filter(|c| c.operator == "LIKE").map(|c| query.parameters[&c.parameter].clone()).collect::<Vec<_>>(),vec![json!("alice%")]);
+    }
+    #[test]
+    fn continuation_uses_the_sysrowid_keyset_and_old_branch_positions_restart() {
+        let (query,state) = discovery_query("classic-customizations",Some(json!({"version":2,"after":"row-ZZ"})),json!({})).unwrap();
+        let keyset: Vec<_> = query.criteria.iter().filter(|c| c.field == "SysRowID").collect();
+        assert_eq!(keyset.len(),1);assert_eq!(keyset[0].operator,">");assert_eq!(query.parameters[&keyset[0].parameter],"row-ZZ");
+        assert_eq!(state["after"],"row-ZZ");
+        assert!(query.criteria.iter().any(|c| c.field == "Company" && query.parameters[&c.parameter] == json!(["C","","T_67964"])));
+        for old in [json!({"version":1,"branch":0}),json!({"version":1,"branch":7,"after":"row-ZZ"}),json!({"branch":3})] {
+            let error = discovery_query("classic-customizations",Some(old),json!({})).unwrap_err();
+            assert!(error.message.starts_with("Restart Classic discovery"),"{}",error.message);
+        }
+        for bad in [json!({"version":2,"after":""}),json!({"version":2,"after":7})] {
+            assert_eq!(discovery_query("classic-customizations",Some(bad),json!({})).unwrap_err().code,"CLASSIC_PAGE_INVALID");
+        }
+        // Rows saved under the former single-branch state cannot be validated against the merged lists.
+        let mut old = page();old.state = json!({"phase":"rows","branch":0,"company":"C","code":"Customization","scopes":["C","","T_67964"]});
+        assert!(matches!(handle(old),GuestReply::Failure {diagnostic} if diagnostic.message.starts_with("Restart Classic discovery")));
+        // A full page continues from its last SysRowID in the version 2 format, with no branch.
+        let GuestReply::PreparedPage {next_cursor,..} = handle(page()) else {panic!()};
+        assert_eq!(serde_json::from_str::<Value>(&next_cursor.unwrap()).unwrap(),json!({"version":2,"after":"row-ZZ"}));
+    }
+    #[test]
+    fn merged_page_keeps_each_row_scope_and_identity_from_its_own_company_and_type() {
+        let mut r = page();r.page_size = Some(6);r.state["_hostPreparePage"] = json!(false);
+        let rows: Vec<Value> = [("C","Customization","A"),("","BaseExtension","B"),("T_67964","Localization","C"),("C","Productization","D"),("","Verticalization","E")]
+            .into_iter().map(|(company,code,country)| {let mut v = row(company,country);v["TypeCode"] = json!(code);v}).collect();
+        r.response = Some(json!({"rows":rows}));
+        let (records,complete,diagnostics,next) = records(r.clone(),false);
+        assert!(complete);assert!(diagnostics.is_empty());assert_eq!(next,None);assert_eq!(records.len(),5);
+        for ((id,_),row) in records.iter().zip(&rows) {
+            // Identical to the identity a single former scope-by-type branch produced for this row.
+            assert_eq!(id,&identity(row,&json!([row["Company"]]),&json!([row["TypeCode"]]),"classic-customizations").unwrap());
+            assert_eq!(id.keys["Company"],row["Company"].as_str().unwrap());assert_eq!(id.keys["TypeCode"],row["TypeCode"].as_str().unwrap());
+        }
+        assert_eq!(records.iter().map(|(id,_)| id.scope.clone()).collect::<Vec<_>>(),vec![
+            Scope::Company {company:"C".into()},Scope::Global,Scope::Company {company:"T_67964".into()},Scope::Company {company:"C".into()},Scope::Global]);
+        for (field,value) in [("Company",json!("OTHER")),("Company",json!("T_OTHER")),("TypeCode",json!("Personalization")),("TypeCode",json!("customization"))] {
+            let mut bad = r.clone();bad.response.as_mut().unwrap()["rows"][2][field] = value;
+            assert!(matches!(handle(bad),GuestReply::Failure {diagnostic} if diagnostic.message.contains("outside its requested scope")));
+        }
+        let mut personal = r;personal.category = "classic-personalizations".into();personal.state["codes"] = json!(["Personalization"]);
+        assert!(matches!(handle(personal),GuestReply::Failure {diagnostic} if diagnostic.message.contains("outside its requested scope")));
     }
 }

@@ -1,4 +1,4 @@
-//! Install, qualify and remove exact plugin-supplied native helper instances.
+//! Install, verify and remove exact plugin-supplied native helper instances.
 //! Neither the package builder nor EpiDev performs these native writes.
 use super::*;
 use crate::helper_libraries::{self, LeaseFile};
@@ -35,7 +35,7 @@ impl Host {
             {
                 return Err(Diagnostic::new(
                     "RUN_SCOPE_MISMATCH",
-                    "Reconnect as the saved caller to its endpoint and company before cleanup.",
+                    "Reconnect as the saved Epicor user to its endpoint and company before cleanup.",
                 ));
             }
             let saved = record.clone();
@@ -124,6 +124,8 @@ impl Host {
             })
             .await?;
             self.runs.lock().await.insert(holder.into(), run.clone());
+            // The destination was released above, so the saved journal is current; free the run.
+            self.settle_run(run, true).await;
         }
         Ok(
             json!({"operationId": holder, "cleanupConfirmed": diagnostics.is_empty(), "diagnostics": diagnostics}),
@@ -165,6 +167,12 @@ impl Host {
         let key = json!([plugin.hash, claim.library_id, claim.global_id]).to_string();
         let mut ready = run.helper_instances.lock().await;
         if let Some(instance) = ready.get(&key) {
+            // F2: every new use of a cached instance re-checks the live grant, so
+            // revocation stops new calls. Facts were verified at installation.
+            if claim.installation.is_some() {
+                self.check_server_change(run, connection, &plugin.category.id, &format!("legacyHelper:{}", claim.library_id), None, &json!({"kind":"legacyHelper"}), None)
+                    .await.map_err(Diagnostic::from)?;
+            }
             return Ok(instance.clone());
         }
         let instance = self
@@ -189,6 +197,22 @@ impl Host {
         Ok(instance)
     }
 
+    /// Check the declared legacy-helper effect with the facts preview declared:
+    /// contract, native EFx version and the unique package for that version.
+    async fn require_legacy_helper(
+        &self,
+        run: &Arc<Run>,
+        connection: &Arc<Connection>,
+        plugin: &Plugin,
+        claim: &HelperContract,
+        cancel: &CancellationToken,
+    ) -> Result<crate::server_changes::RunAuthority, Diagnostic> {
+        let defaults = connection.helper_metadata("GetDefaults", json!({}), cancel).await?;
+        let version = defaults.value.pointer("/returnObj/EfxLibrary/0/EpicorVersion").and_then(Value::as_str);
+        let expected = super::server_change_operations::legacy_helper_material(claim, version);
+        self.require_server_change(run, connection, &plugin.category.id, &format!("legacyHelper:{}", claim.library_id), None, &expected, None).await
+    }
+
     async fn prepare_helper_library(
         &self,
         plugin: &Plugin,
@@ -205,7 +229,7 @@ impl Host {
         if !installation.supports_instances {
             return Err(Diagnostic::new(
                 "HELPER_INSTALLATION_NOT_ADMITTED",
-                "Native helper source must support a private library instance.",
+                "Epicor helper source must support a private library instance.",
             ));
         }
 
@@ -230,7 +254,7 @@ impl Host {
                     .await;
             }
             if outstanding.iter().any(|record| {
-                record.identity.category == plugin.category.id
+                crate::legacy_category_ids::same(&record.identity.category, &plugin.category.id)
                     && !journal
                         .helper_libraries
                         .iter()
@@ -242,17 +266,25 @@ impl Host {
                 ));
             }
         }
+        // F1: a new private instance is the declared `legacyHelper:<library>`
+        // server change. Check it against the run's current authority before any
+        // membership, reservation or import. Unauthorized fails this helper use
+        // (the item is partial; the plugin may fall back to Direct); Denied stops it.
+        let Some(authorized_run) = run else {
+            return Err(Diagnostic::new("SERVER_CHANGE_AUTHORIZATION_REQUIRED", "Installing a helper needs an explicitly authorized run."));
+        };
+        let authority = self.require_legacy_helper(authorized_run, connection, plugin, claim, cancel).await?;
         let _gate = self.helper_library_gate.lock().await;
         let caller = connection.caller().await.ok_or_else(|| {
             Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before installing a helper.",
+                "Verify the Epicor user before installing a helper.",
             )
         })?;
         if temporary_access {
             // Verify the exact native policies for the lifecycle we will use.
             // The admitted Security Manager already has stock EFX admin rights
-            // on the qualified targets. Only stored policy can require a group.
+            // on the supported targets. Only stored policy can require a group.
             for method in [
                 "GetDefaults",
                 "IsValidLibraryId",
@@ -308,6 +340,11 @@ impl Host {
             }
             file.rotate_removed()?;
         }
+        // Record the authority before the first native write, so cleanup after
+        // revocation uses this reference. An existing instance keeps its original.
+        if file.lease.authorization.is_none() {
+            file.lease.authorization = Some(authority.reference());
+        }
         self.checkpoint_helper_library(run, &file).await?;
         let result = self
             .provision_helper(&mut file, claim, connection, cancel)
@@ -353,7 +390,7 @@ impl Host {
         let caller = connection.caller().await.ok_or_else(|| {
             Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the original caller before helper recovery.",
+                "Verify the original Epicor user before helper recovery.",
             )
         })?;
         let retained = journal
@@ -417,10 +454,10 @@ impl Host {
             let version = defaults.value.pointer("/returnObj/EfxLibrary/0/EpicorVersion")
                 .and_then(Value::as_str).ok_or_else(|| Diagnostic::new(
                     "HELPER_TARGET_VERSION_UNKNOWN",
-                    "The native defaults did not identify the helper package version.",
+                    "The Epicor defaults did not identify the helper package version.",
                 ))?;
             let package:Value=serde_json::from_slice(bytes.strip_prefix(&[0xef,0xbb,0xbf]).unwrap_or(&bytes)).map_err(|_|Diagnostic::new("HELPER_RECOVERY_SOURCE_REQUIRED","The retained helper source is malformed."))?;
-            if package["Library"]["EpicorVersion"].as_str()!=Some(version) {return Err(Diagnostic::new("HELPER_RECOVERY_VERSION_MISMATCH","The retained helper source targets a different native version."));}
+            if package["Library"]["EpicorVersion"].as_str()!=Some(version) {return Err(Diagnostic::new("HELPER_RECOVERY_VERSION_MISMATCH","The retained helper source targets a different Epicor version."));}
             crate::helper_recovery::verify_bound_bytes(&file.lease, &bytes, true)?;
             self.restore_helper_generation(&mut file, &bytes, connection, run, cancel).await
         }.await;
@@ -536,6 +573,12 @@ impl Host {
                 .await;
         }
         crate::helper_recovery::verify_bound_bytes(&file.lease, bytes, true)?;
+        // A restore is a new import: it needs the run's current (possibly
+        // renewed) authority for this helper, never the cleanup grant.
+        let journal = collection::snapshot(run).await?;
+        let category = journal.plugin_hashes.iter().find(|(_, hash)| **hash == file.lease.plugin_hash).map(|(category, _)| category.clone())
+            .ok_or_else(|| Diagnostic::new("SERVER_CHANGE_AUTHORIZATION_REQUIRED", "The helper's module is not part of this run."))?;
+        self.require_server_change(run, connection, &category, &format!("legacyHelper:{}", file.lease.template_id), None, &json!({"kind":"legacyHelper"}), None).await?;
         let valid = connection
             .helper_metadata("IsValidLibraryId", json!({"proposedValue":library}), cancel)
             .await?;
@@ -576,7 +619,7 @@ impl Host {
             self.checkpoint_helper_library(Some(run), file).await?;
             return Err(response.err().unwrap_or_else(|| Diagnostic::new(
                 "HELPER_IMPORT_UNVERIFIED",
-                "Native readback did not find the restored helper. Its original transfer remains owned; explicit recovery can check and retry.",
+                "Epicor readback did not find the restored helper. Its original transfer remains owned; explicit recovery can check and retry.",
             )));
         }
         file.verify_owned(
@@ -662,7 +705,7 @@ impl Host {
             if helper_libraries::exists(connection, &library, cancel).await? {
                 return Err(Diagnostic::new(
                     "HELPER_ID_ALREADY_PRESENT",
-                    "The reserved native identity already exists. It will not be overwritten.",
+                    "The reserved Epicor ID already exists. It will not be overwritten.",
                 ));
             }
             let defaults = connection
@@ -675,7 +718,7 @@ impl Host {
                 .ok_or_else(|| {
                     Diagnostic::new(
                         "HELPER_TARGET_VERSION_UNKNOWN",
-                        "The native defaults did not identify the helper package version.",
+                        "The Epicor defaults did not identify the helper package version.",
                     )
                 })?;
             let installation = claim.installation.as_ref().ok_or_else(|| {
@@ -692,7 +735,7 @@ impl Host {
             if candidates.len() != 1 {
                 return Err(Diagnostic::new(
                     "HELPER_PACKAGE_TARGET_MISMATCH",
-                    "The module must supply one exact package for the selected native version.",
+                    "The module must supply one exact package for the selected Epicor version.",
                 ));
             }
             let (bytes, _) = file.package(&candidates[0].package)?;
@@ -715,7 +758,7 @@ impl Host {
                 return Err(result.err().unwrap_or_else(|| {
                     Diagnostic::new(
                         "HELPER_IMPORT_UNVERIFIED",
-                        "Native readback did not find the imported library.",
+                        "Epicor readback did not find the imported library.",
                     )
                 }));
             }
@@ -822,7 +865,7 @@ impl Host {
         if file.lease.phase != "ready" {
             return Err(Diagnostic::new(
                 "HELPER_RECONCILIATION_REQUIRED",
-                "The helper's interrupted native transition needs reconciliation before use.",
+                "The helper's interrupted Epicor transition needs reconciliation before use.",
             ));
         }
         Ok(())
@@ -926,11 +969,41 @@ impl Host {
                 Ok(found) => found,
                 Err(error) => return vec![error],
             };
+        let journal = match run {
+            Some(run) => match collection::snapshot(run).await { Ok(journal) => Some(journal), Err(error) => return vec![error] },
+            None => None,
+        };
         for file in &mut files {
             if plugin_hashes.is_some_and(|selected| !selected.contains(&file.lease.plugin_hash)) {
                 continue;
             }
-            let result = self.remove_helper_library(file, connection).await;
+            let result = match (run, file.lease.authorization.clone(), &journal) {
+                // Owned: remove under the reference it was installed with, which
+                // remains valid for cleanup after revocation.
+                (Some(run), Some(reference), _) => {
+                    let removal = self.remove_helper_library(file, connection);
+                    self.with_owned_cleanup(run, connection, reference, removal).await
+                }
+                // No reference (installed by an earlier version). Clean only when
+                // this run's journal records this exact generation for the same
+                // caller, endpoint and company; otherwise preserve and flag it.
+                (Some(_), None, Some(journal)) => {
+                    let journaled = journal.helper_libraries.iter().any(|lease| lease.instance.global_id == file.lease.instance.global_id
+                        && lease.caller == file.lease.caller && lease.endpoint == file.lease.endpoint && lease.company == file.lease.company
+                        && journal.caller == file.lease.caller && journal.endpoint == file.lease.endpoint && journal.company == file.lease.company);
+                    if journaled {
+                        super::server_leases::as_cleanup(self.remove_helper_library(file, connection)).await
+                    } else {
+                        let mut error = Diagnostic::new("CLEANUP_AUTHORITY_REQUIRED", "This helper has no recorded authority and no matching saved run. It was preserved; clean it through explicit recovery.");
+                        error.context.insert("libraryId".into(), json!(file.lease.instance.library_id));
+                        error.context.insert("globalId".into(), json!(file.lease.instance.global_id));
+                        Err(error)
+                    }
+                }
+                // No saved run (reconcile without a run record): existing behaviour;
+                // explicit recovery authority for this case is lease batch 2.
+                _ => self.remove_helper_library(file, connection).await,
+            };
             if let Err(error) = result {
                 diagnostics.push(error);
             }
@@ -955,7 +1028,7 @@ impl Host {
         {
             return Err(Diagnostic::new(
                 "HELPER_OWNER_MISMATCH",
-                "Reconnect as the original helper owner before native cleanup.",
+                "Reconnect as the original helper owner before Epicor cleanup.",
             ));
         }
         if self.server_leases.lock().await.values().any(|keeper|
@@ -1025,7 +1098,7 @@ impl Host {
             return Err(result.err().unwrap_or_else(|| {
                 Diagnostic::new(
                     "HELPER_REMOVAL_UNVERIFIED",
-                    "Native readback still finds the owned helper library.",
+                    "Epicor readback still finds the owned helper library.",
                 )
             }));
         }

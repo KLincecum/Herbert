@@ -10,7 +10,7 @@ fn reference_context_profile() {
     let snapshot = journal.clone();
     let cloned = start.elapsed();
     let start = std::time::Instant::now();
-    let context = reference_context(&snapshot, "C27");
+    let context = reference_context(&snapshot, "configuration-references");
     let prepared = start.elapsed();
     let start = std::time::Instant::now();
     let bytes = serde_json::to_vec(&context).unwrap();
@@ -20,19 +20,19 @@ fn reference_context_profile() {
 }
 
 #[tokio::test]
-#[ignore = "Local compiled C27 and read-only journal fixture; no network"]
+#[ignore = "Local compiled Configuration references and read-only journal fixture; no network"]
 async fn reference_bulk_saved_index_profile() {
     let source = PathBuf::from(std::env::var_os("HERBERT_PROFILE_JOURNAL").expect("journal path"));
     let saved: storage::RunJournal = serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
     let original_root = source.parent().unwrap().parent().unwrap().parent().unwrap().parent().unwrap();
     let committed = crate::checkpoint_log::read_journal(original_root, &saved.run_id).unwrap().unwrap();
     assert!(saved == committed, "Materialized journal must equal committed terminal state");
-    let plugin = Plugin::load(&PathBuf::from(std::env::var_os("HERBERT_C27_WASM").expect("compiled C27"))).await.unwrap();
+    let plugin = Plugin::load(&PathBuf::from(std::env::var_os("HERBERT_CONFIGURATION_REFERENCES_WASM").expect("compiled Configuration references"))).await.unwrap();
     assert!(plugin.has_role("pagedDefinitions") && plugin.has_role("prefetchPages"));
-    let context = reference_context(&saved, "C27");
-    let request = GuestRequest { abi:PLUGIN_ABI, operation:"discover".into(), category:"C27".into(), company:saved.company.clone(), identity:None, cursor:None, page_size:None, state:context, response:None, error:None };
+    let context = reference_context(&saved, "configuration-references");
+    let request = GuestRequest { abi:PLUGIN_ABI, operation:"discover".into(), category:"configuration-references".into(), company:saved.company.clone(), identity:None, cursor:None, page_size:None, state:context, response:None, error:None };
     let start = std::time::Instant::now();
-    let GuestReply::InventoryData { records, inventory } = plugin.call(request, CancellationToken::new()).await.unwrap() else { panic!("Compiled C27 must return all records in one bulk result") };
+    let GuestReply::InventoryData { records, inventory } = plugin.call(request, CancellationToken::new()).await.unwrap() else { panic!("Compiled Configuration references must return all records in one bulk result") };
     let guest_ms = start.elapsed().as_millis();
     let GuestReply::Inventory { identities, next_cursor, .. } = *inventory else { panic!() };
     assert!(next_cursor.is_none());
@@ -86,7 +86,7 @@ fn reference_saved_diagnostics_replay() {
         let bytes = std::fs::read(root.join(storage::safe_relative(&input.path).unwrap())).unwrap();
         assert_eq!(storage::sha256(&bytes), input.sha256);
         let definition: Value = serde_json::from_slice(&bytes).unwrap();
-        let reply = herbert_plugins::handle("C27", GuestRequest { abi:PLUGIN_ABI, operation:"processDefinition".into(), category:"C27".into(), company:saved.company.clone(), identity:Some(artifact.identity.clone()), cursor:None, page_size:None, state:json!({"definition":definition,"_hostReferenceDiagnostics":true}), response:None, error:None });
+        let reply = herbert_plugins::handle("configuration-references", GuestRequest { abi:PLUGIN_ABI, operation:"processDefinition".into(), category:"configuration-references".into(), company:saved.company.clone(), identity:Some(artifact.identity.clone()), cursor:None, page_size:None, state:json!({"definition":definition,"_hostReferenceDiagnostics":true}), response:None, error:None });
         let GuestReply::References { diagnostics, .. } = reply else { panic!("Reference scan failed") };
         for d in &artifact.diagnostics { if d.code != "REFERENCE_SCAN_COVERAGE" { *before.entry(format!("{}:{}", artifact.identity.category,d.code)).or_default()+=1; } }
         for d in diagnostics { if d.code != "REFERENCE_SCAN_COVERAGE" {
@@ -152,7 +152,7 @@ fn reference_generic_processor_failure_marks_paged_processing_partial() {
     );
     assert!(s.journal.references.is_empty());
     assert_eq!(
-        reference_context(&s.journal, "C27")["producerReferenceErrors"],
+        reference_context(&s.journal, "configuration-references")["producerReferenceErrors"],
         true
     );
 }
@@ -175,7 +175,7 @@ fn req(operation: &str, state: Value) -> GuestRequest {
     GuestRequest {
         abi: PLUGIN_ABI,
         operation: operation.into(),
-        category: "C27".into(),
+        category: "configuration-references".into(),
         company: "TESTCO".into(),
         identity: None,
         cursor: None,
@@ -233,12 +233,12 @@ fn references_reply_compatibility_and_scope_diagnostics() {
 }
 
 #[tokio::test]
-#[ignore = "Requires explicit pinned C27 WASM and private retained native producer evidence"]
-async fn c27_actual_compiled_output_and_host_recovery() {
-    let proof = PathBuf::from(std::env::var("HERBERT_C27_PROOF").unwrap());
-    let wasm = PathBuf::from(std::env::var("HERBERT_C27_WASM").unwrap());
+#[ignore = "Requires explicit pinned Configuration references WASM and private retained native producer evidence"]
+async fn configuration_references_actual_compiled_output_and_host_recovery() {
+    let proof = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_PROOF").unwrap());
+    let wasm = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_WASM").unwrap());
     let cases: Value =
-        serde_json::from_slice(&std::fs::read(proof.join("qualification-inputs.json")).unwrap())
+        serde_json::from_slice(&std::fs::read(proof.join("test-inputs.json")).unwrap())
             .unwrap();
     let plugin = Plugin::load(&wasm).await.unwrap();
     assert!(
@@ -306,7 +306,7 @@ async fn c27_actual_compiled_output_and_host_recovery() {
         .await
         .unwrap()
     else {
-        panic!("A supported deeply nested definition must reach C27");
+        panic!("A supported deeply nested definition must reach Configuration references");
     };
     assert_eq!(records.len(), 1);
     assert!(
@@ -327,7 +327,7 @@ async fn c27_actual_compiled_output_and_host_recovery() {
             dir.path().join("plugins"),
             Some(dir.path().join("coordination")),
         );
-        let mut journal = storage::new_journal("c27-reference-proof".into());
+        let mut journal = storage::new_journal("configuration-references-reference-proof".into());
         journal.company = "TESTCO".into();
         let run = owned_run(Storage::open(&dir.path().join("output"), false, journal).unwrap());
         *run.collection_context.lock().await = Some(collection::CollectionContext {
@@ -357,7 +357,7 @@ async fn c27_actual_compiled_output_and_host_recovery() {
             let s = run.storage.lock().unwrap();
             assert!(!s.journal.references.is_empty());
             assert_eq!(
-                reference_context(&s.journal, "C27")["producerReferenceErrors"],
+                reference_context(&s.journal, "configuration-references")["producerReferenceErrors"],
                 true
             );
             let input = &s.journal.definition_views[&storage::identity_key(&identity)];
@@ -407,7 +407,7 @@ async fn c27_actual_compiled_output_and_host_recovery() {
         let (refs, context) = {
             let s = run.storage.lock().unwrap();
             let refs = s.journal.references.clone();
-            let context = reference_context(&s.journal, "C27");
+            let context = reference_context(&s.journal, "configuration-references");
             assert_eq!(s.journal.artifacts[0].processing, "derived");
             (refs, context)
         };
@@ -521,3 +521,29 @@ async fn c27_actual_compiled_output_and_host_recovery() {
 
 #[path = "reference_cross_source_tests.rs"]
 mod current_source_tests;
+
+#[test]
+fn scanned_partial_artifacts_are_not_rescanned_but_refreshes_and_missing_coverage_are() {
+    let coverage = |hash: &str| {
+        let mut d = Diagnostic::new("REFERENCE_SCAN_COVERAGE", "The scan returned coverage.");
+        d.context.insert("processorSha256".into(), json!(hash));
+        d
+    };
+    let artifact = |acquisition: &str, processing: &str, diagnostics: Vec<Diagnostic>| -> Artifact {
+        serde_json::from_value(json!({
+            "identity": {"category":"extended-properties","kind":"ExtendedTableProperties","scope":{"type":"global"},"keys":{"DataTableID":"UD37"}},
+            "classification":"discoveredDefinition","acquisition":acquisition,"integrity":"hostHashComputed",
+            "processing":processing,"sourceConsistency":"nonAtomicUnknown","files":[],"diagnostics":diagnostics,"dependencies":[]
+        })).unwrap()
+    };
+    let direct_partial = Diagnostic::new("EXTENDED_PROPERTIES_DIRECT_PARTIAL", "Direct-only coverage.");
+    // Already scanned by both processors: no second read, Collected or Partial.
+    assert!(already_scanned(&artifact("collected", "derived", vec![coverage("a"), coverage("b")]), &["a", "b"]));
+    assert!(already_scanned(&artifact("partial", "partial", vec![direct_partial.clone(), coverage("a"), coverage("b")]), &["a", "b"]));
+    // Still scanned: a processor without coverage, a refresh request, or processing not yet derived.
+    assert!(!already_scanned(&artifact("partial", "partial", vec![coverage("a")]), &["a", "b"]));
+    let refresh = Diagnostic::new("REFERENCE_REFRESH_PENDING", "The reference index changed.");
+    assert!(!already_scanned(&artifact("partial", "partial", vec![refresh, coverage("a")]), &["a"]));
+    assert!(!already_scanned(&artifact("collected", "pending", vec![coverage("a")]), &["a"]));
+    assert!(!already_scanned(&artifact("excluded", "partial", vec![coverage("a")]), &["a"]));
+}

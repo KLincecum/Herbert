@@ -22,7 +22,7 @@ pub(crate) fn query_target(dataset: &Value) -> Result<(String, String), Diagnost
     if identities.len() != 1 {
         return Err(Diagnostic::new(
             "BPM_QUERY_IDENTITY_UNVERIFIED",
-            "Native query argument TypeInfo did not resolve exactly one authored company/query identity.",
+            "Epicor query argument TypeInfo did not resolve exactly one authored company/query identity.",
         ));
     }
     Ok(identities.into_iter().next().unwrap())
@@ -77,6 +77,11 @@ fn same_export(row: &Value, wanted: &Value) -> bool {
         .all(|key| row[*key] == wanted[*key])
         && (wanted["Source"] != "BO" || row["ObjectNS"] == wanted["ObjectNS"])
 }
+// Tunable operating default, not a limit: all pages are read. Classification
+// rows are seven short identity/flag fields, unlike the full method pages that
+// itemsPerPage sizes, so they follow the 1000-row identity-row default of
+// Kinetic metadataRowsPerPage. bpm-directives declares no setting for it.
+const CLASSIFICATION_PAGE_SIZE: u32 = 1000;
 // The native exporter cannot filter a service/table package. Read its small
 // classification rows in shared pages once per run, never once per directive.
 fn classification(r: &GuestRequest) -> HostAction {
@@ -152,7 +157,7 @@ fn classification(r: &GuestRequest) -> HostAction {
                 field: "SysRowID".into(),
                 descending: false,
             }],
-            page_size: r.page_size,
+            page_size: Some(CLASSIFICATION_PAGE_SIZE),
             page: 1,
         },
     }
@@ -240,7 +245,7 @@ pub fn complete(r: &mut GuestRequest) -> Option<HostAction> {
                     return done(r);
                 }
             }
-            if r.page_size.is_some_and(|size| rows.len() >= size as usize) {
+            if rows.len() >= CLASSIFICATION_PAGE_SIZE as usize {
                 let Some(after) = rows
                     .last()
                     .and_then(|row| row["SysRowID"].as_str())
@@ -345,7 +350,7 @@ mod download_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -411,19 +416,32 @@ mod download_tests {
     #[test]
     fn shared_classification_pages_advance_and_exclude_mixed_system_packages() {
         let mut r = request("Example.Update", false);
-        r.page_size = Some(1);
         start(&mut r);
-        r.response = Some(
-            json!({"rows":[{"Source":"BO","SystemCode":"Ice","ObjectNS":"BO","BusinessObject":"Other","SystemFlag":true,"Company":"C","SysRowID":"one"}]}),
-        );
+        let rows: Vec<_> = (0..CLASSIFICATION_PAGE_SIZE).map(|i| json!({"Source":"BO","SystemCode":"Ice","ObjectNS":"BO","BusinessObject":"Other","SystemFlag":true,"Company":"C","SysRowID":format!("{i:07}")})).collect();
+        r.response = Some(json!({"rows":rows}));
         let Some(HostAction::SharedQuery { query }) = complete(&mut r) else {
             panic!()
         };
-        assert_eq!(query.parameters["after"], "one");
+        assert_eq!(query.parameters["after"], format!("{:07}", CLASSIFICATION_PAGE_SIZE - 1));
         r.response = Some(
             json!({"rows":[{"Source":"BO","SystemCode":"Ice","ObjectNS":"BO","BusinessObject":"Example","SystemFlag":true,"Company":"C","SysRowID":"two"}]}),
         );
         assert!(complete(&mut r).is_none());
         assert_eq!(r.state["errors"][0]["code"], "BPM_EXPORT_SCOPE_EXCLUDED");
+    }
+    #[test]
+    fn classification_uses_its_own_page_size_not_the_method_page_size() {
+        let mut keys = Vec::new();
+        for size in [None, Some(1), Some(200)] {
+            let mut r = request("Example.Update", false);
+            r.page_size = size;
+            let Some(HostAction::SharedQuery { query }) = start(&mut r) else { panic!() };
+            assert_eq!(query.page_size, Some(CLASSIFICATION_PAGE_SIZE));
+            keys.push(serde_json::to_value(&query).unwrap());
+            // A short classification page is final even when the method page size is smaller.
+            r.response = Some(json!({"rows":[{"Source":"BO","SystemCode":"Ice","ObjectNS":"BO","BusinessObject":"Other","SystemFlag":true,"Company":"C","SysRowID":"one"}]}));
+            assert!(matches!(complete(&mut r), Some(HostAction::SharedNativeRead { export: true, .. })), "{size:?}");
+        }
+        assert!(keys.iter().all(|key| key == &keys[0]), "Every method page size shares one classification query");
     }
 }

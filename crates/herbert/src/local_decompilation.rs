@@ -83,7 +83,7 @@ impl Supervisor {
             if file.role != "native" || !issued.contains(file) {
                 return Err(issue(
                     "MANAGED_INPUT_OWNERSHIP_DENIED",
-                    "Local processing accepts only immutable native files issued to this operation.",
+                    "Local processing accepts only immutable Epicor files issued to this operation.",
                 ));
             }
         }
@@ -179,14 +179,14 @@ pub(in crate::application) fn validate_local_reader_scope(
     let rows = value
         .pointer("/oDS/Scope")
         .and_then(Value::as_array)
-        .ok_or_else(|| failure("The retained reader omitted caller/company scope."))?;
+        .ok_or_else(|| failure("The retained reader omitted Epicor user/company scope."))?;
     if rows.len() != 1
         || rows[0]["Caller"] != store.journal.caller
         || rows[0]["Company"] != store.journal.company
     {
         return Err(issue(
             "MANAGED_INPUT_OWNERSHIP_DENIED",
-            "The retained reader scope differs from the admitted caller/company.",
+            "The retained reader scope differs from the allowed to start Epicor user/company.",
         ));
     }
     Ok(())
@@ -204,7 +204,7 @@ pub(in crate::application) fn record_local_read(
     for file in files {
         if file.role != "native" {
             return Err(failure(
-                "A retained read requires immutable native receipts.",
+                "A retained read requires immutable Epicor receipts.",
             ));
         }
         store.verify(file)?;
@@ -263,7 +263,7 @@ pub(in crate::application) async fn read_local_artifact(
     let host = host
         .self_owner
         .upgrade()
-        .ok_or_else(|| issue("HOST_CLOSED", "The native reader host is no longer owned."))?;
+        .ok_or_else(|| issue("HOST_CLOSED", "The Epicor reader host is no longer owned."))?;
     let plugin = plugin.clone();
     let alias = alias.to_owned();
     let function = function.to_owned();
@@ -308,7 +308,7 @@ async fn join_native_reader(
         future.await
     });
     let _abort = AbortRequest(task.abort_handle());
-    task.await.map_err(|_|issue("MANAGED_READER_TASK_FAILED","The retained native reader task stopped before returning. Preserved inputs and native operation ownership remain available for recovery."))?
+    task.await.map_err(|_|issue("MANAGED_READER_TASK_FAILED","The retained Epicor reader task stopped before returning. Preserved inputs and Epicor operation ownership remain available for recovery."))?
 }
 async fn read_local_artifact_inner(
     host: &Host,
@@ -416,11 +416,9 @@ pub(super) fn resume_enrollments(
                 record.project_state = "unavailable".into();
                 let diagnostic = issue(
                     "MANAGED_INPUT_UNAVAILABLE",
-                    format!(
-                        "An enrolled local input is missing or changed: {} Restore its exact original before retry.",
-                        error.message
-                    ),
-                );
+                    "A file this decompile job depends on is missing or has changed since it was downloaded. Put the original file back, or download it again, then retry.",
+                )
+                .with_cause(&error.message);
                 if !record.diagnostics.contains(&diagnostic) {
                     record.diagnostics.push(diagnostic.clone());
                 }
@@ -461,7 +459,7 @@ pub(super) fn output_binding(ledger: &Ledger, id: &str) -> Result<(Identity, Str
         .local_enrollments
         .values()
         .find(|record| record.job_ids.iter().any(|j| j == id))
-        .ok_or_else(|| failure("The caller output binding is absent."))?;
+        .ok_or_else(|| failure("The Epicor user output binding is absent."))?;
     Ok((
         binding.request.owner.clone(),
         binding.request.output_subdirectory.clone(),
@@ -629,7 +627,7 @@ mod frame_qualification {
         std::mem::size_of::<T>()
     }
     #[tokio::test]
-    #[ignore = "Offline async type-size measurement with an explicit C06 test module"]
+    #[ignore = "Offline async type-size measurement with an explicit BPM directives test module"]
     async fn local_native_async_frame_sizes() {
         let root = tempfile::tempdir().unwrap();
         let package = PathBuf::from(std::env::var("HERBERT_BPM_TEST_PACKAGE").unwrap());
@@ -666,7 +664,7 @@ mod frame_qualification {
         let request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "materialize".into(),
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             company: "LAB".into(),
             identity: None,
             cursor: None,
@@ -677,7 +675,7 @@ mod frame_qualification {
         };
         let artifact = future_bytes(|| {
             host.native_artifact_action_for(
-                "C06",
+                "bpm-directives",
                 HostAction::ArtifactFunctionCall {
                     alias: "compiled_bpm".into(),
                     function: "ReadCompiled".into(),
@@ -707,7 +705,7 @@ mod frame_qualification {
             host.clone().collect(
                 run.clone(),
                 connection.clone(),
-                vec!["C06".into()],
+                vec!["bpm-directives".into()],
                 vec![],
                 true,
                 Some(1),
@@ -760,7 +758,7 @@ mod tests {
     use super::*;
     fn owner() -> Identity {
         Identity {
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             kind: "MethodDirectiveGroup".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([
@@ -785,7 +783,7 @@ mod tests {
     #[test]
     fn expected_limits_stay_in_manifest_but_real_failures_affect_run() {
         for failed in [false, true] {
-            for category in ["C04", "C06", "C08"] {
+            for category in ["baqs-and-ubaqs", "bpm-directives", "functions"] {
                 let root=tempfile::tempdir().unwrap();
                 let mut store=Storage::open(root.path(),false,storage::new_journal("result-policy".into())).unwrap();
                 let mut owner=owner(); owner.category=category.into();
@@ -847,7 +845,7 @@ mod tests {
                 .enqueue_local(
                     &root.path().join("plugins"),
                     &run,
-                    "C06",
+                    "bpm-directives",
                     None,
                     &[input.clone()],
                     job.clone()
@@ -860,7 +858,7 @@ mod tests {
                 .enqueue_local(
                     &root.path().join("plugins"),
                     &run,
-                    "C04",
+                    "baqs-and-ubaqs",
                     Some(&owner()),
                     &[input.clone()],
                     job.clone()
@@ -873,7 +871,7 @@ mod tests {
                 .enqueue_local(
                     &root.path().join("plugins"),
                     &run,
-                    "C06",
+                    "bpm-directives",
                     Some(&owner()),
                     &[],
                     job.clone()
@@ -885,7 +883,7 @@ mod tests {
             .enqueue_local(
                 &root.path().join("plugins"),
                 &run,
-                "C06",
+                "bpm-directives",
                 Some(&owner()),
                 &[input.clone()],
                 job.clone(),
@@ -897,7 +895,7 @@ mod tests {
             .enqueue_local(
                 &root.path().join("plugins"),
                 &run,
-                "C06",
+                "bpm-directives",
                 Some(&owner()),
                 &[input.clone()],
                 job,
@@ -920,7 +918,7 @@ mod tests {
                 .enqueue_local(
                     &root.path().join("plugins"),
                     &run,
-                    "C06",
+                    "bpm-directives",
                     Some(&owner()),
                     &[input],
                     forged
@@ -942,7 +940,7 @@ mod tests {
         let value = json!({"oDS":{"Scope":[{"Caller":store.journal.caller,"Company":store.journal.company}],"Assemblies":[{"Data":{"nativeFile":input}}]}});
         let metadata = record_local_read(
             &mut store,
-            "C06",
+            "bpm-directives",
             "compiled_bpm",
             "ReadCompiled",
             &json!({"iOwners":"[]"}),
@@ -959,7 +957,7 @@ mod tests {
         assert!(
             record_local_read(
                 &mut store,
-                "C06",
+                "bpm-directives",
                 "compiled_bpm",
                 "ReadCompiled",
                 &json!({}),
@@ -986,7 +984,7 @@ mod tests {
         .unwrap();
         let ordinary = owner();
         let ubaq = Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "Baq".into(),
             scope: Scope::Company {
                 company: "TESTCO".into(),
@@ -1025,7 +1023,7 @@ mod tests {
             .enqueue(
                 &package.join("plugins"),
                 &run,
-                "C08",
+                "functions",
                 Some(&function),
                 &[input.clone()],
                 ManagedDecompilationRequest {
@@ -1163,7 +1161,7 @@ mod tests {
             .enqueue_local(
                 &root.path().join("missing/plugins"),
                 &run,
-                "C06",
+                "bpm-directives",
                 Some(&owner),
                 &[input.clone()],
                 request(input.clone()),
@@ -1224,7 +1222,7 @@ mod tests {
             .enqueue_local(
                 &package.join("plugins"),
                 &run,
-                "C06",
+                "bpm-directives",
                 Some(&owner),
                 &[input.clone()],
                 request(input),

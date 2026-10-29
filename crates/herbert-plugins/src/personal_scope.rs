@@ -14,21 +14,21 @@ pub fn scope(
         _ => {
             return Err(Diagnostic::new(
                 "SCOPE_UNVERIFIED",
-                "The native Company field is not text.",
+                "The Epicor Company field is not text.",
             ));
         }
     };
     if actual_company.is_some_and(|c| !c.is_empty() && c != selected_company) {
         return Err(Diagnostic::new(
             "SCOPE_MISMATCH",
-            "The native definition is outside the selected company.",
+            "The Epicor definition is outside the selected company.",
         ));
     }
     if let Some(field) = owner_field {
         let owner = row.get(field).and_then(Value::as_str).ok_or_else(|| {
             Diagnostic::new(
                 "OWNER_UNVERIFIED",
-                "The declared native owner field is absent or malformed.",
+                "The declared Epicor owner field is absent or malformed.",
             )
         })?;
         if !owner.is_empty() {
@@ -40,13 +40,13 @@ pub fn scope(
         if owner_required {
             return Err(Diagnostic::new(
                 "OWNER_UNVERIFIED",
-                "The native personalization row does not identify its owner.",
+                "The Epicor personalization row does not identify its owner.",
             ));
         }
     } else if owner_required {
         return Err(Diagnostic::new(
             "OWNER_UNVERIFIED",
-            "A personal definition has no declared native owner field.",
+            "A personal definition has no declared Epicor owner field.",
         ));
     }
     Ok(match actual_company {

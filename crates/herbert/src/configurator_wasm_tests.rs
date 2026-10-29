@@ -1,13 +1,13 @@
-//! Compiled C19 guest replay through host WASM and real output writers.
+//! Compiled Configurators guest replay through host WASM and real output writers.
 use herbert_contract::*;
 use serde_json::{Value,json};
 use std::{path::PathBuf,sync::{Arc,Mutex}};
 use tokio_util::sync::CancellationToken;
 #[tokio::test]
-#[ignore="Requires the explicit C19 WASM candidate and private two-lab evidence"]
-async fn c19_compiled_page_output_replay() {
- let base=PathBuf::from(std::env::var("HERBERT_C19_REPLAY").unwrap());
- let wasm=PathBuf::from(std::env::var("HERBERT_C19_WASM").unwrap());
+#[ignore="Requires the explicit Configurators WASM candidate and private two-environment evidence"]
+async fn configurators_compiled_page_output_replay() {
+ let base=PathBuf::from(std::env::var("HERBERT_CONFIGURATORS_REPLAY").unwrap());
+ let wasm=PathBuf::from(std::env::var("HERBERT_CONFIGURATORS_WASM").unwrap());
  let mut plugin=crate::plugins::Plugin::load(&wasm).await.unwrap();
  assert!(plugin.has_role("pagedDefinitions")&&plugin.has_role("prefetchPages"));
  let cancel=CancellationToken::new();
@@ -20,9 +20,9 @@ async fn c19_compiled_page_output_replay() {
   let mut dictionary=read("dictionary/fields.json");dictionary.as_object_mut().unwrap().extend(read("bulk-supplement-dictionary/fields.json").as_object().unwrap().clone());
   let rows=read("bulk-two-root-complete/rows.json");
   let temporary=tempfile::tempdir().unwrap();
-  let mut journal=crate::storage::new_journal("c19-wasm-replay".into());journal.company="TESTCO".into();
+  let mut journal=crate::storage::new_journal("configurators-wasm-replay".into());journal.company="TESTCO".into();
   let shared=Arc::new(Mutex::new(crate::storage::Storage::open(temporary.path(),false,journal).unwrap()));
-  let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"C19".into(),company:"TESTCO".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true}),response:None,error:None};
+  let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"configurators".into(),company:"TESTCO".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostPreparePage":true}),response:None,error:None};
   let mut outputs=0;let mut bulk_reads=0;let mut pages=0;let mut retained_records=Vec::new();let mut restarted_pages=0;let mut kinds=std::collections::BTreeSet::new();
   loop {
    match plugin.call(r.clone(),cancel.clone()).await.unwrap() {
@@ -75,7 +75,7 @@ async fn c19_compiled_page_output_replay() {
   assert_eq!(storage.journal.artifacts.len(),4);
   let mut files=0;for artifact in &storage.journal.artifacts {assert_eq!(artifact.acquisition,Completeness::Collected);for file in &artifact.files {storage.verify(file).unwrap();files+=1;}}
   assert!(restarted_pages>0);
-  // Simulate a missing durable output after reopen, then replay retained C19 records.
+  // Simulate a missing durable output after reopen, then replay retained Configurators records.
   let missing=storage.journal.artifacts.iter().flat_map(|a| &a.files).find(|f| f.path.ends_with(".xml")).unwrap().clone();
   let expected=std::fs::read(storage.confined(&missing.path).unwrap()).unwrap();
   std::fs::remove_file(storage.confined(&missing.path).unwrap()).unwrap();
@@ -83,7 +83,7 @@ async fn c19_compiled_page_output_replay() {
   crate::collection_output::write_page(&mut storage,retained_records).unwrap();
   assert_eq!(std::fs::read(storage.confined(&missing.path).unwrap()).unwrap(),expected);
   for artifact in &storage.journal.artifacts {assert_eq!(artifact.acquisition,Completeness::Collected);for file in &artifact.files{storage.verify(file).unwrap();}}
-  let receipt=json!({"cancelBeforeMaterialization":true,"cancelBeforeWriter":true,"freshGuestResumes":restarted_pages,"missingXmlRestoredExactly":true,"lane":lane,"proof":"compiled C19 WASM with retained lab responses, synthetic empty images and persisted row; real shared output writer and reopen","outputs":outputs,"files":files,"pages":pages,"bulkReads":bulk_reads,"kinds":kinds});
+  let receipt=json!({"cancelBeforeMaterialization":true,"cancelBeforeWriter":true,"freshGuestResumes":restarted_pages,"missingXmlRestoredExactly":true,"lane":lane,"proof":"compiled Configurators WASM with retained test responses, synthetic empty images and persisted row; real shared output writer and reopen","outputs":outputs,"files":files,"pages":pages,"bulkReads":bulk_reads,"kinds":kinds});
   std::fs::write(folder.join("compiled-output-replay.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();println!("{receipt}");
   drop(storage);temporary.close().unwrap();
  }

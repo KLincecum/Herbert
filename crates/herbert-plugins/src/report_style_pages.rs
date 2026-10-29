@@ -5,6 +5,15 @@ use herbert_contract::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// ImportZippedReports restores entries relative to the server's reports root, so the native
+/// "reports/" segment of a report path must not be repeated inside reports.zip.
+fn zip_entry_path(path: &str) -> &str {
+    match path.split_once('/') {
+        Some((first, rest)) if first.eq_ignore_ascii_case("reports") && !rest.is_empty() => rest,
+        _ => path,
+    }
+}
+
 const TABLES: &[&str] = &[
     "Report",
     "ReportStyle",
@@ -74,10 +83,18 @@ fn child_matches(table: &str, row: &Value, key: &(String, String, i64), company:
         pair(row).ok().as_ref() == Some(key)
     }
 }
+/// The prefix's leading run before any LIKE wildcard, bracket or non-ASCII character, for a
+/// server-side `LIKE 'stem%'` superset that needs no escape syntax. Non-ASCII stops the stem
+/// because the literal is not N-prefixed and could be converted lossily. None when nothing
+/// narrows the read.
+fn like_stem(prefix: &str) -> Option<&str> {
+    let stem = &prefix[..prefix.find(|c: char| matches!(c, '%' | '_' | '[' | ']') || !c.is_ascii()).unwrap_or(prefix.len())];
+    (!stem.is_empty()).then_some(stem)
+}
 pub fn handle(mut r: GuestRequest) -> GuestReply {
     let selected_prefix=if r.operation=="acquire" {String::new()}else {match crate::report_archive::prefix(&r,"reportIdPrefix"){Ok(value)=>value,Err(diagnostic)=>return GuestReply::Failure {diagnostic}}};
-    if r.category=="C17" && r.operation!="acquire" {if let Err(diagnostic)=crate::report_archive::prefix(&r,"packagePathPrefix"){return GuestReply::Failure {diagnostic};}}
-    if r.category == "C17" {
+    if r.category=="report-styles-and-layouts" && r.operation!="acquire" {if let Err(diagnostic)=crate::report_archive::prefix(&r,"packagePathPrefix"){return GuestReply::Failure {diagnostic};}}
+    if r.category == "report-styles-and-layouts" {
         if r.identity
             .as_ref()
             .is_some_and(|id| id.kind == "PersistedReportHistory")
@@ -109,7 +126,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
         return failure("Reports support discovery and exact collection.");
     }
     if r.operation == "acquire" {
-        let expected = if r.category == "C17" {
+        let expected = if r.category == "report-styles-and-layouts" {
             "ReportStyle"
         } else {
             "ReportBehavior"
@@ -149,7 +166,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
         }
     }
     if let Some(diagnostic) = r.error.take() {
-        if r.category == "C17" && r.operation == "discover" {
+        if r.category == "report-styles-and-layouts" && r.operation == "discover" {
             return GuestReply::Inventory {
                 identities: vec![],
                 next_cursor: Some(json!({"stream":1,"page":1}).to_string()),
@@ -169,13 +186,13 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
         .transpose()
     {
         Ok(v) => v.unwrap_or(json!({"page":1})),
-        Err(_) => return failure("Invalid report continuation."),
+        Err(_) => return failure("Herbert could not continue this download from its saved progress (report position). Start the download again."),
     };
     let Some(page @ 1..=2147483647) = cursor["page"].as_u64() else {
-        return failure("The native page must be a positive Int32.");
+        return failure("Herbert could not continue this download from its saved progress (page position). Start the download again.");
     };
     let Some(size @ 1..=2147483647) = r.page_size else {
-        return failure("The native page size must be a positive Int32.");
+        return failure("Page size must be a whole number from 1 to 2147483647.");
     };
     match r.state["phase"].as_str() {
         Some("visible") => {
@@ -199,28 +216,34 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
             let Some(rules) = body["ReportStyleRule"].as_array() else {
                 return failure("The report page omitted its rules.");
             };
+            // Selection precedes validation: rows outside the exact ID prefix are neither
+            // validated nor diagnosed. Exact acquire uses an empty prefix and checks every row.
+            let chosen=|id:&Value|id.as_str().unwrap_or("").starts_with(&selected_prefix);
+            let reports:Vec<Value>=reports.iter().filter(|row|chosen(&row["ReportID"])).cloned().collect();
+            let styles:Vec<Value>=styles.iter().filter(|row|chosen(&row["ReportID"])).cloned().collect();
+            let rules:Vec<Value>=rules.iter().filter(|row|chosen(&row["ReportID"])).cloned().collect();
             let mut visible_keys=BTreeSet::new();let mut parent_ids=BTreeSet::new();
-            for report in reports {
-                let Some(id)=report["ReportID"].as_str().filter(|value|!value.is_empty())else{return failure("A visible report parent omitted its native ID.");};
+            for report in &reports {
+                let Some(id)=report["ReportID"].as_str().filter(|value|!value.is_empty())else{return failure("A visible report parent omitted its Epicor ID.");};
                 let Some(rowid)=report["SysRowID"].as_str()else{return failure("A visible report parent omitted its row identity.");};
                 if !report["Company"].is_string() || !parent_ids.insert(rowid){return failure("The visible report parents have invalid scope or duplicate identities.");}
                 let _=id;
             }
-            for style in styles {
+            for style in &styles {
                 let key=match pair(style){Ok(key)=>key,Err(message)=>return failure(message)};
-                if key.1.is_empty() || !style["SystemFlag"].is_boolean() || !style["SysRowID"].is_string() || !visible_keys.insert(key.clone()) || !reports.iter().any(|report|report["ReportID"]==key.1){return failure("A visible report style has invalid native keys, parent or classification.");}
+                if key.1.is_empty() || !style["SystemFlag"].is_boolean() || !style["SysRowID"].is_string() || !visible_keys.insert(key.clone()) || !reports.iter().any(|report|report["ReportID"]==key.1){return failure("A visible report style has invalid Epicor keys, parent or classification.");}
             }
-            for rule in rules {
+            for rule in &rules {
                 let key=match pair(rule){Ok(key)=>key,Err(message)=>return failure(message)};
-                if !visible_keys.contains(&key){return failure("An acquired visible rule has no native-visible style parent.");}
+                if !visible_keys.contains(&key){return failure("An downloaded visible rule has no Epicor-visible style parent.");}
             }
             let mut selected = Vec::new();
-            for style in styles {
+            for style in &styles {
                 let key = match pair(style) {
                     Ok(k) => k,
                     Err(e) => return failure(e),
                 };
-                let wanted = if r.category == "C17" {
+                let wanted = if r.category == "report-styles-and-layouts" {
                     style["SystemFlag"] == false
                 } else {
                     rules
@@ -243,7 +266,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
             r.state["parents"] = json!(reports);
             r.state["next"] = if more && r.operation == "discover" {
                 json!(json!({"page":page+1}).to_string())
-            } else if r.category == "C17" && r.operation == "discover" {
+            } else if r.category == "report-styles-and-layouts" && r.operation == "discover" {
                 json!(json!({"stream":1,"page":1}).to_string())
             } else {
                 Value::Null
@@ -309,7 +332,11 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
                 .identity
                 .as_ref()
                 .map(|id| format!("ReportID = '{}'", id.keys["ReportID"].replace('\'', "''")))
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    // Server LIKE is a broad superset; the exact local starts_with check
+                    // still decides. The filter is constant per run, so absolutePage paging holds.
+                    like_stem(&selected_prefix).map_or_else(String::new, |stem| format!("ReportID LIKE '{}%'", stem.replace('\'', "''")))
+                });
             let args = json!({"whereClauseReport":filter,"whereClauseReportStyle":"","whereClauseReportStyleImage":"","whereClauseReportStyleRule":"","whereClauseRptStylePrinters":"","whereClauseReportComp":"","pageSize":size,"absolutePage":page});
             return action(
                 r,
@@ -428,7 +455,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
     )
 }
 fn prepare(mut r: GuestRequest) -> GuestReply {
-    if r.category == "C17"
+    if r.category == "report-styles-and-layouts"
         && r.state["_collectionMethod"] == "serverAssisted"
         && r.state["layoutPageReceived"] != true
     {
@@ -496,7 +523,7 @@ fn receive_layout_page(mut r: GuestRequest) -> GuestReply {
     };
     for layout in layouts {
         let Some(path) = layout["Path"].as_str() else {
-            return failure("A bulk layout has no native display path.");
+            return failure("A bulk layout has no Epicor display path.");
         };
         let path = match crate::report_resources::report_path(path) {
             Ok(path) => path.to_lowercase(),
@@ -507,7 +534,7 @@ fn receive_layout_page(mut r: GuestRequest) -> GuestReply {
             return failure("A bulk layout has no host-retained original bytes.");
         };
         if !r.state["layoutBodies"][&path].is_null() {
-            return failure("The layout batch repeats a native report path.");
+            return failure("The layout batch repeats an Epicor report path.");
         }
         r.state["layoutBodies"][path] = json!(file);
     }
@@ -557,7 +584,7 @@ fn materialize(mut r: GuestRequest) -> GuestReply {
                 let response = r.response.take().unwrap_or(Value::Null);
                 let image = crate::body(&response);
                 if !image["Image"].is_array() || !image["FileStore"].is_array() {
-                    return failure("The native image package omitted its image or file table.");
+                    return failure("The Epicor image package omitted its image or file table.");
                 }
                 r.state["records"][index][1]["imageExport"] = image.clone();
             }
@@ -630,7 +657,7 @@ fn materialize(mut r: GuestRequest) -> GuestReply {
         };
         let identity = Identity {
             category: r.category.clone(),
-            kind: if r.category == "C17" {
+            kind: if r.category == "report-styles-and-layouts" {
                 "ReportStyle"
             } else {
                 "ReportBehavior"
@@ -648,13 +675,29 @@ fn materialize(mut r: GuestRequest) -> GuestReply {
         let mut exported = data.clone();
         exported["ReportStyle"][0]["CompanyList"] = json!("");
         let mut errors=crate::report_archive::graph_errors(&identity,&data);
+        // Epicor allows at most one ReportStyleRule per style (its primary key is ReportID and
+        // StyleNum) and every supported importer refuses a style with more, after committing the
+        // Report row. Keep the backup, but report the style as not importable as saved.
+        let rules=data["ReportStyleRule"].as_array().map_or(0,Vec::len);
+        if rules>1 {
+            let mut diagnostic=Diagnostic::new("REPORT_STYLE_MULTIPLE_RULES","This report style has more than one style rule. Epicor imports at most one rule per style and refuses the whole style otherwise, after creating its report record. Before importing, keep one rule in the saved style XML, then add the others again in Epicor. If an import was already refused, remove the partial report record it left.");
+            diagnostic.context.insert("ruleCount".into(),json!(rules));
+            diagnostic.identity=Some(identity.clone());
+            errors.push(diagnostic);
+        }
         data["herbertSources"]=json!({"files":[]});
+        let label=format!("{}_{}",crate::bpm_code::label(&key.1),key.2);
         match crate::report_archive::xml("Report",&exported) {
-            Ok(text)=>data["herbertSources"]["files"].as_array_mut().unwrap().push(json!({"name":format!("{}_{}.xml",crate::bpm_code::label(&key.1),key.2),"text":text})),
+            Ok(text)=>data["herbertSources"]["files"].as_array_mut().unwrap().push(json!({"name":format!("{label}.xml"),"text":text})),
             Err(mut diagnostic)=>{diagnostic.identity=Some(identity.clone());errors.push(diagnostic);},
         }
+        // Epicor's importer ignores CompanyList, so a restore needs it re-applied by hand.
+        if let Some(companies)=stored[0]["CompanyList"].as_str().filter(|value|!value.is_empty()) {
+            data["herbertSources"]["files"].as_array_mut().unwrap().push(json!({"name":format!("{label}-RESTORE.txt"),
+                "text":format!("Epicor's report style import ignores CompanyList. After importing {label}.xml, set this style's CompanyList again to the value saved in Herbert's JSON definition (ReportStyle.CompanyList):\n{companies}\n")}));
+        }
         if !errors.is_empty(){data["herbertCollectionStatus"]=json!({"completeness":"partial","diagnostics":errors});selection_errors.extend(errors);}
-        if r.category == "C18" {
+        if r.category == "report-behavior" {
             for (i, rule) in data["ReportStyleRule"]
                 .as_array()
                 .cloned()
@@ -674,13 +717,13 @@ fn materialize(mut r: GuestRequest) -> GuestReply {
         records.push((identity, data));
     }
     r.state["records"] = json!(records);
-    if r.category=="C17" {
+    if r.category=="report-styles-and-layouts" {
         let mut errors=r.state["layoutPageErrors"].as_array().cloned().unwrap_or_default();errors.extend(selection_errors.iter().map(|error|json!(error)));r.state["layoutPageErrors"]=json!(errors);
     }else {r.state["selectionErrors"]=json!(selection_errors);}
-    if r.category == "C18" && r.state["splitPreparedStyles"] == true {
+    if r.category == "report-behavior" && r.state["splitPreparedStyles"] == true {
         return independent_behaviors(r.state);
     }
-    if r.category == "C17" {
+    if r.category == "report-styles-and-layouts" {
         if r.state["splitPreparedStyles"] == true {
             return independent_styles(r.state);
         }
@@ -776,45 +819,81 @@ mod tests {
     }
     #[test]
     fn report_prefix_selects_before_physical_and_layout_reads_with_independent_package_scope() {
-        let mut r=acquired(selection_request("C17","Alpha",true));assert_eq!(r.state["visible"].as_array().unwrap().len(),1);
+        let mut r=acquired(selection_request("report-styles-and-layouts","Alpha",true));assert_eq!(r.state["visible"].as_array().unwrap().len(),1);
         // A physical read is built from the selected native-visible parent only.
         r.state["phase"]=json!("dictionary");r.state["tableIndex"]=json!(0);r.response=Some(json!({"returnObj":{"TableFieldList":[{"FieldName":"SysRowID","DataType":"uniqueidentifier"},{"FieldName":"ReportID","DataType":"nvarchar"}]}}));
         let GuestReply::Action {action:HostAction::NativeRead {method,arguments,..},state}=handle(r.clone())else{panic!()};assert_eq!(method,"Execute");let query=serde_json::to_string(&arguments).unwrap();assert!(query.contains("parent-a"));assert!(!query.contains("parent-b"));assert_eq!(state["_pluginSettings"],r.state["_pluginSettings"]);
-        let mut r=acquired(selection_request("C17","Alpha",false));r.state["_collectionMethod"]=json!("serverAssisted");
+        let mut r=acquired(selection_request("report-styles-and-layouts","Alpha",false));r.state["_collectionMethod"]=json!("serverAssisted");
         let GuestReply::Action {action:HostAction::HelperCall {function,arguments,..},state}=prepare(r.clone())else{panic!()};assert_eq!(function,"ReadLayouts");let paths=arguments["iPaths"].as_str().unwrap();assert!(paths.contains("Outside/Main"));assert!(!paths.contains("Beta"));assert_eq!(state["_pluginSettings"],r.state["_pluginSettings"]);
         r.state["layoutPageReceived"]=json!(true);let GuestReply::PreparedPage {state,next_state,..}=prepare(r.clone())else{panic!()};assert_eq!(state["visible"].as_array().unwrap().len(),1);assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);assert_eq!(next_state["_collectionMethod"],"serverAssisted");
         assert!(!methods().iter().any(|(_,method)|matches!(method.as_str(),"ExportSsrsReports"|"ExportSsrsReportsToZip"|"PrepareZipWithSsrsReports")));
     }
     #[test]
     fn behavior_prefix_keeps_complete_rules_xml_and_independent_owner_equivalence() {
-        let baseline=behavior_output(acquired(selection_request("C18","",false)),false);
-        let r=acquired(selection_request("C18","Alpha",false));let filtered=behavior_output(r.clone(),false);let independent=behavior_output(r,true);
-        assert_eq!(filtered,independent);assert_eq!(filtered.0,baseline.0.into_iter().filter(|(id,_)|id.keys["ReportID"]=="Alpha").collect::<Vec<_>>());assert!(filtered.1.is_empty());assert_eq!(filtered.0.len(),1);
+        let baseline=behavior_output(acquired(selection_request("report-behavior","",false)),false);
+        let r=acquired(selection_request("report-behavior","Alpha",false));let filtered=behavior_output(r.clone(),false);let independent=behavior_output(r,true);
+        assert_eq!(filtered,independent);assert_eq!(filtered.0,baseline.0.into_iter().filter(|(id,_)|id.keys["ReportID"]=="Alpha").collect::<Vec<_>>());assert_eq!(filtered.0.len(),1);
+        // Alpha's two rules are a shape Epicor cannot store or import: saved, but reported.
+        assert_eq!(filtered.1.iter().map(|error|error.code.as_str()).collect::<Vec<_>>(),["REPORT_STYLE_MULTIPLE_RULES"]);assert_eq!(filtered.1[0].context["ruleCount"],2);assert_eq!(filtered.0[0].1["herbertCollectionStatus"]["completeness"],"partial");
         let data=&filtered.0[0].1;assert_eq!(data["ReportStyleRule"].as_array().unwrap().len(),2);assert_eq!(data["ReportStyleRule"][0]["Disabled"],true);let files=data["herbertSources"]["files"].as_array().unwrap();assert!(files.iter().any(|file|file["text"]=="<disabled>original Ω</disabled>"));assert!(files.iter().any(|file|file["text"].as_str().is_some_and(|text|text.contains("<ReportStyleRule>"))));
     }
     #[test]
+    fn discovery_pushes_like_literal_superset_and_exact_acquire_stays_unfiltered() {
+        for category in ["report-styles-and-layouts","report-behavior"] {
+            for (prefix,expected) in [("Ab%c","ReportID LIKE 'Ab%'"),("%x",""),("O'B","ReportID LIKE 'O''B%'"),("AbΩc","ReportID LIKE 'Ab%'"),("Ω","")] {
+                let mut r=selection_request(category,prefix,false);r.response=None;r.state.as_object_mut().unwrap().remove("phase");
+                let GuestReply::Action {action:HostAction::NativeRead {method,arguments,..},..}=handle(r)else{panic!()};assert_eq!(method,"GetRows");assert_eq!(arguments["whereClauseReport"],expected,"{category}/{prefix}");
+            }
+            let mut r=selection_request(category,"Ab",false);r.response=None;r.state.as_object_mut().unwrap().remove("phase");r.operation="acquire".into();
+            r.identity=Some(Identity {category:category.into(),kind:if category=="report-styles-and-layouts"{"ReportStyle"}else{"ReportBehavior"}.into(),scope:Scope::Company {company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("ReportID".into(),"Alpha".into()),("StyleNum".into(),"1001".into())])});
+            let GuestReply::Action {action:HostAction::NativeRead {arguments,..},..}=handle(r)else{panic!()};assert_eq!(arguments["whereClauseReport"],"ReportID = 'Alpha'");
+        }
+    }
+    #[test]
+    fn zip_entries_are_relative_to_the_reports_root() {
+        assert_eq!(zip_entry_path("reports/CustomReports/A/Main"),"CustomReports/A/Main");
+        assert_eq!(zip_entry_path("Reports/CustomReports/A/Main"),"CustomReports/A/Main");
+        assert_eq!(zip_entry_path("CustomReports/A/Main"),"CustomReports/A/Main");
+        assert_eq!(zip_entry_path("reports/"),"reports/");
+        assert_eq!(zip_entry_path("reportsX/A"),"reportsX/A");
+    }
+    #[test]
+    fn one_rule_style_has_no_rule_diagnostic_and_company_list_gets_a_restore_note() {
+        let mut r=selection_request("report-behavior","Beta",false);
+        r.response.as_mut().unwrap()["returnObj"]["ReportStyle"][1]["CompanyList"]=json!("C~D");
+        let (records,errors)=behavior_output(acquired(r),false);
+        assert!(errors.is_empty(),"{errors:?}");assert_eq!(records.len(),1);
+        let files=records[0].1["herbertSources"]["files"].as_array().unwrap();
+        let note=files.iter().find(|file|file["name"]=="Beta_1002-RESTORE.txt").expect("CompanyList restore note");
+        assert!(note["text"].as_str().unwrap().contains("C~D"));
+        // Without a CompanyList there is nothing to re-apply.
+        let (records,_)=behavior_output(acquired(selection_request("report-behavior","Beta",false)),false);
+        assert!(!records[0].1["herbertSources"]["files"].as_array().unwrap().iter().any(|file|file["name"].as_str().unwrap().ends_with("-RESTORE.txt")));
+    }
+    #[test]
     fn report_selection_validates_excluded_visibility_and_preserves_raw_empty_exact_states() {
-        for category in ["C17","C18"] {for prefix in ["alpha"," Alpha","%","Missing"] {let r=selection_request(category,prefix,true);let GuestReply::PreparedPage {state,next_cursor,next_state}=handle(r.clone())else{panic!()};assert!(state["visible"].as_array().unwrap().is_empty());assert_eq!(serde_json::from_str::<Value>(next_cursor.as_deref().unwrap()).unwrap()["page"],2);assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);}
-            for defect in ["flag","parent","rule"] {let mut r=selection_request(category,"Missing",false);let body=&mut r.response.as_mut().unwrap()["returnObj"];match defect {"flag"=>body["ReportStyle"][1]["SystemFlag"]=json!("bad"),"parent"=>body["ReportStyle"][1]["ReportID"]=json!("NoParent"),_=>body["ReportStyleRule"][2]["StyleNum"]=json!(999)};assert!(matches!(handle(r),GuestReply::Failure {..}),"{category}/{defect}");}
-            let mut r=selection_request(category,"",false);r.operation="acquire".into();r.state["_pluginSettings"]=json!({"reportIdPrefix":false,"packagePathPrefix":false});r.identity=Some(Identity {category:category.into(),kind:if category=="C17"{"ReportStyle"}else{"ReportBehavior"}.into(),scope:Scope::Company {company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("ReportID".into(),"Alpha".into()),("StyleNum".into(),"1001".into())])});let GuestReply::Action {state,..}=handle(r)else{panic!()};assert_eq!(state["visible"].as_array().unwrap().len(),1);
+        for category in ["report-styles-and-layouts","report-behavior"] {for prefix in ["alpha"," Alpha","%","Missing"] {let r=selection_request(category,prefix,true);let GuestReply::PreparedPage {state,next_cursor,next_state}=handle(r.clone())else{panic!()};assert!(state["visible"].as_array().unwrap().is_empty());assert_eq!(serde_json::from_str::<Value>(next_cursor.as_deref().unwrap()).unwrap()["page"],2);assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);}
+            // Invalid rows outside the prefix are not validated or diagnosed; selected ones still fail.
+            for defect in ["flag","parent","rule"] {for (prefix,fails) in [("Missing",false),("",true)] {let mut r=selection_request(category,prefix,false);let body=&mut r.response.as_mut().unwrap()["returnObj"];match defect {"flag"=>body["ReportStyle"][1]["SystemFlag"]=json!("bad"),"parent"=>body["ReportStyle"][1]["ReportID"]=json!("NoParent"),_=>body["ReportStyleRule"][2]["StyleNum"]=json!(999)};let reply=handle(r);if fails{assert!(matches!(reply,GuestReply::Failure {..}),"{category}/{defect}");}else{assert!(matches!(&reply,GuestReply::PreparedPage {state,..} if state["visible"].as_array().unwrap().is_empty()),"{category}/{defect}: {reply:?}");}}}
+            let mut r=selection_request(category,"",false);r.operation="acquire".into();r.state["_pluginSettings"]=json!({"reportIdPrefix":false,"packagePathPrefix":false});r.identity=Some(Identity {category:category.into(),kind:if category=="report-styles-and-layouts"{"ReportStyle"}else{"ReportBehavior"}.into(),scope:Scope::Company {company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("ReportID".into(),"Alpha".into()),("StyleNum".into(),"1001".into())])});let GuestReply::Action {state,..}=handle(r)else{panic!()};assert_eq!(state["visible"].as_array().unwrap().len(),1);
         }
     }
     #[test]
     fn selected_invalid_typed_graph_keeps_valid_peers_and_incomplete_behavior_work_items() {
-        let mut r=acquired(selection_request("C18","",false));r.state["tables"]["ReportStyleRule"][0]["RuleBody"]=json!(false);
+        let mut r=acquired(selection_request("report-behavior","",false));r.state["tables"]["ReportStyleRule"][0]["RuleBody"]=json!(false);
         for independent in [false,true] {let (records,errors)=behavior_output(r.clone(),independent);assert_eq!(records.len(),2);assert!(errors.iter().any(|error|error.code=="REPORT_XML_INVALID" && error.identity.as_ref().is_some_and(|id|id.keys["ReportID"]=="Alpha")));assert_eq!(records[0].1["herbertCollectionStatus"]["completeness"],"partial");assert!(records[1].1["herbertSources"]["files"].as_array().unwrap().iter().any(|file|file["name"]=="Beta_1002.xml"));}
     }
     #[test]
     fn independent_behavior_images_match_legacy_output_without_other_owner_state() {
         fn run(independent:bool)->Vec<(Identity,Value)>{
-            let records:Vec<_>=(1..=2).map(|n|json!([Identity{category:"C18".into(),kind:"ReportBehavior".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("ReportID".into(),"R".into()),("StyleNum".into(),n.to_string())])},{"ReportStyle":[{"ReportID":"R","StyleNum":n}],"ReportStyleImage":[{"ImageID":format!("image{n}")}],"herbertSources":{"files":[{"name":"behavior.xml","text":format!("é original {n}")}]}}])).collect();
+            let records:Vec<_>=(1..=2).map(|n|json!([Identity{category:"report-behavior".into(),kind:"ReportBehavior".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("ReportID".into(),"R".into()),("StyleNum".into(),n.to_string())])},{"ReportStyle":[{"ReportID":"R","StyleNum":n}],"ReportStyleImage":[{"ImageID":format!("image{n}")}],"herbertSources":{"files":[{"name":"behavior.xml","text":format!("é original {n}")}]}}])).collect();
             let mut state=json!({"phase":"behaviorImages","records":records,"errors":[],"imageIndex":0,"next":null});
             let mut work=std::collections::VecDeque::new();
             if independent{
                 let GuestReply::PreparedPage{state:prepared,..}=independent_behaviors(state)else{panic!()};
                 work=prepared["_hostWorkItems"].as_array().unwrap().clone().into();state=work.pop_front().unwrap();
             }
-            let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"materialize".into(),category:"C18".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None};
+            let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"materialize".into(),category:"report-behavior".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None};
             let mut output=Vec::new();let mut calls=0;
             loop{match materialize(r.clone()){
                 GuestReply::Action{action:HostAction::SharedNativeRead{method,..},state}=>{
@@ -832,7 +911,7 @@ mod tests {
     #[test]
     fn independent_style_groups_match_legacy_bytes_and_resolve_catalog_subreports() {
         fn run(independent:bool)->(Vec<(Identity,Value)>,usize,usize){
-            let record=|n:u32,path:&str|json!([Identity{category:"C17".into(),kind:"ReportStyle".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("ReportID".into(),"R".into()),("StyleNum".into(),n.to_string())])},{"ReportStyle":[{"RptTypeID":"SSRS","PrintProgram":path}],"herbertDirectOutput":true,"herbertSources":{"files":[{"name":"original.xml","text":format!("é {n}")}]}}]);
+            let record=|n:u32,path:&str|json!([Identity{category:"report-styles-and-layouts".into(),kind:"ReportStyle".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("ReportID".into(),"R".into()),("StyleNum".into(),n.to_string())])},{"ReportStyle":[{"RptTypeID":"SSRS","PrintProgram":path}],"herbertDirectOutput":true,"herbertSources":{"files":[{"name":"original.xml","text":format!("é {n}")}]}}]);
             let records=json!([record(1,"reports/CustomReports/R/Main"),record(2,"reports/CustomReports/R/Main"),record(3,"reports/CustomReports/R/Other")]);
             let file=|name:&str|FileRef{path:format!("native/{name}.rdl"),sha256:"a".repeat(64),bytes:200,role:"nativeExport".into()};
             let mut state=json!({"phase":"nextStyle","pendingRecords":records,"pageErrors":[],"next":null,"layoutPageReceived":true,"layoutBodies":{"reports/customreports/r/main":file("main"),"reports/customreports/r/child":file("child"),"reports/customreports/r/other":file("other")}});
@@ -846,7 +925,7 @@ mod tests {
                 assert_eq!(work[1]["pendingRecords"].as_array().unwrap().len(),1);
                 state=work.pop_front().unwrap();
             }
-            let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"materialize".into(),category:"C17".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None};
+            let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"materialize".into(),category:"report-styles-and-layouts".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state,response:None,error:None};
             let mut output=Vec::new();let mut parses=0;let mut zips=0;
             loop{match materialize(r.clone()){
                 GuestReply::Action{action,state}=>{
@@ -886,7 +965,7 @@ mod tests {
     fn ready_styles(bulk: bool) {
         let record = |number: u32| {
             let id = Identity {
-                category: "C17".into(),
+                category: "report-styles-and-layouts".into(),
                 kind: "ReportStyle".into(),
                 scope: Scope::Company {
                     company: "C".into(),
@@ -904,7 +983,7 @@ mod tests {
         let mut r = GuestRequest {
             abi: 1,
             operation: "materialize".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1053,7 +1132,9 @@ fn finish(mut r: GuestRequest) -> GuestReply {
                     }
                     Err(message) => {
                         let mut diagnostic = Diagnostic::new("REPORT_IMAGE_UNAVAILABLE",
-                            format!("Report image {}: {message}", row["ImageID"]));
+                            "A report image could not be downloaded. The report style was saved without it.")
+                            .with_context("image", row["ImageID"].clone())
+                            .with_cause(message);
                         diagnostic.identity = Some(identity.clone());
                         diagnostics.push(diagnostic.clone());
                         r.state["errors"].as_array_mut().unwrap().push(json!(diagnostic));
@@ -1062,7 +1143,7 @@ fn finish(mut r: GuestRequest) -> GuestReply {
             }
         }
     }
-    if r.category == "C17" {
+    if r.category == "report-styles-and-layouts" {
         for (_, data) in &mut records {
             let mut reachable: BTreeSet<String> = data["ReportStyle"][0]["PrintProgram"]
                 .as_str()
@@ -1113,7 +1194,7 @@ fn finish(mut r: GuestRequest) -> GuestReply {
                         .push(json!({"name":format!("Layouts/{path}.rdl"),"file":entry["file"]}));
                 }
                 if let Ok(file) = serde_json::from_value::<FileRef>(entry["file"].clone()) {
-                    entries.push((format!("{path}.rdl"), file));
+                    entries.push((format!("{}.rdl", zip_entry_path(path)), file));
                 }
             }
             // Native report ZIPs contain RDLs and subreports. External sources,
@@ -1141,7 +1222,7 @@ fn finish(mut r: GuestRequest) -> GuestReply {
             }
         }
     }
-    if r.category == "C17" {
+    if r.category == "report-styles-and-layouts" {
         r.state["records"] = json!(records);
         if let Ok(entries) =
             serde_json::from_value::<Vec<(String, FileRef)>>(r.state["zipEntries"].take())
@@ -1234,7 +1315,9 @@ fn emit_style(mut r: GuestRequest) -> GuestReply {
     for (identity,data) in &mut records {
         let diagnostics:Vec<_>=errors.iter().filter(|d| d.identity.as_ref().is_none_or(|owner| owner == identity)).cloned().map(|mut d|{if d.identity.is_none(){d.identity=Some(identity.clone());}d}).collect();
         if !diagnostics.is_empty(){
-            data["herbertCollectionStatus"]=json!({"completeness":"partial","diagnostics":diagnostics});
+            // Warnings stay visible on a collected style; only other diagnostics make it partial.
+            let blocking=diagnostics.iter().any(|d|!crate::report_resources::is_warning(d));
+            data["herbertCollectionStatus"]=json!({"completeness":if blocking{"partial"}else{"collected"},"diagnostics":diagnostics});
             r.state["pageErrors"].as_array_mut().unwrap().extend(diagnostics.into_iter().map(|d|json!(d)));
         }
     }
@@ -1249,7 +1332,7 @@ fn emit_style(mut r: GuestRequest) -> GuestReply {
             identity,
             definition,
             format: "native-report-style".into(),
-            completeness: if diagnostics.is_empty() {
+            completeness: if diagnostics.iter().all(crate::report_resources::is_warning) {
                 Completeness::Collected
             } else {
                 Completeness::Partial
@@ -1276,10 +1359,39 @@ fn emit_style(mut r: GuestRequest) -> GuestReply {
             inventory: Box::new(GuestReply::Inventory {
                 identities: records.iter().map(|(id, _)| id.clone()).collect(),
                 next_cursor: r.state["next"].as_str().map(str::to_owned),
-                authoritative: diagnostics.is_empty(),
+                authoritative: diagnostics.iter().all(crate::report_resources::is_warning),
                 diagnostics,
             }),
             records,
+        }
+    }
+}
+
+#[cfg(test)]
+mod warning_outcome_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    fn emit(codes: &[&str], operation: &str) -> GuestReply {
+        let identity = Identity {category:"report-styles-and-layouts".into(),kind:"ReportStyle".into(),scope:Scope::Global,keys:BTreeMap::from([("ReportID".into(),"R".into()),("StyleNum".into(),"1".into())])};
+        let errors: Vec<_> = codes.iter().map(|code| json!(Diagnostic::new(code, "x"))).collect();
+        let r = GuestRequest {abi:herbert_contract::PLUGIN_ABI,operation:operation.into(),category:"report-styles-and-layouts".into(),company:"C".into(),
+            identity:Some(identity.clone()),cursor:None,page_size:Some(100),response:None,error:None,
+            state:json!({"records":[[identity,{"ReportStyle":[{"ReportID":"R","StyleNum":1}]}]],"errors":errors,"pageErrors":[],"pendingRecords":[]})};
+        emit_style(r)
+    }
+    #[test]
+    fn warnings_leave_a_style_collected_and_its_inventory_authoritative() {
+        for (codes, collected) in [(vec!["REPORT_LABEL_TEMPLATE_EXTERNAL"], true), (vec!["REPORT_STORED_ZIP_INVALID"], true),
+            (vec!["REPORT_LABEL_TEMPLATE_EXTERNAL", "REPORT_LAYOUT_TYPE_UNVERIFIED"], false), (vec!["REPORT_RDL_SOURCE_MISSING"], false)] {
+            let GuestReply::InventoryData {records, inventory} = emit(&codes, "discover") else { panic!() };
+            let GuestReply::Inventory {authoritative, diagnostics, ..} = *inventory else { panic!() };
+            assert_eq!(authoritative, collected, "{codes:?}");
+            assert_eq!(diagnostics.len(), codes.len(), "{codes:?}");
+            let status = &records[0].1["herbertCollectionStatus"];
+            assert_eq!(status["completeness"], if collected {"collected"} else {"partial"}, "{codes:?}");
+            assert_eq!(status["diagnostics"].as_array().unwrap().len(), codes.len());
+            let GuestReply::Definition {completeness, ..} = emit(&codes, "acquire") else { panic!() };
+            assert_eq!(completeness, if collected {Completeness::Collected} else {Completeness::Partial}, "{codes:?}");
         }
     }
 }

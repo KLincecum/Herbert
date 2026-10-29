@@ -85,7 +85,7 @@ fn declared_sources(definition: &Value) -> (Vec<SourceFile>, Vec<Diagnostic>) {
         return (files, diagnostics);
     };
     let Ok(sources) = serde_json::from_value::<Sources>(value.clone()) else {
-        diagnostics.push(Diagnostic::new("SOURCE_CONTRACT_INVALID", "The collector's source-processing declaration is invalid; preserved native definitions remain available."));
+        diagnostics.push(Diagnostic::new("SOURCE_CONTRACT_INVALID", "The collector's source-processing declaration is invalid; preserved Epicor definitions remain available."));
         return (files, diagnostics);
     };
     for file in sources.files {
@@ -123,7 +123,7 @@ fn declared_sources(definition: &Value) -> (Vec<SourceFile>, Vec<Diagnostic>) {
         if bytes.len() as u64 != file.bytes || crate::storage::sha256(&bytes) != file.sha256 {
             diagnostics.push(Diagnostic::new(
                 "SOURCE_BINARY_INVALID",
-                "The plugin binary file does not match its byte count and SHA256.",
+                "A downloaded compiled file has changed since it was saved (its size or checksum differs). Download it again.",
             ));
             continue;
         }
@@ -227,7 +227,7 @@ fn declared_sources(definition: &Value) -> (Vec<SourceFile>, Vec<Diagnostic>) {
 pub fn output_error() -> Diagnostic {
     Diagnostic::new(
         "PROCESSING_FAILED",
-        "Cannot preserve an authored source view; native acquisitions remain available.",
+        "Cannot preserve an authored source view; Epicor downloads remain available.",
     )
 }
 
@@ -599,14 +599,28 @@ pub fn replace_references(
         }
     }
     for values in expected.values_mut() {
-        values.sort_by_key(|v| serde_json::to_string(v).unwrap());
+        values.sort_by_cached_key(|v| serde_json::to_string(v).unwrap());
         values.dedup();
     }
+    // This runs for every committed artifact with the run mutex held. Only this
+    // source's occurrences can change, so serialize, sort and rewrite only those
+    // entries. Re-sorting and cloning the whole index per artifact held the
+    // mutex for 25-46 s per group in a 2024.2 full backup. The saved manifest
+    // mirrors the journal index at each checkpoint.
+    let identity_key = |r: &Value| serde_json::to_string(&r["identity"]).unwrap();
+    let source_key = serde_json::to_string(&source_value).unwrap();
+    let positions = storage
+        .reference_sources
+        .current(&storage.journal.references)
+        .get(&source_key)
+        .into_iter()
+        .flatten()
+        .filter_map(|key| find_reference(&storage.journal.references, key))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut current = std::collections::BTreeMap::<String, Vec<Value>>::new();
     let mut changed = std::collections::BTreeSet::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for record in &storage.journal.references {
-        let key = serde_json::to_string(&record["identity"]).unwrap();
-        seen.insert(key.clone());
+    for &position in &positions {
+        let record = &storage.journal.references[position];
         let mut old = record["occurrences"]
             .as_array()
             .into_iter()
@@ -614,25 +628,30 @@ pub fn replace_references(
             .filter(|v| v.get("source") == Some(&source_value))
             .cloned()
             .collect::<Vec<_>>();
-        old.sort_by_key(|v| serde_json::to_string(v).unwrap());
+        if old.is_empty() {
+            continue;
+        }
+        old.sort_by_cached_key(|v| serde_json::to_string(v).unwrap());
         old.dedup();
-        if old.as_slice() != expected.get(&key).map(Vec::as_slice).unwrap_or(&[]) {
+        let key = identity_key(record);
+        if current.insert(key.clone(), old).is_some() {
             changed.insert(key);
         }
     }
-    for (key, values) in &expected {
-        if !values.is_empty() && !seen.contains(key) {
+    for key in current.keys().chain(expected.keys()) {
+        let old = current.get(key).map(Vec::as_slice).unwrap_or(&[]);
+        if old != expected.get(key).map(Vec::as_slice).unwrap_or(&[]) {
             changed.insert(key.clone());
         }
     }
     if changed.is_empty() {
-        if storage.manifest.references != storage.journal.references {
-            storage.manifest.references = storage.journal.references.clone();
-        }
         return;
     }
-    for record in &mut storage.journal.references {
-        if let Some(values) = record.get_mut("occurrences").and_then(Value::as_array_mut) {
+    for &position in &positions {
+        if let Some(values) = storage.journal.references[position]
+            .get_mut("occurrences")
+            .and_then(Value::as_array_mut)
+        {
             values.retain(|v| v.get("source") != Some(&source_value));
         }
     }
@@ -640,40 +659,58 @@ pub fn replace_references(
         .journal
         .references
         .retain(|r| r["occurrences"].as_array().is_none_or(|v| !v.is_empty()));
+    let added = records
+        .iter()
+        .flat_map(|record| {
+            let key = identity_key(record);
+            record["occurrences"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(occurrence_source)
+                .map(move |source| (source, key.clone()))
+        })
+        .collect::<Vec<_>>();
+    // The index is kept sorted by identity: find or place each record by
+    // binary search, then normalize only the entries this source touched.
+    let references = &mut storage.journal.references;
     for record in records {
-        if let Some(previous) = storage
-            .journal
-            .references
-            .iter_mut()
-            .find(|r| r.get("identity") == record.get("identity"))
-        {
-            if let (Some(target), Some(values)) = (
-                previous
-                    .get_mut("occurrences")
-                    .and_then(Value::as_array_mut),
-                record["occurrences"].as_array(),
-            ) {
-                for value in values {
-                    if !target.contains(value) {
-                        target.push(value.clone());
-                    }
+        let key = identity_key(&record);
+        let mut position = references.partition_point(|r| identity_key(r) < key);
+        if references.get(position).is_none_or(|r| r.get("identity") != record.get("identity")) {
+            // An index saved before it was sorted still merges by identity.
+            if let Some(found) = references.iter().position(|r| r.get("identity") == record.get("identity")) {
+                position = found;
+            } else {
+                references.insert(position, record);
+                if let Some(values) = references[position].get_mut("occurrences").and_then(Value::as_array_mut) {
+                    values.sort_by_cached_key(|v| serde_json::to_string(v).unwrap());
+                    values.dedup();
+                }
+                continue;
+            }
+        }
+        if let (Some(target), Some(values)) = (
+            references[position]
+                .get_mut("occurrences")
+                .and_then(Value::as_array_mut),
+            record["occurrences"].as_array(),
+        ) {
+            for value in values {
+                if !target.contains(value) {
+                    target.push(value.clone());
                 }
             }
-        } else {
-            storage.journal.references.push(record);
+            target.sort_by_cached_key(|v| serde_json::to_string(v).unwrap());
+            target.dedup();
         }
     }
-    for record in &mut storage.journal.references {
-        if let Some(values) = record.get_mut("occurrences").and_then(Value::as_array_mut) {
-            values.sort_by_key(|v| serde_json::to_string(v).unwrap());
-            values.dedup();
-        }
+    let sources = &mut storage.reference_sources;
+    sources.by_source.remove(&source_key);
+    for (source, key) in added {
+        sources.by_source.entry(source).or_default().insert(key);
     }
-    storage
-        .journal
-        .references
-        .sort_by_key(|r| serde_json::to_string(&r["identity"]).unwrap());
-    storage.manifest.references = storage.journal.references.clone();
+    sources.seal(&storage.journal.references);
     // The index can advance before its consumer gets a write slot or before a
     // run is cancelled. Existing files must then be explicitly pending, not a
     // completed representation of different occurrence data.
@@ -710,6 +747,68 @@ pub fn replace_references(
         {
             mark(artifact);
         }
+    }
+}
+
+/// The reference entries each source occurs in. Committing one artifact then
+/// reads only its own entries instead of comparing every occurrence in the index
+/// (about 150 ms per artifact in a debug build of a 2024.2-sized index, run
+/// mutex held). Rebuilt in full when the index was replaced or changed outside
+/// `replace_references`; otherwise kept exact by it.
+#[derive(Default)]
+pub(crate) struct ReferenceSources {
+    shape: Option<(usize, usize, usize)>,
+    by_source: std::collections::HashMap<String, std::collections::BTreeSet<String>>,
+}
+impl ReferenceSources {
+    /// Buffer, entry count and occurrence count. Assignment, clearing and
+    /// any other edit of the index by another path change at least one.
+    fn shape(references: &[Value]) -> (usize, usize, usize) {
+        let occurrences = references
+            .iter()
+            .map(|r| r["occurrences"].as_array().map_or(0, Vec::len))
+            .sum();
+        (references.as_ptr() as usize, references.len(), occurrences)
+    }
+    fn current(
+        &mut self,
+        references: &[Value],
+    ) -> &std::collections::HashMap<String, std::collections::BTreeSet<String>> {
+        let shape = Self::shape(references);
+        if self.shape != Some(shape) {
+            self.by_source.clear();
+            for record in references {
+                let key = serde_json::to_string(&record["identity"]).unwrap();
+                for source in record["occurrences"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(occurrence_source)
+                {
+                    self.by_source.entry(source).or_default().insert(key.clone());
+                }
+            }
+            self.shape = Some(shape);
+        }
+        &self.by_source
+    }
+    fn seal(&mut self, references: &[Value]) {
+        self.shape = Some(Self::shape(references));
+    }
+}
+/// Equal JSON values serialize identically (serde_json maps are ordered).
+fn occurrence_source(occurrence: &Value) -> Option<String> {
+    occurrence.get("source").map(|source| serde_json::to_string(source).unwrap())
+}
+/// The entry for an identity key in the sorted index; an index saved before
+/// it was sorted is searched in full.
+fn find_reference(references: &[Value], key: &str) -> Option<usize> {
+    let key_of = |r: &Value| serde_json::to_string(&r["identity"]).unwrap();
+    let position = references.partition_point(|r| key_of(r).as_str() < key);
+    if references.get(position).is_some_and(|r| key_of(r) == key) {
+        Some(position)
+    } else {
+        references.iter().position(|r| key_of(r) == key)
     }
 }
 
@@ -1162,10 +1261,10 @@ mod human_output_tests {
     fn native_export_is_exact_and_only_readable_code_is_expanded() {
         let temp = tempfile::tempdir().unwrap();
         let mut journal = new_journal("human-output".into());
-        journal.category_names.insert("C04".into(), "BAQs".into());
+        journal.category_names.insert("baqs-and-ubaqs".into(), "BAQs".into());
         let mut store = Storage::open(temp.path(), false, journal).unwrap();
         let id = Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "BAQ".into(),
             scope: herbert_contract::Scope::Global,
             keys: BTreeMap::from([("QueryID".into(), "MyQuery".into())]),

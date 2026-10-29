@@ -30,6 +30,17 @@ fn fail(code: &str, message: &str) -> GuestReply {
         diagnostic: Diagnostic::new(code, message),
     }
 }
+/// The reader's own text stays as technical detail; the message is a static sentence.
+fn property_read_failed(response: &Value) -> Diagnostic {
+    let diagnostic = Diagnostic::new(
+        "PROPERTY_READ_FAILED",
+        "Herbert's extended-properties reader on the Epicor server reported a problem, so nothing was saved for these tables. Retry the download; the reader's message is in the technical details.",
+    );
+    match response["oMessage"].as_str().filter(|s| !s.is_empty()) {
+        Some(text) => diagnostic.with_context("serverMessage", text),
+        None => diagnostic,
+    }
+}
 fn strings(row: &Value, names: &[&str]) -> Option<Vec<String>> {
     names
         .iter()
@@ -40,7 +51,7 @@ fn present(row: &Value, branch: usize) -> Result<bool, Diagnostic> {
     let invalid = || {
         Diagnostic::new(
             "SCHEMA_OVERRIDE_PROJECTION_MISSING",
-            "The native projection omitted or mistyped an authored override field.",
+            "The Epicor projection omitted or mistyped an authored override field.",
         )
     };
     let mut found = false;
@@ -90,7 +101,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C02".into(),
+            category: "ud-schema".into(),
             company: "EXAMPLE".into(),
             identity: None,
             cursor: None,
@@ -101,7 +112,7 @@ mod tests {
         }
     }
     #[test]
-    fn c02_filters_system_tables_before_retaining_native_responses() {
+    fn ud_schema_filters_system_tables_before_retaining_native_responses() {
         let GuestReply::Action {
             action: HostAction::NativeRead { arguments, .. },
             ..
@@ -113,7 +124,7 @@ mod tests {
         assert_eq!(arguments["pageSize"], 1);
     }
     #[test]
-    fn c02_keeps_custom_table_types_and_rejects_system_rows() {
+    fn ud_schema_keeps_custom_table_types_and_rejects_system_rows() {
         let mut request = schema_request();
         request.response = Some(json!({"returnObj":{"ZDataTableList":[
             {"SystemCode":"Ice","DataTableID":"Custom_Example","TableType":"EX","SystemFlag":false},
@@ -135,7 +146,7 @@ mod tests {
         assert_eq!(cursor["page"], 2);
     }
     #[test]
-    fn c02_ud_definition_does_not_invent_a_stock_parent_artifact() {
+    fn ud_schema_ud_definition_does_not_invent_a_stock_parent_artifact() {
         let mut request = schema_request();
         request.response = Some(
             json!({"returnObj":{"ZDataTableList":[{"SystemCode":"ICE","DataTableID":"UD01_UD","TableType":"UD","SystemFlag":false}]},"parameters":{"morePages":false}}),
@@ -153,7 +164,7 @@ mod tests {
         assert_eq!(identities[0].keys["DataTableID"], "UD01_UD");
     }
     #[test]
-    fn c02_uncertain_branches_never_prove_empty_inventory() {
+    fn ud_schema_uncertain_branches_never_prove_empty_inventory() {
         for branch in 0..4 {
             for case in ["denied", "missing", "invalidIdentity"] {
                 let mut r = schema_request();
@@ -199,7 +210,7 @@ mod tests {
         );
     }
     #[test]
-    fn c02_empty_table_page_still_visits_custom_child_branches() {
+    fn ud_schema_empty_table_page_still_visits_custom_child_branches() {
         let mut r = schema_request();
         r.response =
             Some(json!({"returnObj":{"ZDataTableList":[]},"parameters":{"morePages":false}}));
@@ -258,7 +269,7 @@ mod tests {
 fn parent(category: &str, system: String, table: String) -> Identity {
     Identity {
         category: category.into(),
-        kind: if category == "C02" {
+        kind: if category == "ud-schema" {
             "UDTableSchema"
         } else {
             "ExtendedTableProperties"
@@ -269,7 +280,7 @@ fn parent(category: &str, system: String, table: String) -> Identity {
     }
 }
 pub fn discover(request: GuestRequest, family: usize, next_family: Option<String>) -> GuestReply {
-    if request.category == "C03" {
+    if request.category == "extended-properties" {
         return discover_overrides(request, family, next_family);
     }
     let cursor = match request
@@ -279,11 +290,11 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
         .transpose()
     {
         Ok(v) => v.unwrap_or(json!({})),
-        Err(_) => return fail("INVALID_CURSOR", "The authored schema cursor is invalid."),
+        Err(_) => return fail("INVALID_CURSOR", "The authored schema saved position is invalid."),
     };
-    let c02 = request.category == "C02";
+    let ud_schema = request.category == "ud-schema";
     let branch = cursor["schemaBranch"].as_u64().unwrap_or(0) as usize;
-    let branches = if c02 { 4 } else { 2 };
+    let branches = if ud_schema { 4 } else { 2 };
     if branch >= branches {
         return fail(
             "INVALID_CURSOR",
@@ -318,11 +329,11 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
         }
     };
     if request.response.is_none() && request.error.is_none() {
-        let action = if c02 && branch == 0 {
+        let action = if ud_schema && branch == 0 {
             if page == 0 || page > i32::MAX as u64 {
                 return fail(
                     "NATIVE_PAGING_RANGE",
-                    "Native absolutePage requires a positive Int32 value.",
+                    "Herbert could not continue this download from its saved progress (page position). Start the download again.",
                 );
             }
             HostAction::NativeRead {
@@ -331,7 +342,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
                 export: false,
                 arguments: json!({"whereClause":"SystemFlag = false","pageSize":size,"absolutePage":page}),
             }
-        } else if c02 {
+        } else if ud_schema {
             let table = ["ZDataField", "ZLookupLink", "ZKey"][branch - 1];
             let mut criteria = vec![QueryCriterion {
                 table: "SchemaSource".into(),
@@ -344,7 +355,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
                 if !after.is_string() {
                     return fail(
                         "INVALID_CURSOR",
-                        "The schema row cursor must be a native identity.",
+                        "The schema row saved position must be an Epicor ID.",
                     );
                 }
                 criteria.push(QueryCriterion {
@@ -401,9 +412,9 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
         };
     }
     let response = request.response.as_ref().unwrap();
-    let rows = if c02 && branch == 0 {
+    let rows = if ud_schema && branch == 0 {
         response.pointer("/returnObj/ZDataTableList")
-    } else if c02 {
+    } else if ud_schema {
         response.get("rows")
     } else {
         response.get("value")
@@ -415,19 +426,19 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
             authoritative: false,
             diagnostics: vec![Diagnostic::new(
                 "SCHEMA_INVENTORY_UNVERIFIED",
-                "The native schema presence read omitted its row collection.",
+                "The Epicor schema presence read omitted its row collection.",
             )],
         };
     };
     let mut identities = Vec::new();
     let mut diagnostics = Vec::new();
     for row in rows {
-        if c02 && branch == 0 && crate::system_artifacts::marked(row) {
+        if ud_schema && branch == 0 && crate::system_artifacts::marked(row) {
             continue;
         }
         let Some(keys) = strings(
             row,
-            if c02 {
+            if ud_schema {
                 &["SystemCode", "DataTableID"]
             } else {
                 KEYS
@@ -439,7 +450,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
             ));
             continue;
         };
-        if !c02 {
+        if !ud_schema {
             match present(row, branch) {
                 Ok(false) => continue,
                 Ok(true) => {}
@@ -450,11 +461,11 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
             }
         }
         let tables = vec![keys[1].clone()];
-        if c02 && branch == 0 {
+        if ud_schema && branch == 0 {
             let Some(kind) = row["TableType"].as_str() else {
                 diagnostics.push(Diagnostic::new(
                     "SCHEMA_KIND_UNVERIFIED",
-                    "A native schema table omitted its type.",
+                    "An Epicor schema table omitted its type.",
                 ));
                 continue;
             };
@@ -463,7 +474,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
             if !authored {
                 diagnostics.push(Diagnostic::new(
                     "SCHEMA_FILTER_UNVERIFIED",
-                    "The native authored-table filter returned a stock table.",
+                    "The Epicor authored-table filter returned a stock table.",
                 ));
                 continue;
             }
@@ -474,7 +485,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
                 if table.len() <= 3 || !table.to_ascii_lowercase().ends_with("_ud") {
                     diagnostics.push(Diagnostic::new(
                         "SCHEMA_PARENT_UNVERIFIED",
-                        "A UD definition does not have the native _UD base-table identity.",
+                        "A UD definition does not have the Epicor _UD base-table identity.",
                     ));
                 }
             }
@@ -491,7 +502,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
             }
         }
     }
-    let more = if c02 && branch == 0 {
+    let more = if ud_schema && branch == 0 {
         match response
             .pointer("/parameters/morePages")
             .or_else(|| response.get("morePages"))
@@ -501,20 +512,20 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
             None => {
                 diagnostics.push(Diagnostic::new(
                     "PAGINATION_UNVERIFIED",
-                    "The native schema list omitted morePages.",
+                    "The Epicor schema list omitted morePages.",
                 ));
                 false
             }
         }
     } else {
-        rows.len() == size as usize || (!c02 && response.get("@odata.nextLink").is_some())
+        rows.len() == size as usize || (!ud_schema && response.get("@odata.nextLink").is_some())
     };
     let next_cursor = if more {
-        if c02 && branch == 0 {
+        if ud_schema && branch == 0 {
             continuation(branch, page + 1, Value::Null, &seen)
         } else {
             let last = rows.last().and_then(|row| {
-                if c02 {
+                if ud_schema {
                     row.get("SysRowID").filter(|v| v.is_string()).cloned()
                 } else {
                     strings(row, KEYS).map(|v| json!(v))
@@ -525,7 +536,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
                 _ => {
                     diagnostics.push(Diagnostic::new(
                         "SCHEMA_PAGING_STALLED",
-                        "The native page did not advance its complete schema identity.",
+                        "The Epicor page did not advance its complete schema identity.",
                     ));
                     continuation(branch + 1, 1, Value::Null, &seen)
                 }
@@ -563,13 +574,9 @@ fn finish_properties(request: GuestRequest) -> GuestReply {
         );
     };
     if response["oSuccess"] != true {
-        return fail(
-            "PROPERTY_READ_FAILED",
-            response["oMessage"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .unwrap_or("The property reader did not confirm success."),
-        );
+        return GuestReply::Failure {
+            diagnostic: property_read_failed(response),
+        };
     }
     let Some(rows) = response["oJson"]
         .as_str()
@@ -583,7 +590,7 @@ fn finish_properties(request: GuestRequest) -> GuestReply {
     let Some(fields) = request.state["fields"].as_array() else {
         return fail(
             "PROPERTY_STATE_INVALID",
-            "The field override continuation is missing.",
+            "The field override resume point is missing.",
         );
     };
     let mut seen = BTreeSet::new();
@@ -595,7 +602,7 @@ fn finish_properties(request: GuestRequest) -> GuestReply {
         .filter(|keys| keys.iter().all(|s| !s.is_empty())) else {
             return fail(
                 "PROPERTY_IDENTITY_INVALID",
-                "A property row omitted its native identity.",
+                "A property row omitted its Epicor ID.",
             );
         };
         if !keys[0].eq_ignore_ascii_case(&id.keys["SystemCode"])
@@ -661,12 +668,7 @@ fn bulk_response(request: &GuestRequest) -> Result<Vec<Value>, Diagnostic> {
         )
     })?;
     if response["oSuccess"] != true {
-        return Err(Diagnostic::new(
-            "PROPERTY_READ_FAILED",
-            response["oMessage"]
-                .as_str()
-                .unwrap_or("The property reader failed."),
-        ));
+        return Err(property_read_failed(response));
     }
     let rows = response["oJson"]
         .as_str()
@@ -712,19 +714,109 @@ fn bulk_action() -> GuestReply {
         state: json!({}),
     }
 }
+/// Direct only cannot run the property reader helper. Preserve the field overrides Epicor exposes directly:
+/// ZDataField rows selected exactly as the helper selects them (read-all-properties.cs: any UD string non-empty or
+/// UDRequired/UDReadOnly set), read with unsaved DynamicQuery keyset pages. ZColumnProperty needs the helper, so every
+/// table is Partial and a table with only property overrides is not found. SQL Server compares strings ignoring
+/// trailing spaces, so a UD value made only of spaces is not selected here although the helper keeps it.
+fn direct_only(request: &GuestRequest) -> bool {
+    request.state["_collectionMethod"] == "directOnly"
+}
+// A transport page, not a limit: keyset continuation reads every selected row.
+const DIRECT_PAGE: u32 = 1000;
+fn direct_action(request: &GuestRequest, rows: Vec<Value>, after: Option<String>) -> GuestReply {
+    let mut fields = vec![json!({"FieldName":"SysRowID","DataType":"uniqueidentifier"})];
+    fields.extend(KEYS.iter().chain(STRINGS).map(|f| json!({"FieldName":f,"DataType":"nvarchar"})));
+    fields.extend(FLAGS.iter().map(|f| json!({"FieldName":f,"DataType":"bit"})));
+    let count = STRINGS.len() + FLAGS.len();
+    let mut criteria: Vec<_> = STRINGS.iter().map(|f| (f.to_string(), ">".to_string(), "N''".to_string()))
+        .chain(FLAGS.iter().map(|f| (f.to_string(), "=".to_string(), "1".to_string())))
+        .enumerate()
+        .map(|(i, (f, op, v))| (f, op, v, if i == 0 { "" } else { "OR" }.into(), if i == 0 { "(" } else { "" }.into(), if i + 1 == count { ")" } else { "" }.into()))
+        .collect();
+    // Discovery's literal table prefix narrows the read with a broad server-side superset; selection stays exact and
+    // local. Exact identity retrieval ignores the discovery prefix.
+    if request.operation == "discover" {
+        if let Some(stem) = request.state.pointer("/_pluginSettings/tableIdPrefix").and_then(Value::as_str).and_then(crate::report_query::like_stem) {
+            criteria.push(("DataTableID".into(), "LIKE".into(), crate::report_query::literal(&format!("{stem}%")), "AND".into(), "".into(), "".into()));
+        }
+    }
+    match crate::report_query::build(&request.company, "ZDataField", &json!(fields), DIRECT_PAGE, &criteria, after.as_deref()) {
+        Ok(arguments) => GuestReply::Action {
+            action: HostAction::NativeRead { service: "Ice.BO.DynamicQuerySvc".into(), method: "Execute".into(), arguments, export: false },
+            state: json!({"direct":{"rows":rows,"after":after},"_collectionMethod":"directOnly","_pluginSettings":request.state["_pluginSettings"]}),
+        },
+        Err(message) => fail("PROPERTY_DIRECT_INVALID", &message),
+    }
+}
+/// Ok(tables) once every page is read, grouped like the helper's response. Err(reply) is either the next page
+/// request or a failure; the caller returns it unchanged.
+fn direct_step(request: &mut GuestRequest) -> Result<Vec<Value>, GuestReply> {
+    if let Some(diagnostic) = request.error.take() {
+        return Err(GuestReply::Failure { diagnostic });
+    }
+    let Some(response) = request.response.take() else { return Err(direct_action(request, vec![], None)); };
+    if response.pointer("/returnObj/Errors").is_some_and(|e| !e.is_null() && e.as_array().is_none_or(|r| !r.is_empty())) {
+        return Err(fail("PROPERTY_DIRECT_INVALID", "Epicor's field override query returned errors."));
+    }
+    let Some(page) = response.pointer("/returnObj/Results").and_then(Value::as_array) else {
+        return Err(fail("PROPERTY_DIRECT_INVALID", "Epicor's field override query omitted its results."));
+    };
+    let mut rows: Vec<Value> = request.state.pointer("/direct/rows").and_then(Value::as_array).cloned().unwrap_or_default();
+    let before = request.state.pointer("/direct/after").and_then(Value::as_str).map(String::from);
+    rows.extend(page.iter().cloned());
+    if page.len() >= DIRECT_PAGE as usize {
+        let after = page.last().and_then(|r| r["SysRowID"].as_str()).map(String::from);
+        if after.is_none() || after == before {
+            return Err(fail("PROPERTY_DIRECT_INVALID", "The field override page did not advance."));
+        }
+        return Err(direct_action(request, rows, after));
+    }
+    // Group as the helper does: case-insensitive SystemCode/DataTableID, first casing kept, fields in key order.
+    rows.sort_by_key(|r| KEYS.iter().map(|k| r[*k].as_str().unwrap_or("").to_lowercase()).collect::<Vec<_>>());
+    let mut tables: Vec<Value> = Vec::new();
+    let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for row in rows {
+        let Some(keys) = strings(&row, KEYS) else {
+            return Err(fail("SCHEMA_IDENTITY_UNVERIFIED", "A field override omitted its identity."));
+        };
+        let mut item = json!({"SystemCode":keys[0],"DataTableID":keys[1],"FieldName":keys[2]});
+        for f in STRINGS {
+            if let Some(v) = row[*f].as_str().filter(|v| !v.is_empty()) { item[*f] = json!(v); }
+        }
+        for f in FLAGS {
+            if row[*f] == true || row[*f] == 1 { item[*f] = json!(true); }
+        }
+        let at = *index.entry((keys[0].to_lowercase(), keys[1].to_lowercase())).or_insert_with(|| {
+            tables.push(json!({"SystemCode":keys[0],"DataTableID":keys[1],"ZDataField":[],"ZColumnProperty":[]}));
+            tables.len() - 1
+        });
+        tables[at]["ZDataField"].as_array_mut().unwrap().push(item);
+    }
+    Ok(tables)
+}
+fn direct_partial() -> Diagnostic {
+    Diagnostic::new("EXTENDED_PROPERTIES_DIRECT_PARTIAL", "Direct only saved this table's field overrides. Column property values and overrides need the Server Assisted property reader, and tables that have only property overrides are not listed.")
+}
 fn discover_bulk_properties(mut request: GuestRequest, next_cursor: Option<String>) -> GuestReply {
     let prefix = match request.state.pointer("/_pluginSettings/tableIdPrefix") {
         None => String::new(),
         Some(Value::String(value)) => value.clone(),
         Some(_) => return fail("INVALID_SETTING", "Table ID starts with must be a string."),
     };
-    if let Some(diagnostic) = request.error {
-        return GuestReply::Failure { diagnostic };
-    }
-    if request.response.is_none() {
-        return bulk_action();
-    }
-    match bulk_response(&request) {
+    let direct = direct_only(&request);
+    let rows = if direct {
+        match direct_step(&mut request) { Ok(rows) => Ok(rows), Err(reply) => return reply }
+    } else {
+        if let Some(diagnostic) = request.error {
+            return GuestReply::Failure { diagnostic };
+        }
+        if request.response.is_none() {
+            return bulk_action();
+        }
+        bulk_response(&request)
+    };
+    match rows {
         Err(diagnostic) => GuestReply::Failure { diagnostic },
         Ok(rows) => {
             // Validate once and hand final definitions directly to the writer.
@@ -734,16 +826,19 @@ fn discover_bulk_properties(mut request: GuestRequest, next_cursor: Option<Strin
             let mut records = Vec::new();
             for row in rows {
                 let id = parent(
-                    "C03",
+                    "extended-properties",
                     row["SystemCode"].as_str().unwrap().into(),
                     row["DataTableID"].as_str().unwrap().into(),
                 );
                 request.identity = Some(id.clone());
                 match finish_table(request.clone(), row) {
-                    GuestReply::Definition { definition, .. } => {
+                    GuestReply::Definition { mut definition, .. } => {
                         // Even unselected tables must pass complete field/property
                         // validation. Keep each selected graph unchanged.
                         if id.keys["DataTableID"].starts_with(&prefix) {
+                            if direct {
+                                definition["herbertCollectionStatus"] = json!({"completeness":"partial","diagnostics":[direct_partial()]});
+                            }
                             records.push((id, definition));
                         }
                     },
@@ -775,12 +870,17 @@ pub fn acquire(mut request: GuestRequest) -> GuestReply {
     if let Some(table) = request.state.pointer("/_inventory/propertyTable").cloned() {
         return finish_table(request, table);
     }
-    if request.response.is_none() {
-        return bulk_action();
-    }
-    let rows = match bulk_response(&request) {
-        Ok(rows) => rows,
-        Err(diagnostic) => return GuestReply::Failure { diagnostic },
+    let direct = direct_only(&request);
+    let rows = if direct {
+        match direct_step(&mut request) { Ok(rows) => rows, Err(reply) => return reply }
+    } else {
+        if request.response.is_none() {
+            return bulk_action();
+        }
+        match bulk_response(&request) {
+            Ok(rows) => rows,
+            Err(diagnostic) => return GuestReply::Failure { diagnostic },
+        }
     };
     let id = request.identity.as_ref().unwrap();
     let Some(table) = rows.iter().find(|r| {
@@ -798,7 +898,12 @@ pub fn acquire(mut request: GuestRequest) -> GuestReply {
             "This table has no saved custom overrides.",
         );
     };
-    finish_table(request.clone(), table.clone())
+    match finish_table(request.clone(), table.clone()) {
+        GuestReply::Definition { identity, format, definition, .. } if direct => GuestReply::Definition {
+            identity, format, definition, completeness: Completeness::Partial, diagnostics: vec![direct_partial()],
+        },
+        other => other,
+    }
 }
 
 // Shared validation for direct discovery output and explicit targeted reads.
@@ -885,9 +990,9 @@ mod bulk_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C03".into(),
+            category: "extended-properties".into(),
             company: "C".into(),
-            identity: Some(parent("C03", "ERP".into(), "Part".into())),
+            identity: Some(parent("extended-properties", "ERP".into(), "Part".into())),
             cursor: None,
             page_size: Some(200),
             state: Value::Null,
@@ -911,6 +1016,51 @@ mod bulk_tests {
         let GuestReply::Inventory {identities, authoritative, diagnostics, ..} = *inventory else {panic!()};
         assert!(authoritative); assert!(diagnostics.is_empty());
         assert_eq!(identities, records.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>()); records
+    }
+    fn direct(response: Option<Value>, state: Value) -> GuestRequest {
+        let mut r = request(vec![]); r.operation = "discover".into(); r.identity = None; r.response = response;
+        r.state = state; r.state["_collectionMethod"] = json!("directOnly"); r
+    }
+    #[test]
+    fn direct_only_reads_helper_selected_field_overrides_without_the_helper() {
+        let GuestReply::Action { action: HostAction::NativeRead { service, method, arguments, .. }, state } = discover_bulk_properties(direct(None, json!({})), None) else { panic!("Direct only must not call the helper") };
+        assert_eq!((service.as_str(), method.as_str()), ("Ice.BO.DynamicQuerySvc", "Execute"));
+        assert_eq!(arguments["queryDS"]["QueryTable"][0]["DBTableName"], "ZDataField");
+        let items = arguments["queryDS"]["QueryWhereItem"].as_array().unwrap();
+        assert_eq!(items.len(), STRINGS.len() + FLAGS.len());
+        assert_eq!((items[0]["LeftP"].as_str(), items.last().unwrap()["RightP"].as_str()), (Some("("), Some(")")));
+        assert!(items[1..].iter().all(|i| i["AndOr"] == "Or"));
+        let rows = json!([
+            {"SysRowID":"00000000-0000-0000-0000-000000000002","SystemCode":"Erp","DataTableID":"Part","FieldName":"Name","UDFieldLabel":"Label Ω","UDFieldFormat":"","UDRequired":false,"UDReadOnly":true},
+            {"SysRowID":"00000000-0000-0000-0000-000000000001","SystemCode":"ERP","DataTableID":"part","FieldName":"Code","UDInitialValue":"0","UDRequired":true,"UDReadOnly":false},
+            {"SysRowID":"00000000-0000-0000-0000-000000000003","SystemCode":"Ice","DataTableID":"Other","FieldName":"X","UDPredictiveSearchID":"S"}]);
+        let mut next = direct(Some(json!({"returnObj":{"Results":rows}})), state);
+        // Literal case-sensitive prefix; the table keeps its first-seen spelling ("part", key order).
+        next.state["_pluginSettings"] = json!({"tableIdPrefix":"p"});
+        let GuestReply::InventoryData { records, inventory } = discover_bulk_properties(next, None) else { panic!() };
+        let GuestReply::Inventory { authoritative, .. } = *inventory else { panic!() };
+        assert!(authoritative);
+        assert_eq!(records.len(), 1, "prefix keeps only Part; Ice.Other was still validated");
+        let (id, d) = &records[0];
+        assert_eq!(id.keys["DataTableID"], "part");
+        // Fields as the helper emits them: identity plus only set overrides, in key order; no property reader rows.
+        assert_eq!(d["ZDataField"], json!([
+            {"SystemCode":"ERP","DataTableID":"part","FieldName":"Code","UDInitialValue":"0","UDRequired":true},
+            {"SystemCode":"Erp","DataTableID":"Part","FieldName":"Name","UDFieldLabel":"Label Ω","UDReadOnly":true}]));
+        assert_eq!(d["ZColumnProperty"], json!([]));
+        assert_eq!(d["herbertCollectionStatus"]["completeness"], "partial");
+        assert_eq!(d["herbertCollectionStatus"]["diagnostics"][0]["code"], "EXTENDED_PROPERTIES_DIRECT_PARTIAL");
+    }
+    #[test]
+    fn direct_only_pages_by_keyset_and_refuses_a_stalled_page() {
+        let page: Vec<Value> = (0..DIRECT_PAGE).map(|i| json!({"SysRowID":format!("00000000-0000-0000-0000-{i:012}"),"SystemCode":"Erp","DataTableID":"T","FieldName":format!("F{i}"),"UDFieldLabel":"L"})).collect();
+        let GuestReply::Action { action: HostAction::NativeRead { arguments, .. }, state } = discover_bulk_properties(direct(Some(json!({"returnObj":{"Results":page.clone()}})), json!({})), None) else { panic!() };
+        assert_eq!(arguments["queryDS"]["QueryWhereItem"].as_array().unwrap().last().unwrap()["CompOp"], ">");
+        assert_eq!(state["direct"]["rows"].as_array().unwrap().len(), DIRECT_PAGE as usize);
+        let GuestReply::InventoryData { records, .. } = discover_bulk_properties(direct(Some(json!({"returnObj":{"Results":[]}})), state.clone()), None) else { panic!() };
+        assert_eq!(records[0].1["ZDataField"].as_array().unwrap().len(), DIRECT_PAGE as usize);
+        assert!(matches!(discover_bulk_properties(direct(Some(json!({"returnObj":{"Results":page}})), state), None), GuestReply::Failure { .. }));
+        assert!(matches!(discover_bulk_properties(direct(Some(json!({"returnObj":{"Results":[],"Errors":[{"m":1}]}})), json!({})), None), GuestReply::Failure { .. }));
     }
     #[test]
     fn prefix_selects_complete_literal_property_graphs_across_systems() {
@@ -952,28 +1102,28 @@ mod bulk_tests {
     #[test]
     fn prefix_keeps_bulk_helper_arguments_and_exact_acquisition_independent() {
         let mut r = selected_request(vec![], json!("missing")); r.response = None;
-        assert!(matches!(crate::handle("C03", r), GuestReply::Action {action:HostAction::SharedArtifactFunctionCall {alias,function,arguments},..}
+        assert!(matches!(crate::handle("extended-properties", r), GuestReply::Action {action:HostAction::SharedArtifactFunctionCall {alias,function,arguments},..}
             if alias == "properties" && function == "ReadAllProperties" && arguments == json!({})));
-        let base = serde_json::to_value(crate::handle("C03", request(vec![row()]))).unwrap();
+        let base = serde_json::to_value(crate::handle("extended-properties", request(vec![row()]))).unwrap();
         assert_eq!(base["type"], "definition");
         let mut exact = request(vec![row()]);
         exact.state = json!({"_pluginSettings":{"tableIdPrefix":"missing"}});
-        assert_eq!(serde_json::to_value(crate::handle("C03", exact)).unwrap(), base);
+        assert_eq!(serde_json::to_value(crate::handle("extended-properties", exact)).unwrap(), base);
         let mut exact = request(vec![row()]); exact.response = None;
         exact.state = json!({"_pluginSettings":{"tableIdPrefix":"missing"}});
-        assert!(matches!(crate::handle("C03", exact), GuestReply::Action {action:HostAction::SharedArtifactFunctionCall {arguments,..},..} if arguments == json!({})));
+        assert!(matches!(crate::handle("extended-properties", exact), GuestReply::Action {action:HostAction::SharedArtifactFunctionCall {arguments,..},..} if arguments == json!({})));
     }
     #[test]
     fn prefix_current_dispatch_returns_complete_selected_output_and_truthful_empty() {
         let rows = vec![row(), named_row("Erp", "Other")];
         let direct = selected_records(discover_bulk_properties(selected_request(rows.clone(), json!("Part")), None));
-        let actual = selected_records(crate::handle("C03", selected_request(rows.clone(), json!("Part"))));
+        let actual = selected_records(crate::handle("extended-properties", selected_request(rows.clone(), json!("Part"))));
         assert_eq!(actual, direct);
-        assert!(selected_records(crate::handle("C03", selected_request(rows, json!("absent")))).is_empty());
+        assert!(selected_records(crate::handle("extended-properties", selected_request(rows, json!("absent")))).is_empty());
         let r = selected_request(vec![], json!("Part"));
-        assert!(selected_records(crate::handle("C03", r.clone())).is_empty());
+        assert!(selected_records(crate::handle("extended-properties", r.clone())).is_empty());
         let mut r = r; r.response = Some(json!({"oSuccess":false,"oMessage":"refused"}));
-        assert!(matches!(crate::handle("C03", r), GuestReply::Inventory {authoritative:false,diagnostics,..} if diagnostics[0].code == "PROPERTY_READ_FAILED"));
+        assert!(matches!(crate::handle("extended-properties", r), GuestReply::Inventory {authoritative:false,diagnostics,..} if diagnostics[0].code == "PROPERTY_READ_FAILED"));
     }
     #[test]
     fn discovery_and_acquisition_share_the_same_bulk_request() {
@@ -1084,7 +1234,7 @@ mod schema_case_tests {
         let mut r = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C02".into(),
+            category: "ud-schema".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

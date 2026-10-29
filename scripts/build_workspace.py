@@ -15,20 +15,14 @@ def workspace() -> Path:
     override = os.environ.get("HERBERT_BUILD_HOME")
     if override:
         return Path(override).expanduser().resolve()
-    workbench = Path("C:/Tools/Workbench/workspace/build/hoover")
-    if (
-        os.name == "nt"
-        and Path("C:/Tools/Workbench/manifests/installed.json").is_file()
-    ):
-        return workbench
-    return (
-        Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "herbert"
-    )
+    # Neutral per-user default; set HERBERT_BUILD_HOME to keep builds elsewhere.
+    cache = os.environ.get("XDG_CACHE_HOME")
+    return (Path(cache) if cache else Path.home() / ".cache") / "herbert"
 
 
 def compiler_cache() -> Path:
     # Retain explicitly selected isolated caches. The default is outside source.
-    return Path(os.environ.get("CARGO_TARGET_DIR", str(workspace()))).resolve()
+    return Path(os.environ.get("CARGO_TARGET_DIR") or workspace()).resolve()
 
 
 def inventory(folder: Path) -> dict:
@@ -110,9 +104,14 @@ def run(entrypoint):
     if "--help" in sys.argv or "-h" in sys.argv:
         return entrypoint()
     os.environ.setdefault("CARGO_TARGET_DIR", str(compiler_cache()))
+    # One canonical build environment: an inherited CARGO_INCREMENTAL=1 would override the profile and
+    # refill incremental caches (docs/BUILD-STORAGE.md).
+    os.environ["CARGO_INCREMENTAL"] = "0"
     if any(arg == "--output" or arg.startswith("--output=") for arg in sys.argv[1:]):
         # Explicit release/evidence destinations keep the existing no-overwrite contract.
-        return entrypoint()
+        result = entrypoint()
+        prune_after_build()
+        return result
     original = sys.argv[:]
     home = workspace() / "packages"
     try:
@@ -122,19 +121,30 @@ def run(entrypoint):
     finally:
         sys.argv[:] = original
     print(f"Current development candidate: {home / 'current'}")
+    prune_after_build()
+
+
+def prune_after_build() -> None:
+    # Automatic cache prune after every build (docs/BUILD-STORAGE.md).
+    from prune_build_cache import prune, threshold
+    report = prune(Path(os.environ["CARGO_TARGET_DIR"]), limit=threshold())
+    print("Build cache: " + json.dumps({k: report[k] for k in ("bytesBefore", "bytesAfter", "thresholdExceeded", "locksHeld")}))
+
+
+def cargo_config(root: Path) -> Path:
+    # Optional local setup for bare cargo commands. Never overwrite authored config.
+    config = root / ".cargo/config.toml"
+    routing = "[build]\ntarget-dir = " + json.dumps(compiler_cache().as_posix()) + "\n"
+    text = "# Local generated cache routing.\n" + routing
+    # Earlier versions of this script wrote the older comment, with platform line endings.
+    generated = {text, "# Local generated cache routing; see docs/BUILD-STORAGE.md.\n" + routing}
+    if config.exists() and config.read_text(encoding="utf-8").replace("\r\n", "\n") not in generated:
+        raise SystemExit(f"Preserving existing Cargo configuration: {config}")
+    config.parent.mkdir(exist_ok=True)
+    config.write_bytes(text.encode("utf-8"))
+    return config
 
 
 if __name__ == "__main__":
-    # Optional local setup for bare cargo commands. Never overwrite authored config.
-    root = Path(__file__).resolve().parents[1]
-    config = root / ".cargo/config.toml"
-    text = (
-        "# Local generated cache routing.\n[build]\ntarget-dir = "
-        + json.dumps(compiler_cache().as_posix())
-        + "\n"
-    )
-    if config.exists() and config.read_text(encoding="utf-8") != text:
-        raise SystemExit(f"Preserving existing Cargo configuration: {config}")
-    config.parent.mkdir(exist_ok=True)
-    config.write_text(text, encoding="utf-8")
+    cargo_config(Path(__file__).resolve().parents[1])
     print(f"Cargo cache: {compiler_cache()}")

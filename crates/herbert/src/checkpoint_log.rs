@@ -22,13 +22,13 @@ fn error(code: &str, message: &str) -> Diagnostic {
 fn invalid() -> Diagnostic {
     error(
         "CHECKPOINT_INVALID",
-        "The committed checkpoint chain is invalid. Preserve its files; recovery refused.",
+        "The committed saved progress chain is invalid. Preserve its files; recovery refused.",
     )
 }
 fn io_error() -> Diagnostic {
     error(
         "CHECKPOINT_IO_UNCERTAIN",
-        "Checkpoint persistence failed. Preserve its files and reopen to reconcile before further work.",
+        "Saved progress persistence failed. Preserve its files and reopen to reconcile before further work.",
     )
 }
 fn encoded<T: Serialize>(value: &T) -> Result<Vec<u8>, Diagnostic> {
@@ -143,6 +143,7 @@ impl<T: Clone + PartialEq> Sequence<T> {
 enum ReferenceChanges<T = Value> {
     Legacy(Sequence<T>),
     Incremental(ReferenceAppend),
+    Edit(ReferenceEdit),
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -169,7 +170,7 @@ impl ReferenceChanges<Value> {
                     _ => false,
                 });
         if !compatible {
-            return Sequence::between(before, after).map(Self::Legacy);
+            return ReferenceEdit::between(before, after).map(Self::Edit);
         }
         let occurrences = before
             .iter()
@@ -213,8 +214,108 @@ impl ReferenceChanges<Value> {
                 target.extend(change.append);
                 Ok(())
             }
+            Self::Edit(change) => change.apply(target),
         }
     }
+}
+/// The reference index is sorted by identity, so a new or emptied identity shifts
+/// every later entry. Saving that as `Legacy` rewrote the whole index tail on
+/// each save: a 2024.2 full backup wrote 25 MB records and a 179 MB log while
+/// holding the run mutex. Entries are matched by identity in order instead.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReferenceEdit {
+    before_len: usize,
+    /// Ascending positions in the earlier list.
+    removed: Vec<usize>,
+    /// Positions among the entries that remain after `removed`.
+    changed: Vec<(usize, Sequence<Value>)>,
+    /// Ascending positions in the later list.
+    inserted: Vec<(usize, Value)>,
+}
+impl ReferenceEdit {
+    fn between(before: &[Value], after: &[Value]) -> Option<Self> {
+        let key = |r: &Value| serde_json::to_string(&r["identity"]).unwrap_or_default();
+        let before_keys = before.iter().map(key).collect::<Vec<_>>();
+        let after_keys = after.iter().map(key).collect::<Vec<_>>();
+        let (mut removed, mut changed, mut inserted) = (vec![], vec![], vec![]);
+        let (mut i, mut j, mut kept) = (0, 0, 0);
+        while i < before.len() || j < after.len() {
+            if i < before.len() && j < after.len() && before_keys[i] == after_keys[j] {
+                if before[i] != after[j] {
+                    match occurrence_change(&before[i], &after[j]) {
+                        Some(change) => changed.push((kept, change)),
+                        None => {
+                            removed.push(i);
+                            inserted.push((j, after[j].clone()));
+                            i += 1;
+                            j += 1;
+                            continue;
+                        }
+                    }
+                }
+                kept += 1;
+                i += 1;
+                j += 1;
+            } else if j == after.len() || (i < before.len() && before_keys[i] < after_keys[j]) {
+                removed.push(i);
+                i += 1;
+            } else {
+                inserted.push((j, after[j].clone()));
+                j += 1;
+            }
+        }
+        (!removed.is_empty() || !changed.is_empty() || !inserted.is_empty())
+            .then_some(Self { before_len: before.len(), removed, changed, inserted })
+    }
+    fn apply(self, target: &mut Vec<Value>) -> Result<(), Diagnostic> {
+        if target.len() != self.before_len {
+            return Err(invalid());
+        }
+        let mut drop = vec![false; target.len()];
+        let mut last = None;
+        for index in self.removed {
+            if index >= drop.len() || last.is_some_and(|last| index <= last) {
+                return Err(invalid());
+            }
+            drop[index] = true;
+            last = Some(index);
+        }
+        let mut position = 0;
+        target.retain(|_| {
+            position += 1;
+            !drop[position - 1]
+        });
+        for (index, patch) in self.changed {
+            let values = target
+                .get_mut(index)
+                .and_then(|v| v.get_mut("occurrences"))
+                .and_then(Value::as_array_mut)
+                .ok_or_else(invalid)?;
+            patch.apply(values)?;
+        }
+        let mut last = None;
+        for (index, value) in self.inserted {
+            if index > target.len() || last.is_some_and(|last| index <= last) {
+                return Err(invalid());
+            }
+            target.insert(index, value);
+            last = Some(index);
+        }
+        Ok(())
+    }
+}
+/// The occurrence change between two entries that differ only in occurrences.
+fn occurrence_change(a: &Value, b: &Value) -> Option<Sequence<Value>> {
+    let (a, b) = (a.as_object()?, b.as_object()?);
+    let same = a.len() == b.len()
+        && a.iter()
+            .filter(|(key, _)| key.as_str() != "occurrences")
+            .all(|(key, value)| b.get(key) == Some(value));
+    if !same {
+        return None;
+    }
+    Sequence::between(a.get("occurrences")?.as_array()?, b.get("occurrences")?.as_array()?)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -248,6 +349,57 @@ impl<T: Clone + PartialEq> Mapping<T> {
     }
 }
 
+/// A map of growing lists (discovered identities per category). Discovery adds
+/// a page at a time; saving the whole cumulative list on every page made the
+/// log quadratic. A list that only grew is saved as its new tail. Logs written
+/// before `append` existed deserialize unchanged (it defaults to empty).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, bound(serialize = "T: Serialize", deserialize = "T: Deserialize<'de>"))]
+struct ListMapping<T> {
+    remove: Vec<String>,
+    put: BTreeMap<String, Vec<T>>,
+    #[serde(default = "BTreeMap::new", skip_serializing_if = "BTreeMap::is_empty")]
+    append: BTreeMap<String, ListAppend<T>>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ListAppend<T> {
+    before_len: usize,
+    items: Vec<T>,
+}
+impl<T: Clone + PartialEq> ListMapping<T> {
+    fn between(before: &BTreeMap<String, Vec<T>>, after: &BTreeMap<String, Vec<T>>) -> Option<Self> {
+        let remove = before.keys().filter(|key| !after.contains_key(*key)).cloned().collect::<Vec<_>>();
+        let (mut put, mut append) = (BTreeMap::new(), BTreeMap::new());
+        for (key, value) in after {
+            match before.get(key) {
+                Some(old) if old == value => (),
+                Some(old) if old.len() < value.len() && value[..old.len()] == old[..] => {
+                    append.insert(key.clone(), ListAppend { before_len: old.len(), items: value[old.len()..].to_vec() });
+                }
+                _ => { put.insert(key.clone(), value.clone()); }
+            }
+        }
+        (!remove.is_empty() || !put.is_empty() || !append.is_empty()).then_some(Self { remove, put, append })
+    }
+    fn apply(self, target: &mut BTreeMap<String, Vec<T>>) -> Result<(), Diagnostic> {
+        for key in self.remove {
+            if target.remove(&key).is_none() {
+                return Err(invalid());
+            }
+        }
+        target.extend(self.put);
+        for (key, tail) in self.append {
+            let list = target.get_mut(&key).ok_or_else(invalid)?;
+            if list.len() != tail.before_len {
+                return Err(invalid());
+            }
+            list.extend(tail.items);
+        }
+        Ok(())
+    }
+}
+
 // Explicit fields make additions fail review/compile rather than silently hiding
 // an arbitrary JSON snapshot/diff in the hot path. Only changed values are cloned.
 macro_rules! delta {
@@ -274,13 +426,14 @@ macro_rules! delta {
 }
 delta!(JournalDelta, RunJournal, {
     server_version: Replace<Option<String>>, auth_mode: Replace<Option<crate::input::AuthMode>>,
+    transport_trust: Replace<Option<crate::transport_trust::TransportTrust>>,
     schema_version: Replace<u32>, run_id: Replace<String>, request_id: Replace<String>,
     endpoint: Replace<String>, company: Replace<String>, caller: Replace<String>,
     scope: Replace<String>, categories: Sequence<String>, plugin_hashes: Mapping<String>, category_names: Mapping<String>, separate_folder: Replace<Option<String>>,
     settings: Replace<OperatingSettings>, phase: Replace<String>, statistics: Replace<Option<Value>>,
     artifacts: Sequence<Artifact>, diagnostics: Sequence<Diagnostic>,
     pending_files: Sequence<FileRef>, acquisitions: Sequence<FileRef>,
-    cursors: Mapping<String>, discovered: Mapping<Vec<Identity>>, inventory_data: Mapping<FileRef>,
+    cursors: Mapping<String>, discovered: ListMapping<Identity>, inventory_data: Mapping<FileRef>,
     discovery_finished: Mapping<bool>, category_outcomes: Mapping<String>,
     references: ReferenceChanges<Value>, definition_views: Mapping<FileRef>, shared_exports: Mapping<Vec<FileRef>>,
     artifact_acquisitions: Mapping<Vec<FileRef>>, targets: Sequence<Identity>,
@@ -293,6 +446,7 @@ delta!(JournalDelta, RunJournal, {
     temporary_access_enabled: Replace<bool>, access_leases: Sequence<crate::access::AccessLease>,
     server_change_authority: Replace<Option<crate::server_changes::RunAuthority>>,
     server_change_authority_history: Sequence<crate::server_changes::RunAuthority>,
+    foreign_pending_helpers: Replace<Vec<crate::storage::ForeignPendingHelper>>,
 });
 delta!(ManifestDelta, Manifest, {
     schema_version: Replace<u32>, endpoint: Replace<String>, company: Replace<String>,
@@ -351,7 +505,7 @@ fn canonical_id(id: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 fn confined(root: &Path, relative: &str) -> Result<PathBuf, Diagnostic> {
-    let root = root.canonicalize().map_err(|_| io_error())?;
+    let root = root.canonicalize().map_err(|e| io_error().with_cause(&e))?;
     let relative = if !root.join("Herbert Data").exists() && root.join(".hoover").exists() {
         relative.replacen("Herbert Data/", ".hoover/", 1)
     } else {
@@ -365,12 +519,12 @@ fn confined(root: &Path, relative: &str) -> Result<PathBuf, Diagnostic> {
                 if meta.file_type().is_symlink()
                     || !path
                         .canonicalize()
-                        .map_err(|_| io_error())?
+                        .map_err(|e| io_error().with_cause(&e))?
                         .starts_with(&root)
                 {
                     return Err(error(
                         "UNSAFE_PATH",
-                        "Checkpoint paths cannot cross a symbolic link or junction.",
+                        "Saved progress paths cannot cross a symbolic link or junction.",
                     ));
                 }
             }
@@ -432,7 +586,7 @@ fn replay(root: &Path, id: &str) -> Result<Option<Replayed>, Diagnostic> {
         return Err(invalid());
     }
     let mut input = File::open(log).map_err(|_| invalid())?;
-    let length = input.metadata().map_err(|_| io_error())?.len();
+    let length = input.metadata().map_err(|e| io_error().with_cause(&e))?.len();
     if length < tip.end {
         return Err(invalid());
     }
@@ -455,7 +609,7 @@ fn replay(root: &Path, id: &str) -> Result<Option<Replayed>, Diagnostic> {
         }
         let size = usize::try_from(count).map_err(|_| invalid())?;
         let mut bytes = Vec::new();
-        bytes.try_reserve_exact(size).map_err(|_| io_error())?;
+        bytes.try_reserve_exact(size).map_err(|e| io_error().with_cause(&e))?;
         bytes.resize(size, 0);
         input.read_exact(&mut bytes).map_err(|_| invalid())?;
         let digest = sha256(&bytes);
@@ -601,7 +755,7 @@ impl Writer {
         manifest: &Manifest,
     ) -> Result<Self, Diagnostic> {
         let (log_path, tip_path, views_path) = paths(root, &journal.run_id)?;
-        fs::create_dir_all(directory(root, &journal.run_id)?).map_err(|_| io_error())?;
+        fs::create_dir_all(directory(root, &journal.run_id)?).map_err(|e| io_error().with_cause(&e))?;
         let recovered = match replay(root, &journal.run_id)? {
             Some(state) => state,
             None => {
@@ -636,15 +790,15 @@ impl Writer {
                 let staged = tempfile::Builder::new()
                     .prefix(".checkpoint-v2-stage-")
                     .tempdir_in(&run_dir)
-                    .map_err(|_| io_error())?;
+                    .map_err(|e| io_error().with_cause(&e))?;
                 atomic_write(&staged.path().join("state.log"), &bytes)?;
                 atomic_write(&staged.path().join("tip.json"), &encoded(&tip)?)?;
                 let staged = staged.keep();
-                fs::rename(&staged, destination).map_err(|_| io_error())?;
+                fs::rename(&staged, destination).map_err(|e| io_error().with_cause(&e))?;
                 #[cfg(not(target_os = "windows"))]
                 File::open(&run_dir)
                     .and_then(|file| file.sync_all())
-                    .map_err(|_| io_error())?;
+                    .map_err(|e| io_error().with_cause(&e))?;
                 Replayed {
                     snapshot,
                     tip,
@@ -659,14 +813,14 @@ impl Writer {
             .read(true)
             .write(true)
             .open(&log_path)
-            .map_err(|_| io_error())?;
+            .map_err(|e| io_error().with_cause(&e))?;
         if recovered.trailing != 0 {
             // Only bytes beyond the independently synchronized acknowledgement tip
             // are uncommitted. Preserve them before removing them from this stream.
             log.seek(SeekFrom::Start(recovered.tip.end))
-                .map_err(|_| io_error())?;
+                .map_err(|e| io_error().with_cause(&e))?;
             let mut abandoned = Vec::new();
-            log.read_to_end(&mut abandoned).map_err(|_| io_error())?;
+            log.read_to_end(&mut abandoned).map_err(|e| io_error().with_cause(&e))?;
             let tail = confined(
                 root,
                 &format!(
@@ -678,9 +832,9 @@ impl Writer {
             atomic_write(&tail, &abandoned)?;
             log.set_len(recovered.tip.end)
                 .and_then(|_| log.sync_all())
-                .map_err(|_| io_error())?;
+                .map_err(|e| io_error().with_cause(&e))?;
         }
-        log.seek(SeekFrom::End(0)).map_err(|_| io_error())?;
+        log.seek(SeekFrom::End(0)).map_err(|e| io_error().with_cause(&e))?;
         Ok(Self {
             root: root.to_path_buf(),
             log,
@@ -712,10 +866,14 @@ impl Writer {
         if !self.state.same_scope(journal) {
             return Err(invalid());
         }
-        let changes = Changes {
+        let mut changes = Changes {
             journal: JournalDelta::between(&self.state.journal, journal),
             manifest: ManifestDelta::between(&self.state.manifest, manifest),
         };
+        // The saved manifest mirrors the journal's reference index. Recording no
+        // longer clones the whole index into the in-memory manifest per artifact.
+        changes.manifest.references =
+            ReferenceChanges::between(&self.state.manifest.references, &journal.references);
         if changes.journal.is_empty() && changes.manifest.is_empty() {
             return Ok(());
         }
@@ -754,7 +912,7 @@ impl Writer {
         self.log
             .write_all(&bytes)
             .and_then(|_| self.log.sync_all())
-            .map_err(|_| io_error())?;
+            .map_err(|e| io_error().with_cause(&e))?;
         self.point("afterLogSync")?;
         atomic_write(&self.tip_path, &encoded(&tip)?)?;
         self.point("afterTipCommit")?;
@@ -815,7 +973,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "schemaVersion":1,"runId":"a016b898-83c7-42a5-8566-a3d4d21b0db6",
             "requestId":"checkpoint-fixture","endpoint":"https://fixture.invalid/",
-            "company":"fixture","caller":"fixture","scope":"fullBackup","categories":["C02"],
+            "company":"fixture","caller":"fixture","scope":"fullBackup","categories":["ud-schema"],
             "pluginHashes":{},"settings":OperatingSettings::default(),"phase":"acquiring",
             "artifacts":[],"diagnostics":[],"pendingFiles":[],"cursors":{}
         }))
@@ -836,7 +994,7 @@ mod tests {
     fn artifact(index: usize) -> Artifact {
         Artifact {
             identity: Identity {
-                category: "C02".into(),
+                category: "ud-schema".into(),
                 kind: "fixture".into(),
                 scope: herbert_contract::Scope::Company {
                     company: "fixture".into(),
@@ -947,9 +1105,9 @@ mod tests {
         let before = fs::read(&journal_path).unwrap();
         add(&mut j, &mut m, 1);
         j.discovered
-            .insert("C02".into(), vec![j.artifacts[0].identity.clone()]);
-        j.cursors.insert("C02".into(), "next-page".into());
-        j.discovery_finished.insert("C02".into(), false);
+            .insert("ud-schema".into(), vec![j.artifacts[0].identity.clone()]);
+        j.cursors.insert("ud-schema".into(), "next-page".into());
+        j.discovery_finished.insert("ud-schema".into(), false);
         writer.checkpoint(&j, &m).unwrap();
         assert!(
             loaded(dir.path(), &j.run_id)
@@ -1258,6 +1416,7 @@ mod tests {
                 transitions: vec!["reserved".into()],
                 package_sha256: None,
                 frozen_package: None,
+                authorization: None,
             });
         j.access_leases.push(crate::access::AccessLease {
             schema_version: 1,
@@ -1269,6 +1428,7 @@ mod tests {
             artifact: id.clone(),
             group: "owned-group".into(),
             native_policy: "fixture".into(),
+            authorization: None,
             state: "grantPending".into(),
             existed_before: false,
             membership_added: false,
@@ -1296,20 +1456,20 @@ mod tests {
                 role: "derived".into(),
             }],
         );
-        j.plugin_hashes.insert("C02".into(), "fixture-hash".into());
+        j.plugin_hashes.insert("ud-schema".into(), "fixture-hash".into());
         j.plugin_settings
-            .insert("C02".into(), serde_json::json!({"enabled":true}));
-        j.plugin_selection_contracts.insert("C02".into(), serde_json::json!([
+            .insert("ud-schema".into(), serde_json::json!({"enabled":true}));
+        j.plugin_selection_contracts.insert("ud-schema".into(), serde_json::json!([
             {"kind":"filter","key":"prefix","description":"Literal matching contract fixture-v1"}
         ]));
-        j.discovered.insert("C02".into(), vec![id.clone()]);
+        j.discovered.insert("ud-schema".into(), vec![id.clone()]);
         j.targets.push(id.clone());
         j.references
             .push(serde_json::json!({"source":id,"reference":"fixture"}));
         m.references = j.references.clone();
         j.category_outcomes
-            .insert("C02".into(), "discovered".into());
-        j.discovery_finished.insert("C02".into(), true);
+            .insert("ud-schema".into(), "discovered".into());
+        j.discovery_finished.insert("ud-schema".into(), true);
         j.settings.concurrency = 2;
         let mut diagnostic = error("FIXTURE", "Safe public explanation");
         diagnostic.native_details = Some(serde_json::json!({"secret":"must-not-persist-fixture"}));
@@ -1551,6 +1711,125 @@ mod tests {
             "replaySeconds":replay_seconds,"transactions":writer.tip.sequence})
         );
     }
+    #[test]
+    fn list_mapping_appends_tails_and_reads_legacy_records() {
+        let key = |k: &str| k.to_string();
+        let before = BTreeMap::from([(key("a"), vec![1, 2]), (key("b"), vec![5]), (key("gone"), vec![0])]);
+        let after = BTreeMap::from([(key("a"), vec![1, 2, 3, 4]), (key("b"), vec![6]), (key("new"), vec![7])]);
+        let change = ListMapping::between(&before, &after).unwrap();
+        assert_eq!(change.append.keys().collect::<Vec<_>>(), ["a"]);
+        assert_eq!(change.append["a"].items, [3, 4]);
+        assert_eq!(change.put.keys().collect::<Vec<_>>(), ["b", "new"]);
+        let mut actual = before.clone();
+        change.apply(&mut actual).unwrap();
+        assert_eq!(actual, after);
+        // A tail recorded against a different length is never applied.
+        let stale = ListMapping::<i32> { remove: vec![], put: BTreeMap::new(),
+            append: BTreeMap::from([(key("a"), ListAppend { before_len: 9, items: vec![1] })]) };
+        assert!(stale.apply(&mut actual.clone()).is_err());
+        // Records written before `append` existed replay unchanged.
+        let legacy: ListMapping<i32> = serde_json::from_value(serde_json::json!({"remove":["a"],"put":{"c":[1]}})).unwrap();
+        let mut target = BTreeMap::from([(key("a"), vec![1])]);
+        legacy.apply(&mut target).unwrap();
+        assert_eq!(target, BTreeMap::from([(key("c"), vec![1])]));
+    }
+
+    /// 50 discovery pages of 100 identities: the log grows with each page, not
+    /// with the cumulative list. `old` is what the previous whole-list record
+    /// would have written for the same pages.
+    #[test]
+    fn multi_page_discovery_logs_only_each_page() {
+        let (dir, mut j, m, mut writer) = fixture();
+        let start = writer.tip.end;
+        let mut old = 0usize;
+        for page in 0..50 {
+            let before = j.discovered.clone();
+            let list = j.discovered.entry("fixture".into()).or_default();
+            list.extend((0..100).map(|i| artifact(page * 100 + i).identity));
+            old += serde_json::to_vec(&Mapping::between(&before, &j.discovered).unwrap()).unwrap().len();
+            writer.checkpoint(&j, &m).unwrap();
+        }
+        let new = (writer.tip.end - start) as usize;
+        drop(writer);
+        assert_eq!(loaded(dir.path(), &j.run_id).journal.discovered, j.discovered);
+        eprintln!("MEASURE discovery 50x100 logBytes old={old} new={new}");
+        assert!(new * 10 < old, "old {old} new {new}");
+    }
+
+    /// Paced artifact records are saved only on the schedule or by an explicit
+    /// save; an unsaved record is simply absent after a crash (and collected again).
+    #[test]
+    fn paced_artifact_records_survive_only_once_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = crate::storage::new_journal("paced-crash".into());
+        let mut storage = crate::storage::Storage::open(dir.path(), false, j.clone()).unwrap();
+        storage.record_artifact(artifact(0)).unwrap();
+        for index in 1..=20 { storage.record_artifact_paced(artifact(index)).unwrap(); }
+        assert_eq!(storage.journal.artifacts.len(), 21);
+        drop(storage); // abrupt: no further save
+        assert_eq!(loaded(dir.path(), &j.run_id).journal.artifacts.len(), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let j = crate::storage::new_journal("paced-save".into());
+        let mut storage = crate::storage::Storage::open(dir.path(), false, j.clone()).unwrap();
+        for index in 0..=20 { storage.record_artifact_paced(artifact(index)).unwrap(); }
+        storage.checkpoint_all().unwrap();
+        drop(storage);
+        let restored = loaded(dir.path(), &j.run_id);
+        assert_eq!(restored.journal.artifacts.len(), 21);
+        assert_eq!(restored.manifest.artifacts.len(), 21);
+    }
+
+    /// Phase flips no longer rewrite the journal and manifest views; a terminal
+    /// phase still does, because recovery requires current views for it.
+    #[test]
+    fn progress_phases_do_not_rewrite_views_but_terminal_phases_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = crate::storage::new_journal("phase-views".into());
+        let mut storage = crate::storage::Storage::open(dir.path(), false, j.clone()).unwrap();
+        let view = directory(dir.path(), &j.run_id).unwrap().join("journal.json");
+        let stamp = || fs::read(&view).unwrap();
+        let first = stamp();
+        for (index, phase) in ["discovering", "acquiring", "discovering"].into_iter().enumerate() {
+            storage.journal.phase = phase.into();
+            storage.record_artifact(artifact(index)).unwrap();
+        }
+        assert_eq!(stamp(), first);
+        storage.journal.phase = "completed".into();
+        storage.checkpoint().unwrap();
+        assert_ne!(stamp(), first);
+    }
+
+    #[test]
+    #[ignore = "Measurement: per-artifact saves and per-page view rewrites against the paced path"]
+    fn measure_streamed_records_and_phase_flips() {
+        for (total, paced) in [(1_000, false), (1_000, true), (2_000, false), (2_000, true), (5_000, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut storage = crate::storage::Storage::open(dir.path(), false, crate::storage::new_journal("measure".into())).unwrap();
+            let started = std::time::Instant::now();
+            for index in 0..total {
+                if paced { storage.record_artifact_paced(artifact(index)).unwrap(); }
+                else { storage.record_artifact(artifact(index)).unwrap(); }
+            }
+            storage.checkpoint_all().unwrap();
+            eprintln!("MEASURE streamed records={total} paced={paced} elapsedMs={}", started.elapsed().as_millis());
+        }
+        // 50 pages over a 5,000-artifact run, each flipping the phase twice.
+        for rewrite in [true, false] {
+            let (_dir, mut j, mut m, mut writer) = fixture();
+            for index in 0..5_000 { add(&mut j, &mut m, index); }
+            writer.checkpoint(&j, &m).unwrap();
+            let started = std::time::Instant::now();
+            for page in 0..50 {
+                for phase in ["discovering", "acquiring"] {
+                    j.phase = phase.into();
+                    j.discovered.entry("fixture".into()).or_default().push(artifact(10_000 + page).identity);
+                    writer.checkpoint(&j, &m).unwrap();
+                    if rewrite { writer.materialize().unwrap(); }
+                }
+            }
+            eprintln!("MEASURE phase flips pages=50 artifacts=5000 rewriteViews={rewrite} elapsedMs={}", started.elapsed().as_millis());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1610,5 +1889,28 @@ mod reference_delta_tests {
             append: vec![],
         });
         assert!(bad.apply(&mut replay).is_err());
+    }
+    #[test]
+    fn sorted_index_inserts_and_removals_save_only_the_moved_entries() {
+        let entry = |i: usize, n: usize| json!({"identity":format!("t{i:04}"),"occurrences":(0..n).map(|s|json!({"source":s,"path":"retained source reference"})).collect::<Vec<_>>()});
+        let before = (0..1000).step_by(2).map(|i| entry(i, 50)).collect::<Vec<_>>();
+        let mut after = before.clone();
+        after.remove(400); // an identity whose occurrences emptied
+        after.insert(11, entry(21, 1)); // a new identity mid-index
+        after[300]["occurrences"].as_array_mut().unwrap().push(json!({"source":99}));
+        after.insert(1, entry(1, 1));
+        let patch = ReferenceChanges::between(&before, &after).unwrap();
+        let bytes = encoded(&patch).unwrap();
+        assert!(bytes.len() < 1000, "Only moved entries are stored, not the index tail: {}", bytes.len());
+        let mut replay = before.clone();
+        serde_json::from_slice::<ReferenceChanges>(&bytes).unwrap().apply(&mut replay).unwrap();
+        assert_eq!(replay, after);
+        // Unsorted lists still replay exactly, just less compactly.
+        let shuffled = after.iter().rev().cloned().collect::<Vec<_>>();
+        let mut replay = before.clone();
+        ReferenceChanges::between(&before, &shuffled).unwrap().apply(&mut replay).unwrap();
+        assert_eq!(replay, shuffled);
+        let bad = ReferenceChanges::Edit(ReferenceEdit { before_len: 2, removed: vec![1, 1], changed: vec![], inserted: vec![] });
+        assert!(bad.apply(&mut vec![json!(1), json!(2)]).is_err());
     }
 }

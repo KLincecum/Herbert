@@ -91,7 +91,7 @@ fn flat_xml(text: &str) -> Result<Value, Diagnostic> {
             }
             Ok(Event::DocType(_)) => {
                 return Err(invalid(
-                    "Document types are not part of the native report XML format.",
+                    "Document types are not part of the Epicor report XML format.",
                 ));
             }
             Ok(Event::Eof) => break,
@@ -235,10 +235,10 @@ mod tests {
             let mut r = GuestRequest {
                 abi: PLUGIN_ABI,
                 operation: "acquire".into(),
-                category: "C16".into(),
+                category: "report-definitions".into(),
                 company: "C".into(),
                 identity: Some(Identity {
-                    category: "C16".into(),
+                    category: "report-definitions".into(),
                     kind: "ReportDataDefinition".into(),
                     scope: Scope::Global,
                     keys: std::collections::BTreeMap::from([("RptDefID".into(), "Custom".into())]),

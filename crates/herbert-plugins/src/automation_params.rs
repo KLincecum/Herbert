@@ -245,7 +245,7 @@ pub fn complete(r: &mut GuestRequest) -> Option<HostAction> {
         issue(
             r,
             "PROCESS_PARAMETERS_INCOMPLETE",
-            "The process-parameter response has an unsupported continuation.",
+            "The process-parameter response has an unsupported resume point.",
         );
     }
     None
@@ -304,10 +304,10 @@ mod tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C25".into(),
+            category: "automation-and-integrations".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C25".into(),
+                category: "automation-and-integrations".into(),
                 kind: "ProcessSet".into(),
                 scope: Scope::Company {
                     company: "C".into(),

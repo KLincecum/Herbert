@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 pub fn supported(category: &str) -> bool {
     super::families::supported(category)
         || super::tables::supported(category)
-        || matches!(category, "C12" | "C13" | "C27")
+        || matches!(category, "kinetic-applications-and-layers" | "kinetic-personalizations" | "configuration-references")
 }
 
 #[cfg(test)]
@@ -14,7 +14,7 @@ mod report_discovery_continuation_tests {
     #[test]
     fn kinetic_persisted_source_failure_does_not_suppress_native_application_discovery() {
         let mut r = request();
-        r.category = "C12".into();
+        r.category = "kinetic-applications-and-layers".into();
         r.cursor = Some(json!({"source":"tables","cursor":null}).to_string());
         r.response = Some(json!({"malformed":"no inventory rows"}));
         let reply = handle(r.clone());
@@ -52,7 +52,7 @@ mod report_discovery_continuation_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -181,7 +181,7 @@ mod report_discovery_continuation_tests {
         let mut r = request();
         r.operation = "acquire".into();
         r.identity = Some(Identity {
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             kind: "CurrentCustomReportPackage".into(),
             scope: Scope::Global,
             keys: std::collections::BTreeMap::from([(
@@ -198,7 +198,7 @@ mod report_discovery_continuation_tests {
 }
 pub fn methods(category: &str) -> Vec<(String, String)> {
     let mut reads = super::families::methods(category);
-    if category == "C19" {
+    if category == "configurators" {
         reads.extend([
             ("Ice.Lib.SessionModSvc".into(), "GetLicensedModuleAccess".into()),
             ("Erp.BO.ErpMetaFxSvc".into(), "ExportApp".into()),
@@ -207,20 +207,24 @@ pub fn methods(category: &str) -> Vec<(String, String)> {
             ("Ice.BO.DynamicQuerySvc".into(), "Execute".into()),
         ]);
     }
-    if category == "C18" {
+    if category == "extended-properties" {
+        // Direct only reads ZDataField overrides with an unsaved DynamicQuery (authored_schema::direct_action).
+        reads.push(("Ice.BO.DynamicQuerySvc".into(), "Execute".into()));
+    }
+    if category == "report-behavior" {
         reads
             .extend(["ExportReportStyle"].map(|method| ("Ice.BO.ReportSvc".into(), method.into())));
     }
-    if matches!(category, "C12" | "C13") {
+    if matches!(category, "kinetic-applications-and-layers" | "kinetic-personalizations") {
         reads.extend(super::kinetic::methods());
     }
-    if category == "C22" {
+    if category == "programs-and-extensions" {
         reads.extend(super::external_references::methods());
     }
-    if category == "C21" {
+    if category == "custom-resources" {
         reads.extend(super::file_store_resources::methods());
     }
-    if category == "C24" {
+    if category == "solutions-and-packages" {
         reads.extend(super::retained_solutions::methods());
     }
     reads.sort();
@@ -229,7 +233,7 @@ pub fn methods(category: &str) -> Vec<(String, String)> {
 }
 fn sources(category: &str) -> Vec<&'static str> {
     let mut sources = Vec::new();
-    if category == "C17" {
+    if category == "report-styles-and-layouts" {
         sources.push("currentReports");
     }
     if super::families::supported(category) {
@@ -238,22 +242,40 @@ fn sources(category: &str) -> Vec<&'static str> {
     if super::tables::supported(category) {
         sources.push("tables");
     }
-    if matches!(category, "C12" | "C13") {
+    if matches!(category, "kinetic-applications-and-layers" | "kinetic-personalizations") {
         sources.push("kinetic");
     }
-    if category == "C22" {
+    if category == "programs-and-extensions" {
         sources.push("externals");
     }
-    if category == "C21" {
+    if category == "custom-resources" {
         sources.push("resources");
     }
-    if category == "C24" {
+    if category == "solutions-and-packages" {
         sources.push("retainedSolutions");
     }
     sources
 }
+/// Host-supplied context carried into a collector's inner continuation. A key missing here is silently
+/// dropped for every inner request (the 2024.2 configurator separator depended on `_hostServerVersion`).
+const INNER_HOST_CONTEXT: [&str; 12] = ["_pluginSettings", "_pluginState", "_inventory", "_streamInput", "_collectionMethod",
+    "_hostSettings", "_serverConcurrency", "_hostRunId", "_hostTransferId", "_hostUtilityOperations", "_hostPreparePage",
+    "_hostServerVersion"];
+/// The collector's inner continuation state, keeping the host capability context.
+fn continuation_state(state: &Value) -> Value {
+    let mut inner = state.get("inner").cloned().unwrap_or(Value::Null);
+    for key in INNER_HOST_CONTEXT {
+        if let Some(value) = state.get(key) {
+            if !inner.is_object() {
+                inner = json!({});
+            }
+            inner[key] = value.clone();
+        }
+    }
+    inner
+}
 pub fn handle(mut request: GuestRequest) -> GuestReply {
-    if crate::category_enabled("C27") && request.category == "C27" {
+    if crate::category_enabled("configuration-references") && request.category == "configuration-references" {
         return super::references::handle(request);
     }
     let selected = sources(&request.category);
@@ -264,7 +286,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         .transpose()
     {
         Ok(c) => c.unwrap_or(json!({"source":selected.first(),"cursor":null})),
-        Err(_) => return super::failure("INVALID_CURSOR", "The category continuation is invalid."),
+        Err(_) => return super::failure("INVALID_CURSOR", "The category resume point is invalid."),
     };
     let source = if request.operation == "materialize" {
         request.state.get("source").and_then(Value::as_str).unwrap_or("")
@@ -326,21 +348,9 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         .get("_hostCaller")
         .cloned()
         .unwrap_or(Value::Null);
-    // Keep host capability context when entering a collector's inner continuation.
-    let settings = ["_pluginSettings", "_pluginState", "_inventory", "_streamInput", "_collectionMethod",
-        "_hostSettings", "_serverConcurrency", "_hostRunId", "_hostTransferId", "_hostUtilityOperations", "_hostPreparePage"]
-        .into_iter()
-        .filter_map(|key| request.state.get(key).cloned().map(|value| (key, value)))
-        .collect::<Vec<_>>();
-    request.state = request.state.get("inner").cloned().unwrap_or(Value::Null);
-    for (key, value) in settings {
-        if !request.state.is_object() {
-            request.state = json!({});
-        }
-        request.state[key] = value;
-    }
+    request.state = continuation_state(&request.state);
     if source == "kinetic"
-        || (source == "tables" && matches!(request.category.as_str(), "C12" | "C13"))
+        || (source == "tables" && matches!(request.category.as_str(), "kinetic-applications-and-layers" | "kinetic-personalizations"))
     {
         if !request.state.is_object() {
             request.state = json!({});
@@ -349,19 +359,19 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     }
     let discovery = request.operation == "discover";
     let reply = match source {
-        "currentReports" if crate::category_enabled("C17") => super::report_store::handle(request),
+        "currentReports" if crate::category_enabled("report-styles-and-layouts") => super::report_store::handle(request),
         "native" => super::families::handle(request),
         "tables" => super::tables::handle(request),
-        "kinetic" if crate::category_enabled("C12") || crate::category_enabled("C13") => {
+        "kinetic" if crate::category_enabled("kinetic-applications-and-layers") || crate::category_enabled("kinetic-personalizations") => {
             super::kinetic::handle(request)
         }
-        "externals" if crate::category_enabled("C22") => {
+        "externals" if crate::category_enabled("programs-and-extensions") => {
             super::external_references::handle(request)
         }
-        "resources" if crate::category_enabled("C21") => {
+        "resources" if crate::category_enabled("custom-resources") => {
             super::file_store_resources::handle(request)
         }
-        "retainedSolutions" if crate::category_enabled("C24") => {
+        "retainedSolutions" if crate::category_enabled("solutions-and-packages") => {
             super::retained_solutions::handle(request)
         }
         _ => unreachable!(),
@@ -452,6 +462,16 @@ fn wrap_reply(reply: GuestReply, selected: &[&str], source: &str, discovery: boo
 mod prepared_source_tests {
     use super::*;
     #[test]
+    fn inner_continuations_keep_the_server_version_for_version_specific_native_forms() {
+        // Configurators writes 2024.2's native "pages\X" app keys only if this reaches the inner acquisition.
+        let state = json!({"inner":{"phase":"configLocalApp"},"_hostServerVersion":"11.3.200.39","_pluginSettings":{},"source":"native"});
+        let inner = continuation_state(&state);
+        assert_eq!(inner, json!({"phase":"configLocalApp","_hostServerVersion":"11.3.200.39","_pluginSettings":{}}));
+        assert_eq!(crate::configurator_app::native_separator(inner["_hostServerVersion"].as_str()), '\\');
+        // A first step (no saved continuation yet) still receives it.
+        assert_eq!(continuation_state(&json!({"_hostServerVersion":"12.2.100.9"}))["_hostServerVersion"], "12.2.100.9");
+    }
+    #[test]
     fn prepared_page_keeps_materialization_source_and_separates_next_source_state() {
         for next in [None, Some("page-two".to_string())] {
             let reply = wrap_reply(GuestReply::PreparedPage {
@@ -477,7 +497,7 @@ mod prepared_source_tests {
     #[test]
     fn materialization_without_a_known_saved_source_is_rejected() {
         let request = GuestRequest {
-            abi: PLUGIN_ABI, operation: "materialize".into(), category: "C19".into(),
+            abi: PLUGIN_ABI, operation: "materialize".into(), category: "configurators".into(),
             company: "C".into(), identity: None, cursor: None, page_size: Some(10),
             state: json!({"source":"unknown"}), response: None, error: None,
         };
@@ -494,10 +514,10 @@ mod posting_read_tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C20".into(),
+            category: "business-rules-and-mappings".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C20".into(),
+                category: "business-rules-and-mappings".into(),
                 kind: "PostingRules".into(),
                 scope: Scope::Company {
                     company: "C".into(),
@@ -579,7 +599,7 @@ mod posting_read_tests {
     #[test]
     fn posting_uses_pure_queries_and_keeps_all_revisions_books_and_raw_source() {
         assert!(
-            methods("C20")
+            methods("business-rules-and-mappings")
                 .iter()
                 .all(|(service, _)| service != "Erp.BO.ACTTypeSvc")
         );
@@ -632,10 +652,10 @@ mod structured_output_read_tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C20".into(),
+            category: "business-rules-and-mappings".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C20".into(),
+                category: "business-rules-and-mappings".into(),
                 kind: "StructuredOutput".into(),
                 scope: if company.is_empty() {
                     Scope::Global
@@ -764,12 +784,12 @@ mod structured_output_read_tests {
     #[test]
     fn structured_output_preserves_global_and_company_source_without_read_hooks() {
         assert!(
-            methods("C20")
+            methods("business-rules-and-mappings")
                 .iter()
                 .all(|(s, _)| s != "Ice.BO.StructuredOutputDefinitionSvc")
         );
         assert!(
-            methods("C20")
+            methods("business-rules-and-mappings")
                 .iter()
                 .any(|(s, m)| s == "Ice.BO.InfoPromptFormSvc" && m == "GetByID")
         );
@@ -856,8 +876,8 @@ mod automation_filter_continuation_tests {
  #[test]
  fn public_dispatch_keeps_effective_filter_through_native_and_parameter_phases(){
   for enabled in [false,true]{
-   let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"acquire".into(),category:"C25".into(),company:"C".into(),identity:Some(Identity{category:"C25".into(),kind:"ProcessSet".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("SystemCode".into(),"ERP".into()),("ProcessID".into(),"Owned".into())])}),cursor:None,page_size:Some(2),state:json!({}),response:None,error:None};
-   let call=|r:&mut GuestRequest|{r.state["_pluginSettings"]=json!({"filterSensitiveFields":enabled});r.state["_pluginState"]=json!({"config":{"filterSensitiveFields":!enabled}});serde_json::from_slice::<GuestReply>(&crate::dispatch("C25",&serde_json::to_vec(r).unwrap())).unwrap()};
+   let mut r=GuestRequest{abi:PLUGIN_ABI,operation:"acquire".into(),category:"automation-and-integrations".into(),company:"C".into(),identity:Some(Identity{category:"automation-and-integrations".into(),kind:"ProcessSet".into(),scope:Scope::Company{company:"C".into()},keys:BTreeMap::from([("Company".into(),"C".into()),("SystemCode".into(),"ERP".into()),("ProcessID".into(),"Owned".into())])}),cursor:None,page_size:Some(2),state:json!({}),response:None,error:None};
+   let call=|r:&mut GuestRequest|{r.state["_pluginSettings"]=json!({"filterSensitiveFields":enabled});r.state["_pluginState"]=json!({"config":{"filterSensitiveFields":!enabled}});serde_json::from_slice::<GuestReply>(&crate::dispatch("automation-and-integrations",&serde_json::to_vec(r).unwrap())).unwrap()};
    let GuestReply::Action{action:HostAction::NativeRead{service,..},state}=call(&mut r)else{panic!("expected native visibility read")};assert_eq!(service,"Ice.BO.ProcessSetSvc");assert_eq!(state["filter"],enabled);r.state=state;
    let parent=json!({"Company":"C","SystemCode":"ERP","ProcessID":"Owned","SystemFlag":false,"SysRowID":"root","SysRevID":1});
    let task=json!({"Company":"C","SystemCode":"ERP","ProcessID":"Owned","SysTaskNum":7,"History":false,"SystemFlag":false,"SysRowID":"task","SysRevID":2});

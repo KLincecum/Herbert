@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 
 ROOT = Path(__file__).resolve().parent
-PLUGIN = ROOT.parents[1] / "crates/herbert-plugins/packages/c03/artifacts"
+PLUGIN = ROOT.parents[1] / "crates/herbert-plugins/packages/extended-properties/artifacts"
 
 
 def build() -> None:
@@ -16,9 +16,9 @@ def build() -> None:
             raise ValueError("The package must retain its target-native release stamp.")
         functions = package["Library"]["Functions"]
         if len(functions) != 1 or functions[0]["FunctionID"] != "ReadAllProperties":
-            raise ValueError("C03 must contain one ReadAllProperties Function.")
+            raise ValueError("Extended properties must contain one ReadAllProperties Function.")
         functions[0]["Body"] = json.dumps({"Code": code, "Usings": ""})
-        # Preserve the exact qualified 4.3 payload and existing later-package bytes.
+        # Preserve the exact tested 4.3 payload and existing later-package bytes.
         payload = (json.dumps(package, separators=(",", ":")) if version == "4.3.200"
                    else json.dumps(package, indent=2) + "\n")
         for destination in (ROOT / name, PLUGIN / name):

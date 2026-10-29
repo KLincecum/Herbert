@@ -58,49 +58,49 @@ fn discovery_contains_identity(category:&str,selection:&BTreeMap<String,Selectio
     // a similarly named key is not evidence that its values are discovery IDs.
     // Composite identity keys and scope remain intact in Exact target sets.
     let (family, prefixes):(&str,&[(&str,&str)])=match (category,id.kind.as_str()) {
-        ("C01","UDCodeType")=>("",&[("codeTypeIdPrefix","CodeTypeID")]),
-        ("C02","UDTableSchema")=>("schema",&[("schemaTableIdPrefix","DataTableID")]),
-        ("C02","UDMapping")=>("mappings",&[]),
-        ("C03","ExtendedTableProperties")=>("",&[("tableIdPrefix","DataTableID")]),
-        ("C04","BAQ"|"UBAQ")=>("",&[("queryIdPrefix","QueryID")]),
-        ("C06","MethodDirectiveGroup")=>("method",&[("methodCodePrefix","BpMethodCode")]),
-        ("C06","DataDirectiveGroup")=>("data",&[("methodCodePrefix","BpMethodCode")]),
-        ("C08","EfxLibrary")=>("",&[("libraryIdPrefix","LibraryID")]),
-        ("C09","PersistedXXXDef")=>("",&[("layerNamePrefix","Key1"),("formNamePrefix","Key2")]),
-        ("C10","PersistedXXXDef")=>("",&[("userIdPrefix","Key1"),("formNamePrefix","Key2")]),
-        ("C11","PersistedDashBdDef")=>("",&[("dashboardIdPrefix","DefinitionID")]),
-        ("C12","KineticApplicationBundle")=>("",&[("applicationIdPrefix","ViewId")]),
-        ("C13","PersistedXXXDef"|"PersistedKineticPersonalization"|"PersistedShellLayout"|"PersistedShellLayoutPersonal"|"PersistedHomeUserOption"|"PersistedFavFolder"|"PersistedFavItems")=>("",&[("userIdPrefix","$personalOwner")]),
-        ("C14","PersistedQuickSearch")=>("$quickOrPredictive",&[("searchIdPrefix","QuickSearchID")]),
-        ("C14","PersistedNamedSearch")=>("namedSearch",&[("searchIdPrefix","NSId")]),
-        ("C14","PersistedESSearch")=>("enterpriseSearch",&[("searchIdPrefix","SearchID")]),
-        ("C14","PersistedContextMenuXml")=>("savedContextMenu",&[]),
-        ("C14","PersistedContextMenu")=>("legacyContextMenu",&[]),
-        ("C15","PersistedMenu")=>("",&[("menuIdPrefix","MenuID")]),
-        ("C16","ReportDataDefinition")=>("reportData",&[("definitionIdPrefix","RptDefID")]),
-        ("C16","BAQReport")=>("baqReports",&[("definitionIdPrefix","BAQRptID")]),
-        ("C17","ReportStyle")=>("",&[("reportIdPrefix","ReportID")]),
-        ("C17","CurrentCustomReportPackage"|"PersistedReportHistory")=>("",&[("packagePathPrefix","PrintProgram")]),
-        ("C18","ReportBehavior")=>("",&[("reportIdPrefix","ReportID")]),
-        ("C19","Configurator")=>("configurators",&[("definitionIdPrefix","ConfigID")]),
-        ("C19","ConfiguratorLookup")=>("lookups",&[("definitionIdPrefix","LookupTblID")]),
-        ("C19","PersistedPcInputVar"|"PersistedPcMethodVar"|"PersistedPcRuleSet"|"PersistedPcRules"|"PersistedPcRulesExpr")=>("persistedSources",&[]),
-        ("C20","BPMDataForm")=>("forms",&[("definitionIdPrefix","FormId")]),
-        ("C20","StructuredOutput")=>("structuredOutput",&[("definitionIdPrefix","RptStructuredOutputDefID")]),
-        ("C20","PostingRules")=>("postingRules",&[]),
-        ("C22","ServiceDefinition")=>("services",&[("definitionIdPrefix","ClassName")]),
-        ("C22","DatasetDefinition")=>("datasets",&[("definitionIdPrefix","DataSetID")]),
-        ("C22","ExtensionSet")=>("extensions",&[("definitionIdPrefix","ExtensionSetID")]),
-        ("C22","ExternalAssemblyReference")=>("externals",&[("definitionIdPrefix","Name")]),
-        ("C24","PersistedSolutionHeader"|"RetainedInstalledSolution")=>(if id.kind=="PersistedSolutionHeader"{"solutions"}else{"retainedPackages"},&[("solutionIdPrefix","SolutionID")]),
-        ("C24","PersistedSolutionType")=>("solutionTypes",&[]),
-        ("C25","SystemAgent")=>("systemAgents",&[]),
-        ("C25","ProcessSet")=>("processSets",&[]),
-        ("C25","MessageTemplate")=>("messageTemplates",&[]),
-        ("C25","GlobalAlert")=>("globalAlerts",&[]),
-        ("C26","UserAccessAssignment"|"UserCompanyAssignment"|"UserExternalCompanyAssignment")=>("userAssignments",&[("userIdPrefix","UserID")]),
-        ("C26","APIKeyScopeAssignment")=>("apiKeyAssignments",&[]),
-        ("C26","SecurityDefinition"|"ObjectSecurity"|"SecurityGroup"|"ColumnSecurity"|"AccessScope"|"NativeSecuritySourceSupplement"|"NativeAccessSupplementary")=>("definitions",&[]),
+        ("ud-codes","UDCodeType")=>("",&[("codeTypeIdPrefix","CodeTypeID")]),
+        ("ud-schema","UDTableSchema")=>("schema",&[("schemaTableIdPrefix","DataTableID")]),
+        ("ud-schema","UDMapping")=>("mappings",&[]),
+        ("extended-properties","ExtendedTableProperties")=>("",&[("tableIdPrefix","DataTableID")]),
+        ("baqs-and-ubaqs","BAQ"|"UBAQ")=>("",&[("queryIdPrefix","QueryID")]),
+        ("bpm-directives","MethodDirectiveGroup")=>("method",&[("methodCodePrefix","BpMethodCode")]),
+        ("bpm-directives","DataDirectiveGroup")=>("data",&[("methodCodePrefix","BpMethodCode")]),
+        ("functions","EfxLibrary")=>("",&[("libraryIdPrefix","LibraryID")]),
+        ("classic-customizations","PersistedXXXDef")=>("",&[("layerNamePrefix","Key1"),("formNamePrefix","Key2")]),
+        ("classic-personalizations","PersistedXXXDef")=>("",&[("userIdPrefix","Key1"),("formNamePrefix","Key2")]),
+        ("classic-dashboards","PersistedDashBdDef")=>("",&[("dashboardIdPrefix","DefinitionID")]),
+        ("kinetic-applications-and-layers","KineticApplicationBundle")=>("",&[("applicationIdPrefix","ViewId")]),
+        ("kinetic-personalizations","PersistedXXXDef"|"PersistedKineticPersonalization"|"PersistedShellLayout"|"PersistedShellLayoutPersonal"|"PersistedHomeUserOption"|"PersistedFavFolder"|"PersistedFavItems")=>("",&[("userIdPrefix","$personalOwner")]),
+        ("searches-and-navigation","PersistedQuickSearch")=>("$quickOrPredictive",&[("searchIdPrefix","QuickSearchID")]),
+        ("searches-and-navigation","PersistedNamedSearch")=>("namedSearch",&[("searchIdPrefix","NSId")]),
+        ("searches-and-navigation","PersistedESSearch")=>("enterpriseSearch",&[("searchIdPrefix","SearchID")]),
+        ("searches-and-navigation","PersistedContextMenuXml")=>("savedContextMenu",&[]),
+        ("searches-and-navigation","PersistedContextMenu")=>("legacyContextMenu",&[]),
+        ("menus-and-launch-definitions","PersistedMenu")=>("",&[("menuIdPrefix","MenuID")]),
+        ("report-definitions","ReportDataDefinition")=>("reportData",&[("definitionIdPrefix","RptDefID")]),
+        ("report-definitions","BAQReport")=>("baqReports",&[("definitionIdPrefix","BAQRptID")]),
+        ("report-styles-and-layouts","ReportStyle")=>("",&[("reportIdPrefix","ReportID")]),
+        ("report-styles-and-layouts","CurrentCustomReportPackage"|"PersistedReportHistory")=>("",&[("packagePathPrefix","PrintProgram")]),
+        ("report-behavior","ReportBehavior")=>("",&[("reportIdPrefix","ReportID")]),
+        ("configurators","Configurator")=>("configurators",&[("definitionIdPrefix","ConfigID")]),
+        ("configurators","ConfiguratorLookup")=>("lookups",&[("definitionIdPrefix","LookupTblID")]),
+        ("configurators","PersistedPcInputVar"|"PersistedPcMethodVar"|"PersistedPcRuleSet"|"PersistedPcRules"|"PersistedPcRulesExpr")=>("persistedSources",&[]),
+        ("business-rules-and-mappings","BPMDataForm")=>("forms",&[("definitionIdPrefix","FormId")]),
+        ("business-rules-and-mappings","StructuredOutput")=>("structuredOutput",&[("definitionIdPrefix","RptStructuredOutputDefID")]),
+        ("business-rules-and-mappings","PostingRules")=>("postingRules",&[]),
+        ("programs-and-extensions","ServiceDefinition")=>("services",&[("definitionIdPrefix","ClassName")]),
+        ("programs-and-extensions","DatasetDefinition")=>("datasets",&[("definitionIdPrefix","DataSetID")]),
+        ("programs-and-extensions","ExtensionSet")=>("extensions",&[("definitionIdPrefix","ExtensionSetID")]),
+        ("programs-and-extensions","ExternalAssemblyReference")=>("externals",&[("definitionIdPrefix","Name")]),
+        ("solutions-and-packages","PersistedSolutionHeader"|"RetainedInstalledSolution")=>(if id.kind=="PersistedSolutionHeader"{"solutions"}else{"retainedPackages"},&[("solutionIdPrefix","SolutionID")]),
+        ("solutions-and-packages","PersistedSolutionType")=>("solutionTypes",&[]),
+        ("automation-and-integrations","SystemAgent")=>("systemAgents",&[]),
+        ("automation-and-integrations","ProcessSet")=>("processSets",&[]),
+        ("automation-and-integrations","MessageTemplate")=>("messageTemplates",&[]),
+        ("automation-and-integrations","GlobalAlert")=>("globalAlerts",&[]),
+        ("access-and-assignments","UserAccessAssignment"|"UserCompanyAssignment"|"UserExternalCompanyAssignment")=>("userAssignments",&[("userIdPrefix","UserID")]),
+        ("access-and-assignments","APIKeyScopeAssignment")=>("apiKeyAssignments",&[]),
+        ("access-and-assignments","SecurityDefinition"|"ObjectSecurity"|"SecurityGroup"|"ColumnSecurity"|"AccessScope"|"NativeSecuritySourceSupplement"|"NativeAccessSupplementary")=>("definitions",&[]),
         _=>return false,
     };
     selection.iter().all(|(setting,rule)|match rule {
@@ -291,7 +291,7 @@ pub(crate) fn revoke(root: &Path, id: &str) -> Result<Grant, Diagnostic> {
 mod tests {
     use super::*;
     fn scope(prefix:&str) -> MaterialScope {
-        MaterialScope {endpoint:"https://test/".into(),company:"C".into(),principal:"user".into(),capabilities:BTreeMap::from([("C08".into(),Capability{binding:"reader-package-and-declaration".into(),selection:BTreeMap::from([("library".into(),Selection::LiteralPrefix{value:prefix.into(),contract:"literal-case-sensitive-v1".into()}),("compiled".into(),Selection::Included{value:true})]),effects:BTreeMap::from([("helper".into(),json!({"type":"functionLibrary","package":"hash"}))])})] )}
+        MaterialScope {endpoint:"https://test/".into(),company:"C".into(),principal:"user".into(),capabilities:BTreeMap::from([("functions".into(),Capability{binding:"reader-package-and-declaration".into(),selection:BTreeMap::from([("library".into(),Selection::LiteralPrefix{value:prefix.into(),contract:"literal-case-sensitive-v1".into()}),("compiled".into(),Selection::Included{value:true})]),effects:BTreeMap::from([("helper".into(),json!({"type":"functionLibrary","package":"hash"}))])})] )}
     }
     #[test]
     fn narrower_material_scope_reuses_authority_but_expansion_and_package_change_do_not() {
@@ -299,9 +299,9 @@ mod tests {
         assert!(full.contains(&narrow));
         assert!(!full.contains(&scope("ab")));
         assert!(!full.contains(&scope("A")));
-        narrow.capabilities.get_mut("C08").unwrap().selection.insert("compiled".into(),Selection::Included{value:false});
+        narrow.capabilities.get_mut("functions").unwrap().selection.insert("compiled".into(),Selection::Included{value:false});
         assert!(full.contains(&narrow));
-        narrow.capabilities.get_mut("C08").unwrap().binding="new-package".into();
+        narrow.capabilities.get_mut("functions").unwrap().binding="new-package".into();
         assert!(!full.contains(&narrow));
         let mut changed=scope("Ab"); changed.company="other".into(); assert!(!full.contains(&changed));
         changed=scope("Ab"); changed.principal="other".into(); assert!(!full.contains(&changed));

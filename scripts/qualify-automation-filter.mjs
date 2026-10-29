@@ -207,7 +207,7 @@ try {
       if (filtered) {
         successful(
           await client.call("plugin.configure", {
-            category: "C25",
+            category: "automation-and-integrations",
             values: { filterSensitiveFields: true },
           }),
         );
@@ -244,7 +244,7 @@ try {
           requestId: randomUUID(),
           destination,
           outputMode: "separate",
-          categories: ["C25"],
+          categories: ["automation-and-integrations"],
           pageSize: 2,
           temporaryAccess: false,
         }),

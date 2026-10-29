@@ -10,7 +10,7 @@ fn owners() -> Vec<[String; 2]> {
     serde_json::from_str(include_str!("filestore-owner-tables.json")).unwrap()
 }
 pub fn owns(category: &str, kind: &str) -> bool {
-    category == "C21" && kind == KIND
+    category == "custom-resources" && kind == KIND
 }
 pub fn methods() -> Vec<(String, String)> {
     vec![
@@ -51,7 +51,7 @@ fn identity(row: &Value, company: &str) -> Result<Identity, Diagnostic> {
     let actual = row["Company"].as_str().ok_or_else(|| {
         Diagnostic::new(
             "RESOURCE_SCOPE_UNVERIFIED",
-            "A resource lacks native company scope.",
+            "A resource lacks Epicor company scope.",
         )
     })?;
     if !actual.is_empty() && actual != company {
@@ -66,11 +66,11 @@ fn identity(row: &Value, company: &str) -> Result<Identity, Diagnostic> {
     }) {
         return Err(Diagnostic::new(
             "RESOURCE_OWNER_OUTSIDE_SCOPE",
-            "This FileStore owner is outside the reviewed customization definitions.",
+            "This stored file belongs to something other than the customizations being downloaded, so Herbert did not copy it.",
         ));
     }
     Ok(Identity {
-        category: "C21".into(),
+        category: "custom-resources".into(),
         kind: KIND.into(),
         scope: scope(actual),
         keys,
@@ -184,7 +184,7 @@ fn discovery(request: GuestRequest) -> GuestReply {
         Err(_) => {
             return fail(
                 "INVALID_CURSOR",
-                "The resource discovery cursor is invalid.",
+                "The resource discovery saved position is invalid.",
             );
         }
     };
@@ -194,7 +194,7 @@ fn discovery(request: GuestRequest) -> GuestReply {
     let Some(owner) = owners.get(index) else {
         return fail(
             "INVALID_CURSOR",
-            "The resource cursor names an unavailable owner family.",
+            "The resource saved position names an unavailable owner family.",
         );
     };
     let next = || {
@@ -302,7 +302,7 @@ pub(crate) fn validate_bytes(metadata: &Value, response: &Value) -> Vec<Diagnost
     let invalid = || {
         Diagnostic::new(
             "RESOURCE_BYTES_UNVERIFIED",
-            "The native resource bytes, filename, or database byte length do not reconcile.",
+            "The Epicor resource bytes, filename, or database byte length do not reconcile.",
         )
     };
     if response.pointer("/parameters/fileName") != metadata.get("FileName") {
@@ -349,7 +349,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if request.operation != "acquire" {
         return fail(
             "UNSUPPORTED_OPERATION",
-            "The resource collector supports discovery and exact acquisition.",
+            "The resource collector supports discovery and exact download.",
         );
     }
     let Some(id) = request.identity.as_ref() else {
@@ -365,7 +365,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         _ =>
             return fail(
                 "SCOPE_MISMATCH",
-                "FileStore scope must be native company or global scope."
+                "FileStore scope must be Epicor company or global scope."
             ),
     });
     if !owns(&request.category, &id.kind)
@@ -402,7 +402,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     let Some(response) = request.response.as_ref() else {
         return fail(
             "RESOURCE_RESPONSE_MISSING",
-            "A resource acquisition response is absent.",
+            "A resource download response is absent.",
         );
     };
     if phase == "metadata" {
@@ -415,7 +415,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         if rows.len() != 1 || identity(&rows[0], &request.company).ok().as_ref() != Some(id) {
             return fail(
                 "RESOURCE_IDENTITY_MISMATCH",
-                "The native resource metadata no longer matches its full identity.",
+                "The Epicor resource metadata no longer matches its full identity.",
             );
         }
         if crate::system_artifacts::marked(&rows[0]) {
@@ -449,7 +449,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         else {
             return fail(
                 "RESOURCE_OWNER_UNVERIFIED",
-                "The native owner dictionary omitted its field list.",
+                "The Epicor owner dictionary omitted its field list.",
             );
         };
         let names: BTreeSet<_> = columns
@@ -459,7 +459,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         if !names.contains("SysRowID") {
             return fail(
                 "RESOURCE_OWNER_UNVERIFIED",
-                "The native owner table has no stable row identity.",
+                "The Epicor owner table has no stable row identity.",
             );
         }
         let mut state = request.state.clone();
@@ -476,7 +476,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let Some(rows) = response["rows"].as_array() else {
             return fail(
                 "RESOURCE_OWNER_UNVERIFIED",
-                "The native owner query omitted rows.",
+                "The Epicor owner query omitted rows.",
             );
         };
         let mut state = request.state.clone();
@@ -520,7 +520,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         {
             return fail(
                 "RESOURCE_OWNER_UNVERIFIED",
-                "The native owner query did not reconcile the exact declared owner.",
+                "The Epicor owner query did not reconcile the exact declared owner.",
             );
         }
         if request.state["ownerFields"]
@@ -536,7 +536,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         {
             return fail(
                 "RESOURCE_OWNER_UNVERIFIED",
-                "The native owner row omitted a declared ownership field.",
+                "The Epicor owner row omitted a declared ownership field.",
             );
         }
         if rows.iter().any(crate::system_artifacts::marked) {
@@ -577,7 +577,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     }
     fail(
         "INVALID_PLUGIN_STATE",
-        "The FileStore resource checkpoint is invalid.",
+        "The FileStore resource saved progress is invalid.",
     )
 }
 // Match owner metadata to resources in pages. Each owner family and company
@@ -702,7 +702,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C21".into(),
+            category: "custom-resources".into(),
             company: "C".into(),
             identity: Some(identity(&metadata, "C").unwrap()),
             cursor: None,
@@ -771,7 +771,7 @@ mod tests {
         let request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C21".into(),
+            category: "custom-resources".into(),
             company: "C".into(),
             identity: Some(identity(&metadata, "C").unwrap()),
             cursor: None,
@@ -797,7 +797,7 @@ mod tests {
         let request = GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C21".into(),
+            category: "custom-resources".into(),
             company: "C".into(),
             identity: Some(identity(&metadata, "C").unwrap()),
             cursor: None,

@@ -7,6 +7,12 @@ use crate::{
 mod gui_about;
 #[path = "gui_form.rs"]
 mod gui_form;
+#[path = "gui_server_changes.rs"]
+mod gui_server_changes;
+#[path = "gui_account_readiness.rs"]
+mod gui_account_readiness;
+#[path = "gui_connection.rs"]
+mod gui_connection;
 #[path = "gui_operations.rs"]
 mod gui_operations;
 #[path = "gui_plugin_settings.rs"]
@@ -63,8 +69,12 @@ enum Event {
         credentials_saved: bool,
         reply: Reply,
     },
+    AccountReadiness { key: String, reply: Reply, testing: bool },
+    CompanyChoices { key: String, result: Value },
+    UsingAuthorization(Value),
+    DownloadPreview(gui_server_changes::PendingDownload),
     Started(Reply),
-    Connection(bool),
+    Connection { active: bool, key: Option<String> },
     Stage(&'static str),
     FileChoices {
         generation: u64,
@@ -93,6 +103,9 @@ struct Gui {
     generation: u64,
     notice: String,
     diagnostic: Option<String>,
+    /// Cause, OS error and server text of the notice's diagnostic. Shown only
+    /// while `diagnostic` is set, and replaced by every `show_error`.
+    error_detail: Option<String>,
     profiles: Vec<Profile>,
     profile_id: String,
     name: String,
@@ -123,14 +136,36 @@ struct Gui {
     output_mode: Option<bool>,
     collection_method: herbert_contract::CollectionMethod,
     temporary_access: bool,
+    account_readiness: Option<(String, Reply)>,
+    /// The profile's "Allow self-signed certificate" option.
+    allow_untrusted_certificate: bool,
+    /// Last Test connection result, keyed by the connection identity without company.
+    company_choices: Option<(String, Value)>,
+    testing_connection: bool,
+    selected_authorization: Option<Value>,
+    connected_key: Option<String>,
+    pending_download: Option<gui_server_changes::PendingDownload>,
+    authorization_choice: gui_server_changes::AuthorizationChoice,
+    authorization_workflow: String,
+    saved_authorizations: gui_server_changes::SavedAuthorizations,
     connected: bool,
     cleanup_pending: bool,
     run_id: String,
     output_root: String,
-    folder_open_error: Option<String>,
+    folder_open_error: Option<Diagnostic>,
     journal: Option<Value>,
     poll_pending: bool,
     last_poll: Instant,
+    launch_stage: LaunchStage,
+}
+/// eframe keeps the window hidden until it has painted the first frame, then shows it. The launch
+/// requests, including the heavy `capabilities` listing, start on the next frame so loading plugins
+/// never competes with that first visible paint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum LaunchStage {
+    FirstFrame,
+    Shown,
+    Requested,
 }
 impl Drop for Gui {
     fn drop(&mut self) {
@@ -181,6 +216,7 @@ pub fn launch(host: Arc<Host>, runtime: tokio::runtime::Handle) -> Result<(), ef
                 generation: 0,
                 notice: String::new(),
                 diagnostic: None,
+                error_detail: None,
                 profiles: vec![],
                 profile_id: String::new(),
                 name: String::new(),
@@ -211,6 +247,16 @@ pub fn launch(host: Arc<Host>, runtime: tokio::runtime::Handle) -> Result<(), ef
                 output_mode: Some(true),
                 collection_method: herbert_contract::CollectionMethod::DirectOnly,
                 temporary_access: crate::application::default_temporary_access(),
+                account_readiness: None,
+                allow_untrusted_certificate: false,
+                company_choices: None,
+                testing_connection: false,
+                selected_authorization: None,
+                connected_key: None,
+                pending_download: None,
+                authorization_choice: Default::default(),
+                authorization_workflow: String::new(),
+                saved_authorizations: Default::default(),
                 connected: false,
                 cleanup_pending: false,
                 run_id: String::new(),
@@ -219,16 +265,33 @@ pub fn launch(host: Arc<Host>, runtime: tokio::runtime::Handle) -> Result<(), ef
                 journal: None,
                 poll_pending: false,
                 last_poll: Instant::now(),
+                launch_stage: LaunchStage::FirstFrame,
             };
             app.load_preferences(&cc.egui_ctx);
-            for method in ["profiles.list", "capabilities", "settings.inspect"] {
-                app.send(method, json!({}), &cc.egui_ctx);
-            }
             Ok(Box::new(app))
         }),
     )
 }
 impl Gui {
+    /// Returns the methods sent this frame. See `LaunchStage`.
+    fn launch_requests(&mut self, ctx: &egui::Context) -> &'static [&'static str] {
+        match self.launch_stage {
+            LaunchStage::FirstFrame => {
+                self.launch_stage = LaunchStage::Shown;
+                ctx.request_repaint();
+                &[]
+            }
+            LaunchStage::Shown => {
+                self.launch_stage = LaunchStage::Requested;
+                const METHODS: [&str; 3] = ["profiles.list", "settings.inspect", "capabilities"];
+                for method in METHODS {
+                    self.send(method, json!({}), ctx);
+                }
+                &METHODS
+            }
+            LaunchStage::Requested => &[],
+        }
+    }
     fn send(&mut self, method: &str, arguments: Value, ctx: &egui::Context) {
         if method == "run.status" {
             if self.poll_pending {
@@ -262,6 +325,12 @@ impl Gui {
     fn show_error(&mut self, error: Diagnostic) {
         apply_connection_error(&error, &mut self.connected, &mut self.cleanup_pending);
         self.notice = connection_error_message(&error);
+        // The composed notice may already instruct (cleanup retry); never add a second step.
+        if let Some(step) = crate::next_steps::for_diagnostic(&error).filter(|_| !crate::next_steps::has_next_step(&self.notice)) {
+            self.notice.push(' ');
+            self.notice.push_str(step);
+        }
+        self.error_detail = technical_details(&error);
         self.diagnostic = Some(error.code);
     }
     fn clear_secrets(&mut self) {
@@ -279,7 +348,7 @@ impl Gui {
     }
     fn editable(&self) -> bool {
         self.profiles_loaded && self.settings_loaded
-            && !self.working && !self.run_active() && !self.picker_pending
+            && !self.working && !self.run_active() && !self.picker_pending && self.pending_download.is_none()
     }
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.receiver.try_recv() {
@@ -293,8 +362,22 @@ impl Gui {
                     self.notice = message.into();
                     self.diagnostic = None;
                 }
-                Event::Connection(active) => {
+                Event::CompanyChoices { key, result } => { self.company_choices = Some((key, result)); }
+                Event::AccountReadiness { key, reply, testing } => {
+                    if testing { self.working = false; self.testing_connection = false; }
+                    if let Some(error) = reply.error.as_ref() { self.show_error(error.clone()); }
+                    self.account_readiness = Some((key, reply));
+                }
+                Event::UsingAuthorization(grant) => { self.selected_authorization = Some(grant); }
+                Event::DownloadPreview(pending) => {
+                    self.working = false;
+                    self.pending_download = Some(pending);
+                    self.notice = "Review the server-change preview.".into();
+                }
+                Event::Connection { active, key } => {
                     self.connected = active;
+                    self.connected_key = key;
+                    if !active { self.account_readiness = None; }
                     self.cleanup_pending = false;
                 },
                 Event::Picked { picker, path } => {
@@ -310,7 +393,7 @@ impl Gui {
                             },
                             Err(_) => self.show_error(Diagnostic::new(
                                 "PATH_ENCODING",
-                                "Choose a path that can be represented as UTF-8.",
+                                "This folder path contains characters Herbert cannot store. Choose a folder whose name uses ordinary letters, numbers and punctuation.",
                             )),
                         }
                     }
@@ -415,6 +498,8 @@ impl Gui {
                     match method.as_str() {
                         "connection.disconnect" => {
                             self.connected = false;
+                            self.connected_key = None;
+                            self.account_readiness = None;
                             self.cleanup_pending = false;
                             self.notice = "Session cleanup confirmed. You can start a new download.".into();
                             self.diagnostic = None;
@@ -520,6 +605,7 @@ impl Gui {
             self.url = profile.url;
             self.company = profile.defaults.company.unwrap_or_default();
             self.mode = profile.auth_mode;
+            self.allow_untrusted_certificate = profile.allow_untrusted_certificate;
             if let Some(concurrency) = profile.defaults.concurrency {
                 self.settings.concurrency = concurrency;
             }
@@ -540,6 +626,7 @@ impl Gui {
             self.url.clear();
             self.company.clear();
             self.mode = AuthMode::Session;
+            self.allow_untrusted_certificate = false;
             self.source = Source::Entered;
             self.input_file.clear();
             self.file_environment.clear();
@@ -553,6 +640,7 @@ impl Gui {
         {
             self.url = profile.url.clone();
             self.mode = profile.auth_mode;
+            self.allow_untrusted_certificate = profile.allow_untrusted_certificate;
             if let Some(concurrency) = profile.defaults.concurrency {
                 self.settings.concurrency = concurrency;
             }
@@ -637,7 +725,7 @@ impl Gui {
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Herbert").strong().size(20.0));
+                    ui.label(RichText::new("Herbert").strong().size(TEXT_BRAND));
                     ui.add(
                         egui::Image::new(&self.brand_icon)
                             .fit_to_exact_size(egui::vec2(32.0, 32.0))
@@ -650,21 +738,25 @@ impl Gui {
                         (Tab::Plugins, "Plugins"),
                         (Tab::About, "About"),
                     ] {
-                        if ui
-                            .add_sized(
-                                [106.0, 36.0],
-                                egui::Button::new(RichText::new(label).strong().size(16.0).color(
-                                    ui.visuals().text_color(),
-                                ))
-                                .fill(if self.tab == tab {
-                                    ui.visuals().widgets.active.bg_fill
-                                } else { egui::Color32::TRANSPARENT })
-                                .stroke(if self.tab == tab {
-                                    egui::Stroke::new(1.0, ui.visuals().weak_text_color())
-                                } else { egui::Stroke::NONE }),
-                            )
-                            .clicked()
-                        {
+                        let selected = self.tab == tab;
+                        let clicked = ui.scope(|ui| {
+                            // Unselected tabs stay flat until hovered, then use the theme hover fill.
+                            if !selected {
+                                let inactive = &mut ui.visuals_mut().widgets.inactive;
+                                inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+                                inactive.bg_stroke = egui::Stroke::NONE;
+                            }
+                            let mut button = egui::Button::new(RichText::new(label).strong().size(TEXT_SECTION).color(
+                                ui.visuals().text_color(),
+                            ));
+                            if selected {
+                                button = button
+                                    .fill(ui.visuals().widgets.active.bg_fill)
+                                    .stroke(egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+                            }
+                            ui.add_sized([106.0, 36.0], button).clicked()
+                        }).inner;
+                        if clicked {
                             self.tab = tab;
                         }
                     }
@@ -679,7 +771,10 @@ impl eframe::App for Gui {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
+        self.launch_requests(&ctx);
         self.plain_text_file_help(&ctx, frame);
+        self.server_change_window(&ctx);
+        self.saved_authorizations_window(&ctx);
         self.navigation(ui);
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
@@ -724,6 +819,18 @@ impl eframe::App for Gui {
         self.remember_preferences(&ctx);
     }
 }
+// Type scale. These are the sizes already in use (2026-10-28), named so the scale is visible and
+// is changed in one place. Body, Small and Heading are the egui text styles set below.
+const TEXT_DISPLAY: f32 = 30.0; // About title
+const TEXT_BRAND: f32 = 20.0; // product name in the tab bar
+const TEXT_HEADING: f32 = 19.0;
+const TEXT_LEAD: f32 = 18.0; // About dedication
+const TEXT_TITLE: f32 = 17.0; // plugin card and settings section titles
+const TEXT_SECTION: f32 = 16.0; // tabs and the Options label
+const TEXT_BODY: f32 = 15.0;
+const TEXT_DENSE: f32 = 14.0; // one-line summaries and run-table rows
+const TEXT_DETAIL: f32 = 13.0; // table headers, secondary rows and the credentials example
+const TEXT_SMALL: f32 = 12.5;
 fn configure_style(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     #[cfg(target_os = "windows")]
@@ -841,14 +948,14 @@ fn configure_style(ctx: &egui::Context) {
             for kind in [egui::TextStyle::Body, egui::TextStyle::Button] {
                 style
                     .text_styles
-                    .insert(kind, egui::FontId::proportional(15.0));
+                    .insert(kind, egui::FontId::proportional(TEXT_BODY));
             }
             style
                 .text_styles
-                .insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
+                .insert(egui::TextStyle::Small, egui::FontId::proportional(TEXT_SMALL));
             style
                 .text_styles
-                .insert(egui::TextStyle::Heading, egui::FontId::proportional(19.0));
+                .insert(egui::TextStyle::Heading, egui::FontId::proportional(TEXT_HEADING));
         });
     }
 }
@@ -894,6 +1001,35 @@ fn theme_button(ui: &mut egui::Ui) {
     response.on_hover_text(label);
 }
 
+// Animation pacing is presentation only: collection, polling and dispatch are unaffected.
+// Measured 2026-10-27: repainting the About vacuum at the monitor rate used 29-44 % of a
+// core, versus 0 % on a static tab. These are tunable defaults chosen so each motion moves
+// only a few pixels per frame. The run mascot can travel quickly, so it keeps about 60
+// frames per second while focused. The About sway is slow, so about 30 looks the same there.
+// An unfocused window keeps animating at about 30. A minimized window rests and repaints
+// when it is restored.
+const RUN_ANIMATION_FRAME: Duration = Duration::from_millis(16);
+const ABOUT_ANIMATION_FRAME: Duration = Duration::from_millis(33);
+const BACKGROUND_ANIMATION_FRAME: Duration = Duration::from_millis(33);
+fn request_animation_frame(ctx: &egui::Context, focused_frame: Duration) {
+    let (focused, minimized) = ctx.input(|input| {
+        let viewport = input.viewport();
+        (viewport.focused.unwrap_or(true), viewport.minimized.unwrap_or(false))
+    });
+    if minimized {
+        return;
+    }
+    ctx.request_repaint_after(if focused { focused_frame } else { BACKGROUND_ANIMATION_FRAME.max(focused_frame) });
+}
+// egui time is f64 seconds since launch. Casting it straight to f32 loses resolution with
+// uptime (about 4 ms per step after 10 hours), which makes fast oscillations stutter.
+// Wrapping first keeps f32 steps below 0.25 ms. The wrap costs at most one small phase
+// jump per hour. Durations such as celebration age must use the unwrapped f64 time.
+const ANIMATION_CLOCK_PERIOD: f64 = 3600.0;
+fn animation_phase_time(ui: &egui::Ui) -> f32 {
+    (ui.input(|input| input.time) % ANIMATION_CLOCK_PERIOD) as f32
+}
+
 #[cfg(test)]
 #[path = "gui_progress_layout_tests.rs"]
 mod gui_progress_layout_tests;
@@ -910,14 +1046,33 @@ fn apply_connection_error(error: &Diagnostic, connected: &mut bool, cleanup_pend
 fn connection_error_message(error: &Diagnostic) -> String {
     let mut message = error.message.clone();
     if let Some(cleanup) = error.context.get("cleanup") {
-        message.push_str(&format!(" Cleanup failed: {}: {}",
-            cleanup["code"].as_str().unwrap_or("UNKNOWN"),
-            cleanup["message"].as_str().unwrap_or("Logout is unconfirmed.")));
+        // The cleanup code goes to Technical details (technical_details); the line shows only its sentence.
+        message.push_str(&format!(" Signing out of Epicor also failed: {}",
+            cleanup["message"].as_str().unwrap_or("Herbert could not confirm the sign-out.")));
     }
     if error.context.get("connectionRetained").and_then(Value::as_bool) == Some(true) {
         message.push_str(" Retry session cleanup in this window. The next Download also retries cleanup before login.");
     }
     message
+}
+/// Lower-level detail kept beside a static message (`with_cause`, `osError`,
+/// `serverMessage`, a failed sign-out's code). Shown collapsed, never in the sentence.
+fn technical_details(error: &Diagnostic) -> Option<String> {
+    let plain = |value: &Value| value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+    let mut lines = Vec::new();
+    if let Some(cause) = error.context.get("cause") {
+        lines.push(format!("Cause: {}", plain(cause)));
+    }
+    if let Some(code) = error.context.get("osError").filter(|code| !code.is_null()) {
+        lines.push(format!("Operating system error code: {}", plain(code)));
+    }
+    if let Some(server) = error.context.get("serverMessage") {
+        lines.push(format!("Epicor server message:\n{}", plain(server)));
+    }
+    if let Some(code) = error.context.get("cleanup").and_then(|cleanup| cleanup["code"].as_str()) {
+        lines.push(format!("Sign-out error code: {code}"));
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 #[cfg(test)]
 mod cleanup_state_tests {
@@ -934,7 +1089,9 @@ mod cleanup_state_tests {
             apply_connection_error(&error, &mut connected, &mut pending);
             let message = connection_error_message(&error);
             assert!(message.contains("Admission failed."));
-            assert!(message.contains("LOGOUT_FAILED: Logout failed."));
+            assert!(message.contains("Signing out of Epicor also failed: Logout failed."));
+            assert!(!message.contains("LOGOUT_FAILED"), "the code stays in Technical details");
+            assert_eq!(technical_details(&error).as_deref(), Some("Sign-out error code: LOGOUT_FAILED"));
         }
         assert!(!connected, "Failed admission is not a successful connection");
         assert!(pending);
@@ -943,5 +1100,50 @@ mod cleanup_state_tests {
         apply_connection_error(&Diagnostic::new("LOGOUT_FAILED", "Retry failed."), &mut connected, &mut pending);
         assert!(cleanup_before_login(connected, pending));
         assert!(!cleanup_before_login(false, false));
+    }
+    #[test]
+    fn technical_details_keep_os_and_server_detail_out_of_the_notice() {
+        let error = Diagnostic::new("SECURE_STORE_UNAVAILABLE", "Windows could not unlock the saved Epicor credentials for this profile.")
+            .with_cause("Access is denied.")
+            .with_context("osError", 5)
+            .with_context("serverMessage", "line 1\nline 2");
+        assert_eq!(connection_error_message(&error), error.message);
+        assert_eq!(technical_details(&error).unwrap(),
+            "Cause: Access is denied.\nOperating system error code: 5\nEpicor server message:\nline 1\nline 2");
+        let unknown = Diagnostic::new("OUTPUT_UNAVAILABLE", "Herbert could not save.").with_context("osError", Value::Null);
+        assert_eq!(technical_details(&unknown), None);
+    }
+}
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    fn frame(ctx: &egui::Context, app: &mut Gui, events: Vec<egui::Event>) -> Option<egui::Pos2> {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 820.0))), events, ..Default::default() }, |ui| app.navigation(ui));
+        output.textures_delta.clear();
+        // The theme icon is the only circle in the tab bar: a 4.5 px sun ring (dark) or a 9 px moon disc (light).
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Circle(circle) if circle.radius == 4.5 || circle.radius == 9.0 => Some(circle.center),
+            _ => None,
+        })
+    }
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }
+    }
+    #[test]
+    fn theme_button_switches_theme_both_ways() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        let mut app = gui_progress_layout_tests::app(&ctx, &runtime, false);
+        assert_eq!(ctx.theme(), egui::Theme::Dark);
+        for expected in [egui::Theme::Light, egui::Theme::Dark] {
+            let mut icon = None;
+            for _ in 0..2 { icon = frame(&ctx, &mut app, vec![]); }
+            let icon = icon.expect("theme icon is painted");
+            frame(&ctx, &mut app, vec![egui::Event::PointerMoved(icon), press(icon, true)]);
+            frame(&ctx, &mut app, vec![press(icon, false)]);
+            frame(&ctx, &mut app, vec![]);
+            assert_eq!(ctx.theme(), expected, "one click on the theme icon switches the theme");
+        }
     }
 }

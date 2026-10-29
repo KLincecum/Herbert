@@ -13,7 +13,7 @@ mod tests {
     use super::*;
     use serde_json::Value;
     fn request(kind: &str) -> GuestRequest {
-        let category = if kind == "UBAQ" { "C05" } else { "C04" };
+        let category = if kind == "UBAQ" { "ubaqs" } else { "baqs-and-ubaqs" };
         let mut id = crate::identity(category, kind, "C", "QueryID", "Owner's Query");
         id.keys.insert("Company".into(), "C".into());
         GuestRequest {
@@ -230,6 +230,6 @@ pub fn acquire(mut request: GuestRequest) -> GuestReply {
                 diagnostics,
             }
         }
-        _ => fail("The query download checkpoint is invalid."),
+        _ => fail("The query download saved progress is invalid."),
     }
 }

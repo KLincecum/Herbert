@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
-// Kevin selected these operating defaults on 2026-10-22. They are not file limits.
+// These operating defaults were selected on 2026-10-22. They are not file limits.
 pub(crate) const WRITERS: usize = 4;
 pub(crate) const FILES_PER_CHUNK: usize = 100;
 pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;

@@ -14,10 +14,16 @@ fn download_folder(output_root: &str) -> Option<std::path::PathBuf> {
     path.is_dir().then_some(path)
 }
 
+// The folder error renders under the run controls; the path is on the "Saving to:" line below it.
+#[cfg(windows)]
+const FOLDER_NOT_LOCATED: &str = "Herbert could not find File Explorer, so the download folder was not opened. Open File Explorer yourself and go to the path after \"Saving to:\" below.";
+#[cfg(windows)]
+const FOLDER_NOT_OPENED: &str = "Herbert could not open the download folder in File Explorer. Open it yourself from the path after \"Saving to:\" below.";
+
 #[cfg(windows)]
 fn folder_command(output_root: &str) -> Result<std::process::Command, String> {
     let folder = download_folder(output_root)
-        .ok_or_else(|| "The download folder is not available yet.".to_owned())?;
+        .ok_or_else(|| "The download folder has not been created yet. Wait until the download starts saving files, then try again.".to_owned())?;
     // Explorer expects ordinary drive/UNC paths. Preserve the exact run path,
     // including spaces, as one argument. Never interpolate it into a shell.
     let text = folder.to_string_lossy();
@@ -27,7 +33,7 @@ fn folder_command(output_root: &str) -> Result<std::process::Command, String> {
         text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned()
     };
     let windows = std::env::var_os("SystemRoot")
-        .ok_or_else(|| "Windows Explorer could not be located.".to_owned())?;
+        .ok_or_else(|| FOLDER_NOT_LOCATED.to_owned())?;
     let mut command =
         std::process::Command::new(std::path::PathBuf::from(windows).join("explorer.exe"));
     command.arg(explorer_path);
@@ -61,7 +67,12 @@ fn phase_label(phase: &str, active: bool) -> &str {
         "installingArtifacts" => "Installing temporary helper in Epicor",
         "cleaningArtifacts" => "Removing temporary helper from Epicor",
         "destinationReleaseUncertain" => "Output cleanup needs attention",
-        other => other,
+        "starting" => "Starting…",
+        "preparing" => "Preparing…",
+        "recovering" => "Recovering…",
+        "reprocessing" => "Reprocessing…",
+        // Never show an internal phase name; a new phase reads as ongoing work.
+        _ => "Working…",
     }
 }
 #[derive(Default, Debug, PartialEq)]
@@ -274,7 +285,7 @@ fn vacuum_counts_current_pages_from_all_plugins_not_only_the_last_response() {
 #[test]
 fn main_progress_waits_for_batch_commit_and_preserves_other_collections() {
     let journal = |count: usize| {
-        json!({"artifacts": (0..count).map(|_| json!({"identity":{"category":"C04"}}))
+        json!({"artifacts": (0..count).map(|_| json!({"identity":{"category":"baqs-and-ubaqs"}}))
         .chain(std::iter::once(json!({"identity":{"category":"Other"}}))).collect::<Vec<_>>()})
     };
     for live in [0, 1, 4, 23, 24] {
@@ -282,7 +293,7 @@ fn main_progress_waits_for_batch_commit_and_preserves_other_collections() {
             completed_batch_progress(
                 &journal(live),
                 live + 1,
-                &[json!({"category":"C04","completedItems":0,"phase":"Processing"})]
+                &[json!({"category":"baqs-and-ubaqs","completedItems":0,"phase":"Processing"})]
             ),
             1
         );
@@ -292,7 +303,7 @@ fn main_progress_waits_for_batch_commit_and_preserves_other_collections() {
             completed_batch_progress(
                 &journal(live),
                 live + 1,
-                &[json!({"category":"C04","completedItems":committed})]
+                &[json!({"category":"baqs-and-ubaqs","completedItems":committed})]
             ),
             committed + 1
         );
@@ -302,7 +313,7 @@ fn main_progress_waits_for_batch_commit_and_preserves_other_collections() {
         completed_batch_progress(
             &journal(75),
             76,
-            &[json!({"category":"C04","completedItems":72})]
+            &[json!({"category":"baqs-and-ubaqs","completedItems":72})]
         ),
         73
     );
@@ -404,9 +415,21 @@ pub(super) fn duration(ms: u64) -> String {
     format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60)
 }
 
+/// The destination line shares its row with the run-scope menu, so the label is
+/// truncated. The full path stays reachable: on hover, and through Copy.
+pub(super) fn saving_to(ui: &mut egui::Ui, output_root: &str, output: &str) -> Option<egui::Response> {
+    let copy = (!output_root.is_empty()).then(|| {
+        let copy = ui.small_button("Copy").on_hover_text("Copy the full destination path");
+        if copy.clicked() { ui.ctx().copy_text(output_root.to_owned()); }
+        copy
+    });
+    ui.add(egui::Label::new(output).truncate()).on_hover_text(output);
+    copy
+}
+
 fn statistics_line(journal: &Value, files: usize, active: bool) -> String {
     let s = &journal["statistics"];
-    let Some(ms) = s["elapsedMs"].as_u64() else { return "Timing: unavailable for this execution".into(); };
+    let Some(ms) = s["elapsedMs"].as_u64() else { return "Timing is not available for this download.".into(); };
     let n = |key: &str| s[key].as_u64().unwrap_or(0);
     let rate = if ms > 0 { files as f64 * 1000.0 / ms as f64 } else { 0.0 };
     format!("{} {} | {:.1} files/s avg | {} requests / {:.1}s | {:.1} MiB received | {} pages written / {:.1}s",
@@ -446,32 +469,24 @@ impl Gui {
             }
             }
 
-            if ui.add_enabled(!active,egui::Button::new("New download").min_size(egui::vec2(112.0,32.0))).clicked() {
+            let new_download = super::gui_connection::primary_button(ui, "New download", egui::vec2(112.0, 32.0));
+            if ui.add_enabled(!active, new_download).clicked() {
                 self.run_id.clear(); self.journal=None; self.output_root.clear(); self.notice.clear();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let heading = if canceling && active { "Stopping and cleaning up" }
                     else if paused && active { "Paused / finishing active requests" }
                     else { phase_label(phase, active) };
-                ui.add(egui::Label::new(RichText::new(heading).strong()).truncate());
+                ui.add(egui::Label::new(RichText::new(heading).strong()).truncate()).on_hover_text(heading);
             });
         });
         if !diagnostics_inline && ui.add_enabled(!self.diagnostic_export_pending,egui::Button::new("Save diagnostics…")).clicked(){self.save_diagnostics(ui.ctx());}
+        // Below the fixed control row, so a failed open never shifts the buttons.
+        if let Some(error) = &self.folder_open_error {
+            ui.label(RichText::new(&error.message).color(ui.visuals().error_fg_color));
+            super::gui_form::technical(ui, "folder-open-technical", super::technical_details(error).as_deref());
+        }
         ui.add_space(2.0);
-        ui.collapsing("Run scope and frozen options", |ui| {
-            ui.label(if journal["scope"] == "targeted" {
-                "Exact native identities select the roots. Processing options still apply."
-            } else {
-                "Discovery within the frozen plugin options. Completeness applies to this selection."
-            });
-            for (category, values) in journal["pluginSettings"].as_object().into_iter().flatten() {
-                let name = journal["categoryNames"][category].as_str().unwrap_or(category);
-                ui.label(RichText::new(name).strong());
-                // Values are private local run evidence. JSON quoting preserves
-                // spaces and makes an explicitly blank filter visible as "".
-                ui.add(egui::Label::new(values.to_string()).wrap());
-            }
-        });
         ui.add(egui::Label::new(format!("All plugins: {completed} items in completed batches   ·   {} files saved   ·   {:.1} MiB   ·   {} incomplete",
             counts.files, counts.bytes as f64 / 1_048_576.0, counts.incomplete)).truncate());
 
@@ -489,7 +504,7 @@ Request time and completed-page write time are sums; concurrent work can overlap
         let host_work = if !host_work.is_empty() { host_work }
             else if active { "Host: collecting and processing plugin data".into() }
             else { "Host: run finished".into() };
-        ui.add(egui::Label::new(RichText::new(&host_work).size(14.0)).truncate()).on_hover_text(&host_work);
+        ui.add(egui::Label::new(RichText::new(&host_work).size(TEXT_DENSE)).truncate()).on_hover_text(&host_work);
         ui.add_space(2.0);
         plugin_activity::table(ui, &rows);
 
@@ -499,7 +514,8 @@ Request time and completed-page write time are sums; concurrent work can overlap
         let total_known = counts.categories > 0 && counts.discovered_categories == counts.categories;
         let definitions = received.map_or_else(|| if total_known {(completed,counts.known)}else{(0,0)}, |(_,written,total)|(written,total));
         let progress = combined_work_progress(definitions,&journal["statistics"]);
-            let time = ui.input(|input| input.time) as f32;
+            let time = super::animation_phase_time(ui);
+            let clock = ui.input(|input| input.time);
             let moving = active && !paused && !canceling;
             // Actual work drives travel; the definition bar remains quantitative.
             // Compress bursts for visible motion instead of skipping whole laps
@@ -525,11 +541,12 @@ Request time and completed-page write time are sums; concurrent work can overlap
             let celebration_id = ui.id().with(("vacuum-celebration", &self.run_id, run_finished));
             let celebration_started = if run_finished {
                 Some(ui.ctx().data_mut(|data| {
-                    *data.get_temp_mut_or_insert_with::<f32>(celebration_id, || time)
+                    *data.get_temp_mut_or_insert_with::<f64>(celebration_id, || clock)
                 }))
             } else { None };
             // Short visual flourishes do not delay completion or the next page.
-            let celebration_age = celebration_started.map(|start| time - start);
+            // Age uses the unwrapped clock so the phase-clock wrap cannot restart it.
+            let celebration_age = celebration_started.map(|start| (clock - start) as f32);
             let celebrating = celebration_age.is_some_and(|age| age < 8.0);
             let mascot_position = position;
             let revving = moving && mascot_position <= f32::EPSILON;
@@ -704,7 +721,7 @@ Request time and completed-page write time are sums; concurrent work can overlap
 
         let progress_text = if let Some((_,written,total)) = received {
             format!("Work: {written} / {total} current-page definitions saved · decompilation included")
-        } else if active { "Waiting for the first page. Each plugin reports its work above.".into() }
+        } else if active { "Waiting for Epicor to return the first results. Each plugin shows its progress above.".into() }
         else { format!("Run finished · {completed} items processed") };
         ui.add(egui::Label::new(&progress_text).truncate()).on_hover_text(&progress_text);
         let pending_reads=journal["statistics"]["pendingCompiledPages"].as_u64().unwrap_or(0);
@@ -716,14 +733,34 @@ Request time and completed-page write time are sums; concurrent work can overlap
                 ui.label(format!("Decompilation: {finished} finished · {running} working · {committing} saving · {queued} queued · {failed} failed"));
             }
         }
-        ui.add(egui::ProgressBar::new(progress).desired_width(ui.available_width()).desired_height(6.0));
-        if moving || celebrating { ui.ctx().request_repaint(); }
+        ui.add(egui::ProgressBar::new(progress).desired_width(ui.available_width()).desired_height(6.0))
+            .on_hover_text(format!("About {:.0} % of the work known so far", progress * 100.0));
+        if moving || celebrating { super::request_animation_frame(ui.ctx(), super::RUN_ANIMATION_FRAME); }
         ui.add_space(2.0);
 
         run_issues::show(ui, &journal);
         ui.separator();
         let output = format!("Saving to: {}", if self.output_root.is_empty() { "Preparing destination" } else { &self.output_root });
-        ui.add(egui::Label::new(&output).truncate()).on_hover_text(&output);
+        // The run scope opens as a popup on the output line, so it adds no height
+        // above or below the live stage and progress track.
+        ui.horizontal(|ui| {
+            ui.menu_button("What this download includes", |ui| {
+                ui.set_max_width(520.0);
+                ui.label(if journal["scope"] == "targeted" {
+                    "Only the items you selected by ID are downloaded. Processing options still apply."
+                } else {
+                    "Herbert finds every item that matches the plugin settings below, which were fixed when the download started. 'Complete' means complete for this selection."
+                });
+                for (category, values) in journal["pluginSettings"].as_object().into_iter().flatten() {
+                    let name = journal["categoryNames"][category].as_str().unwrap_or(category);
+                    ui.label(RichText::new(name).strong());
+                    // Values are private local run evidence. JSON quoting preserves
+                    // spaces and makes an explicitly blank filter visible as "".
+                    ui.add(egui::Label::new(values.to_string()).wrap());
+                }
+            });
+            saving_to(ui, &self.output_root, &output);
+        });
     }
 
     fn open_download_button(&mut self, ui: &mut egui::Ui) {
@@ -738,11 +775,13 @@ Request time and completed-page write time are sums; concurrent work can overlap
                 .clicked()
             {
                 self.folder_open_error = folder_command(&self.output_root)
+                    .map_err(|message| Diagnostic::new("FOLDER_OPEN_FAILED", message))
                     .and_then(|mut command| {
-                        command
-                            .spawn()
-                            .map(|_| ())
-                            .map_err(|error| format!("Could not open the download folder: {error}"))
+                        command.spawn().map(|_| ()).map_err(|error| {
+                            Diagnostic::new("FOLDER_OPEN_FAILED", FOLDER_NOT_OPENED)
+                                .with_cause(&error)
+                                .with_context("osError", error.raw_os_error())
+                        })
                     })
                     .err();
             }
@@ -754,6 +793,18 @@ Request time and completed-page write time are sums; concurrent work can overlap
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn phase_label_never_shows_an_internal_phase_name() {
+        assert_eq!(phase_label("starting", true), "Starting…");
+        // A resumed run says what it is doing.
+        assert_eq!(phase_label("preparing", true), "Preparing…");
+        assert_eq!(phase_label("recovering", true), "Recovering…");
+        assert_eq!(phase_label("reprocessing", true), "Reprocessing…");
+        for unknown in ["someFutureInternalPhase", "", "acquiring_v2"] {
+            assert_eq!(phase_label(unknown, true), "Working…");
+            assert_eq!(phase_label(unknown, false), "Working…");
+        }
+    }
     #[test]
     fn pending_results_deduplicate_targets_without_masking_missing_identities() {
         let first =
@@ -802,6 +853,15 @@ mod tests {
             }
         );
         assert_eq!(results.handled(), 9);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn folder_errors_point_down_to_the_saving_to_path() {
+        // The error renders under the run controls; "Saving to:" is drawn after the issues list.
+        for message in [FOLDER_NOT_LOCATED, FOLDER_NOT_OPENED] {
+            assert!(message.contains("\"Saving to:\" below") && !message.contains("above"), "{message}");
+        }
     }
 
     #[test]
@@ -925,9 +985,9 @@ mod tests {
     #[test]
     fn artifact_failures_are_visible_even_when_the_journal_has_no_global_diagnostic() {
         let journal = json!({"diagnostics":[],"artifacts":[
-            {"identity":{"category":"C02","kind":"functionLibrary","keys":{"LibraryID":"Example"}},"acquisition":"inaccessible","processing":"failed","diagnostics":[{"message":"Native export was refused."}]},
-            {"identity":{"category":"C01","kind":"query","keys":{"QueryID":"Good"}},"acquisition":"collected","processing":"derived","diagnostics":[]},
-            {"identity":{"category":"C03","kind":"layout","keys":{"ID":"Partial"}},"acquisition":"partial","processing":"derived","diagnostics":[]}
+            {"identity":{"category":"ud-schema","kind":"functionLibrary","keys":{"LibraryID":"Example"}},"acquisition":"inaccessible","processing":"failed","diagnostics":[{"message":"Native export was refused."}]},
+            {"identity":{"category":"ud-codes","kind":"query","keys":{"QueryID":"Good"}},"acquisition":"collected","processing":"derived","diagnostics":[]},
+            {"identity":{"category":"extended-properties","kind":"layout","keys":{"ID":"Partial"}},"acquisition":"partial","processing":"derived","diagnostics":[]}
         ],"acquisitions":[{"path":"native/last.bin"}]});
         let issues = issue_lines(&journal);
         assert_eq!(issues.len(), 2);
@@ -992,7 +1052,35 @@ mod timing_tests {
         assert!(statistics_line(&j, 5973, true).starts_with("Elapsed 0:01:27"));
         assert!(statistics_line(&j, 5973, false).starts_with("Finished in 0:01:27"));
         assert!(statistics_line(&j, 5973, false).contains("68.7 files/s"));
-        assert!(statistics_line(&json!({}), 0, false).contains("unavailable"));
+        assert!(statistics_line(&json!({}), 0, false).contains("not available"));
         assert_eq!(duration(3_661_000), "1:01:01");
+    }
+
+    #[test]
+    fn truncated_destination_path_is_reachable_through_copy() {
+        let root = format!("C:/Users/someone/Downloads/{}/Herbert - COMPANY1 - 28 Oct 2026", "very long folder name ".repeat(12));
+        let output = format!("Saving to: {root}");
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 200.0));
+        let frame = |events: Vec<egui::Event>| {
+            let mut copy = None;
+            let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+                ui.horizontal(|ui| { copy = saving_to(ui, &root, &output); });
+            });
+            out.textures_delta.clear();
+            (copy.expect("a Copy action is shown when a destination exists"), out)
+        };
+        let (copy, _) = frame(vec![]);
+        let at = copy.rect.center();
+        let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        frame(vec![egui::Event::PointerMoved(at), press(true)]);
+        let (_, out) = frame(vec![press(false)]);
+        assert!(out.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if *text == root)),
+            "Copy places the full, untruncated path on the clipboard: {:?}", out.platform_output.commands);
+        // No destination yet: nothing to copy.
+        let mut copy = Some(());
+        ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| { copy = saving_to(ui, "", "Saving to: Preparing destination").map(|_| ()); })
+            .textures_delta.clear();
+        assert!(copy.is_none());
     }
 }

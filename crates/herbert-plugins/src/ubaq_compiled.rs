@@ -1,4 +1,4 @@
-//! Optional UBAQ BPM binaries. Native association and naming belong to C04.
+//! Optional UBAQ BPM binaries. Native association and naming belong to BAQs and UBAQs.
 //! Local execution uses only the neutral host bridge; no Functions policy here.
 use herbert_contract::*;
 use serde_json::{Value, json};
@@ -118,14 +118,14 @@ fn fallback(state: &Value, owner: &Identity) -> Option<Diagnostic> {
     if !compatible(state) {
         return Some(issue(
             "UBAQ_COMPILED_HOST_UNAVAILABLE",
-            "This host cannot negotiate optional UBAQ compiled capture. Query definitions, authored BPMs and native BAQ recovery files remain available.",
+            "This host cannot negotiate optional UBAQ compiled capture. Query definitions, authored BPMs and Epicor BAQ recovery files remain available.",
             owner,
         ));
     }
     if state["_collectionMethod"] == "directOnly" {
         return Some(issue(
             "UBAQ_COMPILED_CAPTURE_UNAVAILABLE",
-            "Direct only preserves query definitions and authored BPMs. The hidden compiled store and native runtime association require the declared optional reader.",
+            "Direct only preserves query definitions and authored BPMs. The hidden compiled store and Epicor runtime association require the declared optional reader.",
             owner,
         ));
     }
@@ -134,7 +134,7 @@ fn fallback(state: &Value, owner: &Identity) -> Option<Diagnostic> {
     {
         return Some(issue(
             "UBAQ_COMPILED_CAPTURE_UNAVAILABLE",
-            "The optional reader could not verify caller-visible UBAQ compiled snapshots. Query definitions, authored BPMs and native BAQ recovery files remain available.",
+            "The optional reader could not verify Epicor user-visible UBAQ compiled snapshots. Query definitions, authored BPMs and Epicor BAQ recovery files remain available.",
             owner,
         ));
     }
@@ -247,7 +247,7 @@ fn evaluate(
             || method["Registration"] != method["RegistrationAfter"]
             || method["BeforeRows"] != method["AfterRows"];
         if !association_valid || !registration_valid {
-            method_issues.push(issue("UBAQ_COMPILED_ASSOCIATION_INVALID", "The native runtime or generated selector does not prove this exact UBAQ method association.", owner));
+            method_issues.push(issue("UBAQ_COMPILED_ASSOCIATION_INVALID", "The Epicor runtime or generated selector does not prove this exact UBAQ method association.", owner));
         }
         if changed {
             method_issues.push(issue("UBAQ_COMPILED_SOURCE_CHANGING", "Query, method, directive or runtime-registration revisions changed across the definition/capture observations. Original files are retained as evidence without a consistent-current-pair claim.", owner));
@@ -388,7 +388,7 @@ fn context(owner: &Identity, definition: &Value, project: bool) -> Value {
     json!({"schemaVersion":1,"owner":owner,"definitionSha256":digest(&json!({"query":definition["definition"],"methods":native})),
  "definition":{"DynamicQueryDesigner":[query]},"supplements":{"updateMethods":methods},
  "requestedProject":project,"applicability":if native["BpMethod"].as_array().is_some_and(Vec::is_empty){"verifiedNotApplicable: the complete native definition has no DQ method owner"}else{"native DQ method owners require exact compiled-store observations"},
- "evidence":{"root":"Copy the whole backup, including Herbert Data and its run journal.","ledger":"The run journal managedProcessing.ledger references retained reads and immutable originals. Filter localReads by category C04, alias compiled_ubaq, function ReadCompiled and the exact query tuple; verify native owner/method witnesses against this context. Historical observations do not assert current freshness.","projects":"local-decompilation.json gives actual jobs, inputs and owner-local output FileRefs when a project was queued."},
+ "evidence":{"root":"Copy the whole backup, including Herbert Data and its run journal.","ledger":"The run journal managedProcessing.ledger references retained reads and immutable originals. Filter localReads by category BAQs and UBAQs, alias compiled_ubaq, function ReadCompiled and the exact query tuple; verify native owner/method witnesses against this context. Historical observations do not assert current freshness.","projects":"local-decompilation.json gives actual jobs, inputs and owner-local output FileRefs when a project was queued."},
  "interpretation":{"absence":"Verified absence requires complete exact owner/method observations, equal definition/query/runtime witnesses, and BeforeRows=AfterRows=0. Failed/unavailable reads do not prove absence.","freshness":"Unknown. A stable stored assembly is not proof that it was compiled from the current authored definition.","symbols":"Only a verified matching portable PDB is supplied externally; other symbols remain retained evidence.","recovery":"Native recovery uses the BAQ package. Reconstructed C# is not an authoritative BPM export or guaranteed buildable source."}})
 }
 pub fn prepare(reply: GuestReply, state: &Value) -> Result<GuestReply, Diagnostic> {
@@ -514,7 +514,7 @@ pub fn finish_saved(state: &Value) -> Result<GuestReply, Diagnostic> {
     let request = GuestRequest {
         abi: PLUGIN_ABI,
         operation: "materialize".into(),
-        category: "C04".into(),
+        category: "baqs-and-ubaqs".into(),
         company: String::new(),
         identity: None,
         cursor: None,
@@ -532,7 +532,7 @@ pub fn queue(request: &GuestRequest) -> Result<GuestReply, Diagnostic> {
     let invalid = || {
         Diagnostic::new(
             "UBAQ_COMPILED_STATE_INVALID",
-            "The UBAQ local-job checkpoint is invalid.",
+            "The UBAQ local-job saved progress is invalid.",
         )
     };
     let mut state = request.state.clone();
@@ -581,7 +581,7 @@ mod tests {
     use std::collections::BTreeMap;
     fn owner() -> Identity {
         Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "UBAQ".into(),
             scope: Scope::Company {
                 company: "C".into(),
@@ -626,7 +626,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "materialize".into(),
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

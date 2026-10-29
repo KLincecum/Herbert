@@ -1,4 +1,4 @@
-//! C19 converts inventory envelopes into finished records before direct writing.
+//! Configurators converts inventory envelopes into finished records before direct writing.
 use herbert_contract::*;
 use serde_json::{Value, json};
 
@@ -39,7 +39,7 @@ pub fn select_inventory(r:&GuestRequest,reply:GuestReply)->GuestReply {
         }else if id.kind=="Configurator" {
             errors.extend(crate::native_children::validate("Erp.BO.ConfiguratorDefSvc","PcStatus",definition,&["PcStatusAttch","PcDocRules","PcDocRulesExpr","PcDocVar","PcInputs","PcStrComp","PcTargetEntity"].map(str::to_owned)));
             if definition["PcStatus"][0]["SysRowID"].as_str().is_none_or(str::is_empty) {errors.push(Diagnostic::new("CONFIGURATOR_BULK_INVALID","An acquired visible configurator omitted its row identity."));}
-            if !root_ids.insert((id.keys["Company"].to_lowercase(),id.keys["ConfigID"].to_lowercase())) {errors.push(Diagnostic::new("CONFIGURATOR_BULK_INVALID","The acquired native page repeats a configurator identity."));}
+            if !root_ids.insert((id.keys["Company"].to_lowercase(),id.keys["ConfigID"].to_lowercase())) {errors.push(Diagnostic::new("CONFIGURATOR_BULK_INVALID","The downloaded Epicor page repeats a configurator identity."));}
         }
         for mut error in errors {error.identity=Some(id.clone());diagnostics.push(error);authoritative=false;}
     }
@@ -168,10 +168,10 @@ fn receive_page(r: GuestRequest, reply: GuestReply) -> GuestReply {
 fn drive(mut r: GuestRequest) -> GuestReply {
     let mut page = r.state["c19Output"].take();
     let Some(index) = page["index"].as_u64().map(|v| v as usize) else {
-        return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Missing output index.");
+        return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Herbert could not continue this download from its saved progress (output position). Start the download again.");
     };
     let Some(queue) = page["queue"].as_array() else {
-        return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Missing output records.");
+        return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Herbert could not continue this download from its saved progress (prepared output). Start the download again.");
     };
     if index == queue.len() {
         return GuestReply::Inventory {
@@ -182,11 +182,11 @@ fn drive(mut r: GuestRequest) -> GuestReply {
         };
     }
     let Some(entry) = queue.get(index) else {
-        return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Invalid output index.");
+        return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Herbert could not continue this download from its saved progress (output position). Start the download again.");
     };
     let identity: Identity = match serde_json::from_value(entry[0].clone()) {
         Ok(id) => id,
-        Err(_) => return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Invalid output identity."),
+        Err(_) => return crate::failure("CONFIGURATOR_OUTPUT_INVALID", "Herbert could not continue this download from its saved progress (output item). Start the download again."),
     };
     let retained = entry[1].clone();
     let mut inner = r.state["inner"].take();
@@ -237,7 +237,7 @@ fn drive(mut r: GuestRequest) -> GuestReply {
             Completeness::Partial,
             vec![Diagnostic::new(
                 "CONFIGURATOR_OUTPUT_INVALID",
-                "Acquisition did not return the requested definition.",
+                "Download did not return the requested definition.",
             )],
         ),
     };
@@ -296,7 +296,7 @@ mod tests {
     fn family_prefix_selects_before_bulk_and_keeps_independent_persisted_sources_and_raw_cursor() {
         let r=selected_request("configurators","A");let reply=selected_fixture(&r);
         let GuestReply::Action {state,..}=crate::configurator_pages::begin(r.clone(),reply)else{panic!()};assert!(state["bulk"]["records"]["A"].is_object());assert!(state["bulk"]["records"]["B"].is_null());
-        let mut r=selected_request("all","Missing");let mut reply=selected_fixture(&r);let id=Identity {category:"C19".into(),kind:"PersistedPcInputVar".into(),scope:Scope::Company {company:"TESTCO".into()},keys:std::collections::BTreeMap::from([("Company".into(),"TESTCO".into()),("SysRowID".into(),"row".into())])};
+        let mut r=selected_request("all","Missing");let mut reply=selected_fixture(&r);let id=Identity {category:"configurators".into(),kind:"PersistedPcInputVar".into(),scope:Scope::Company {company:"TESTCO".into()},keys:std::collections::BTreeMap::from([("Company".into(),"TESTCO".into()),("SysRowID".into(),"row".into())])};
         if let GuestReply::Inventory {identities,..}=&mut reply{identities.push(id.clone());}else{panic!()};let GuestReply::Inventory {identities,next_cursor,authoritative,diagnostics}=select_inventory(&r,reply)else{panic!()};assert_eq!(identities,vec![id.clone()]);assert_eq!(next_cursor.as_deref(),Some("next"));assert!(!authoritative);assert_eq!(diagnostics.len(),1);
         r.state["_pluginSettings"]["definitionFamily"]=json!("configurators");assert!(matches!(select_inventory(&r,GuestReply::Inventory {identities:vec![id],next_cursor:Some("raw".into()),authoritative:true,diagnostics:vec![]}),GuestReply::Inventory {identities,next_cursor:Some(_),..} if identities.is_empty()));
         for prefix in ["a"," A","%","Ω"]{let r=selected_request("all",prefix);assert!(matches!(selected_fixture(&r),GuestReply::Inventory {identities,next_cursor:Some(_),..} if identities.is_empty()));}
@@ -307,7 +307,7 @@ mod tests {
         let GuestReply::Inventory {identities,diagnostics,authoritative,..}=select_inventory(&r,reply)else{panic!()};assert!(identities.is_empty());assert!(!authoritative);assert!(diagnostics.iter().all(|error|error.identity.is_some()));
         let schema:Value=serde_json::from_str(include_str!("configurator-lookup-dataset.json")).unwrap();let mut data=json!({"PcLookupTblHedAttch":[]});
         for (table,fields) in schema["tables"].as_object().unwrap(){let mut row=json!({});for field in fields.as_array().unwrap(){row[field["name"].as_str().unwrap()]=match field["type"].as_str().unwrap(){"bool"=>json!(false),"int"|"long"|"decimal"=>json!(0),"DateTime"=>Value::Null,_=>json!("")};}row["Company"]=json!("TESTCO");row["LookupTblID"]=json!("LookupA");row["SysRowID"]=json!("00000000-0000-0000-0000-000000000001");if row.get("ColSetID").is_some(){row["ColSetID"]=json!("S");}if row.get("ColName").is_some(){row["ColName"]=json!("Text");}data[table]=json!([row]);}
-        let id=Identity {category:"C19".into(),kind:"ConfiguratorLookup".into(),scope:Scope::Company {company:"TESTCO".into()},keys:std::collections::BTreeMap::from([("Company".into(),"TESTCO".into()),("LookupTblID".into(),"LookupA".into())])};
+        let id=Identity {category:"configurators".into(),kind:"ConfiguratorLookup".into(),scope:Scope::Company {company:"TESTCO".into()},keys:std::collections::BTreeMap::from([("Company".into(),"TESTCO".into()),("LookupTblID".into(),"LookupA".into())])};
         let reply=|data|GuestReply::InventoryData {inventory:Box::new(GuestReply::Inventory {identities:vec![id.clone()],next_cursor:Some("raw".into()),authoritative:true,diagnostics:vec![]}),records:vec![(id.clone(),json!({"response":{"returnObj":data}}))]};
         let r=selected_request("lookups","Lookup");let GuestReply::InventoryData {records,inventory}=select_inventory(&r,reply(data.clone()))else{panic!()};assert_eq!(records[0].1["response"]["returnObj"],data);assert!(matches!(*inventory,GuestReply::Inventory {authoritative:true,..}));
         data["PcLookupTblValues"][0]["DataValue"]=json!(false);let r=selected_request("configurators","Missing");let GuestReply::Inventory {identities,authoritative,diagnostics,..}=select_inventory(&r,reply(data))else{panic!()};assert!(identities.is_empty());assert!(!authoritative);assert!(diagnostics.iter().any(|error|error.code=="CONFIGURATOR_LOOKUP_XML_INVALID"));
@@ -321,7 +321,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C19".into(),
+            category: "configurators".into(),
             company: "TESTCO".into(),
             identity: None,
             cursor: None,
@@ -333,7 +333,7 @@ mod tests {
     }
     fn bulk_fixture(valid: bool) -> GuestReply {
         let records:Vec<_>=["A","B"].into_iter().map(|name|{
-            let id=Identity{category:"C19".into(),kind:"Configurator".into(),scope:Scope::Company{company:"TESTCO".into()},keys:std::collections::BTreeMap::from([("Company".into(),"TESTCO".into()),("ConfigID".into(),name.into())])};
+            let id=Identity{category:"configurators".into(),kind:"Configurator".into(),scope:Scope::Company{company:"TESTCO".into()},keys:std::collections::BTreeMap::from([("Company".into(),"TESTCO".into()),("ConfigID".into(),name.into())])};
             let row=json!({"Company":"TESTCO","ConfigID":name,"SysRowID":name,"SystemFlag":false});
             (id,json!({"response":{"returnObj":if valid{json!({"PcStatus":[row]})}else{json!({})}},"original":format!("é exact {name}")}))
         }).collect();
@@ -369,8 +369,10 @@ mod tests {
         let GuestReply::PreparedPage{state,..}=receive_page(r.clone(),bulk_fixture(true))else{panic!()};
         let item=state["_hostWorkItems"][0].clone();
         r.operation="materialize".into();r.state=item.clone();
-        let GuestReply::Action{action:HostAction::SharedNativeRead{method,arguments,..},state}=handle(r.clone())else{panic!()};
-        assert_eq!(method,"RetrievePcLayeredImagesForExport");assert_eq!(arguments["configID"],"A");
+        // This minimal fixture has no stored graph or Kinetic flag, so the first owner read is the native fallback GetByID;
+        // layered images are no longer read up front (configurator_export::start reads them only for a native export).
+        let first=handle(r.clone());let GuestReply::Action{action:HostAction::NativeRead{method,arguments,..},state}=first else{panic!("{first:?}")};
+        assert_eq!(method,"GetByID");assert_eq!(arguments["configID"],"A");
         assert!(!serde_json::to_string(&state).unwrap().contains("exact B"));
         // A native failure still emits this owner's retained definition promptly.
         r.state=state;r.error=Some(Diagnostic::new("TEST_DENIED","Synthetic image refusal."));
@@ -392,7 +394,7 @@ mod tests {
     }
     #[test]
     fn supplied_complete_public_materialization_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -413,7 +415,7 @@ mod tests {
             let mut outputs = 0;
             let mut bulk_reads = 0;
             loop {
-                match crate::handle("C19", r.clone()) {
+                match crate::handle("configurators", r.clone()) {
                     GuestReply::Action { action, state } => {
                         r.state = state;
                         r.state["_hostPreparePage"] = json!(true);
@@ -500,7 +502,7 @@ mod tests {
         let identities: Vec<Identity> = ["A", "B"]
             .into_iter()
             .map(|id| Identity {
-                category: "C19".into(),
+                category: "configurators".into(),
                 kind: "Configurator".into(),
                 scope: Scope::Company {
                     company: "TESTCO".into(),

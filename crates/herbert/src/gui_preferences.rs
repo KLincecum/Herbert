@@ -91,11 +91,11 @@ mod tests {
     #[test]
     fn host_preferences_round_trip_without_plugin_or_credential_fields() {
         let mut p = Preferences::default();
-        p.profile_id = "lab".into(); p.destination = "chosen folder".into(); p.output_mode = Some(false); p.temporary_access = true;
+        p.profile_id = "test".into(); p.destination = "chosen folder".into(); p.output_mode = Some(false); p.temporary_access = true;
         p.settings.concurrency = 6;
         let value = serde_json::to_value(&p).unwrap();
         let restored: Preferences = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(restored.profile_id, "lab"); assert_eq!(restored.destination,"chosen folder"); assert_eq!(restored.settings.concurrency,6); assert_eq!(restored.output_mode,Some(false)); assert!(restored.temporary_access);
+        assert_eq!(restored.profile_id, "test"); assert_eq!(restored.destination,"chosen folder"); assert_eq!(restored.settings.concurrency,6); assert_eq!(restored.output_mode,Some(false)); assert!(restored.temporary_access);
         let keys = value.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>();
         assert_eq!(keys, vec!["completionSound","dark","destination","outputMode","profileId","schemaVersion","settings","temporaryAccess"]);
     }
@@ -107,5 +107,29 @@ mod tests {
         value["completionSound"] = serde_json::json!(false);
         let muted: Preferences = serde_json::from_value(value).unwrap();
         assert!(!serde_json::from_value::<Preferences>(serde_json::to_value(muted).unwrap()).unwrap().completion_sound);
+    }
+    #[test]
+    fn chosen_theme_is_saved_and_restored() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let root = std::env::temp_dir().join(format!("herbert-theme-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("state")).unwrap();
+        let host = || Host::with_roots(root.join("state"), root.join("plugins"), Some(root.join("coordination")));
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        let mut app = super::super::gui_progress_layout_tests::app(&ctx, &runtime, false);
+        app.host = host();
+        app.preferences_ready = true; app.profiles_loaded = true; app.settings_loaded = true;
+        ctx.set_theme(egui::ThemePreference::Light);
+        app.remember_preferences(&ctx);
+        let saved: Value = serde_json::from_slice(&std::fs::read(root.join("state/gui-preferences.json")).unwrap()).unwrap();
+        assert_eq!(saved["dark"], json!(false), "the light choice is written");
+        let restarted = egui::Context::default();
+        configure_style(&restarted);
+        assert_eq!(restarted.theme(), egui::Theme::Dark, "a fresh start defaults to dark");
+        let mut restored = super::super::gui_progress_layout_tests::app(&restarted, &runtime, false);
+        restored.host = host();
+        restored.load_preferences(&restarted);
+        assert_eq!(restarted.theme(), egui::Theme::Light, "the saved choice is restored at start");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

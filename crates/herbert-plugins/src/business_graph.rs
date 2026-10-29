@@ -14,7 +14,7 @@ fn tables() -> impl Iterator<Item = &'static str> {
 fn fields<'a>(state: &'a Value, table: &str) -> Result<&'a Value, Diagnostic> {
     state["metadata"]
         .get(table)
-        .ok_or_else(|| err("The graph schema omitted a required table."))
+        .ok_or_else(|| err("The record set schema omitted a required table."))
 }
 fn schema() -> Value {
     let names = POSTING_TABLES
@@ -39,11 +39,11 @@ fn schema() -> Value {
 fn metadata(response: &Value) -> Result<Value, Diagnostic> {
     let body = &response["returnObj"];
     if response["parameters"]["morePages"] != false {
-        return Err(err("The native graph schema was incomplete."));
+        return Err(err("The Epicor record set schema was incomplete."));
     }
     let roots = body["ZDataTable"]
         .as_array()
-        .ok_or_else(|| err("The native graph schema omitted tables."))?;
+        .ok_or_else(|| err("The Epicor record set schema omitted tables."))?;
     let expected: BTreeSet<_> = POSTING_TABLES.iter().copied().chain(["COAMap"]).collect();
     let mut found = BTreeSet::new();
     for r in roots {
@@ -56,11 +56,11 @@ fn metadata(response: &Value) -> Result<Value, Diagnostic> {
                 .is_some_and(|s| s.eq_ignore_ascii_case("Erp"))
             || !found.insert(name)
         {
-            return Err(err("The graph schema has foreign or repeated tables."));
+            return Err(err("The record set schema has foreign or repeated tables."));
         }
     }
     if found != expected {
-        return Err(err("The graph schema is missing tables."));
+        return Err(err("The record set schema is missing tables."));
     }
     let mut result = json!({});
     for t in &expected {
@@ -68,27 +68,27 @@ fn metadata(response: &Value) -> Result<Value, Diagnostic> {
     }
     for f in body["ZDataField"]
         .as_array()
-        .ok_or_else(|| err("The graph schema omitted fields."))?
+        .ok_or_else(|| err("The record set schema omitted fields."))?
     {
         let table = f["DataTableID"]
             .as_str()
-            .ok_or_else(|| err("A graph field has no table."))?;
+            .ok_or_else(|| err("A record set field has no table."))?;
         if !expected.contains(table) {
-            return Err(err("A graph field belongs to a foreign table."));
+            return Err(err("A record set field belongs to a foreign table."));
         }
         if f["External"] == true {
             continue;
         }
         if f["External"] != false {
             return Err(err(
-                "A graph field has no physical/external classification.",
+                "A record set field has no physical/external classification.",
             ));
         }
         let name = f["FieldName"]
             .as_str()
-            .ok_or_else(|| err("A graph field has no name."))?;
+            .ok_or_else(|| err("A record set field has no name."))?;
         if !crate::report_query::identifier(name) || f["DBTableName"] != table {
-            return Err(err("A graph field has an invalid physical mapping."));
+            return Err(err("A record set field has an invalid physical mapping."));
         }
         if result[table]
             .as_array()
@@ -96,7 +96,7 @@ fn metadata(response: &Value) -> Result<Value, Diagnostic> {
             .iter()
             .any(|r| r["FieldName"] == name)
         {
-            return Err(err("The graph schema repeats a field."));
+            return Err(err("The record set schema repeats a field."));
         }
         result[table].as_array_mut().unwrap().push(f.clone());
     }
@@ -112,7 +112,7 @@ fn metadata(response: &Value) -> Result<Value, Diagnostic> {
             },
         ] {
             if !fs.iter().any(|f| f["FieldName"] == name) {
-                return Err(err("The graph schema lacks ownership or row identity."));
+                return Err(err("The record set schema lacks ownership or row identity."));
             }
         }
     }
@@ -120,16 +120,16 @@ fn metadata(response: &Value) -> Result<Value, Diagnostic> {
 }
 fn payload(fs: &Value, alias: &str) -> Result<String, Diagnostic> {
     let mut cells = vec![];
-    for f in fs.as_array().ok_or_else(|| err("Invalid graph fields."))? {
+    for f in fs.as_array().ok_or_else(|| err("Epicor returned a definition in a form Herbert does not recognize, so it was not saved."))? {
         let name = f["FieldName"]
             .as_str()
-            .ok_or_else(|| err("Missing graph field name."))?;
+            .ok_or_else(|| err("Missing record set field name."))?;
         if !crate::report_query::identifier(name) {
-            return Err(err("Invalid graph field identifier."));
+            return Err(err("Invalid record set field identifier."));
         }
         let ty = f["DataType"]
             .as_str()
-            .ok_or_else(|| err("Missing graph field type."))?;
+            .ok_or_else(|| err("Missing record set field type."))?;
         let col = format!("{alias}.{name}");
         let value = match ty {
             "nvarchar" | "varchar" | "nchar" | "char" | "xml" | "uniqueidentifier" | "datetime"
@@ -150,7 +150,7 @@ fn payload(fs: &Value, alias: &str) -> Result<String, Diagnostic> {
             "float" | "real" => format!("CONVERT(nvarchar(max),{col},3)"),
             _ => {
                 return Err(err(
-                    "A native graph field type has no lossless JSON projection.",
+                    "An Epicor record set field type has no lossless JSON projection.",
                 ));
             }
         };
@@ -165,7 +165,7 @@ fn payload(fs: &Value, alias: &str) -> Result<String, Diagnostic> {
 }
 pub(super) fn build(company: &str, metadata: &Value, uids: &[i64]) -> Result<Value, Diagnostic> {
     if company.is_empty() {
-        return Err(err("An unscoped company graph read is prohibited."));
+        return Err(err("An unscoped company record set read is prohibited."));
     }
     let mut ds = json!({"DynamicQuery":[{"Company":company,"QueryID":"HerbertPostingGraph","Description":"Unsaved complete selected posting graph","Updatable":false,"ExtQuery":false,"IsShared":false,"AllCompanies":false,"XCompany":true,"RowMod":"A"}],"QuerySubQuery":[],"QueryTable":[],"QueryField":[],"QueryWhereItem":[],"QuerySortBy":[],"QueryParameter":[],"QueryCtrl":[],"QueryRelation":[],"QueryRelationField":[]});
     for (ti, table) in tables().enumerate() {
@@ -184,7 +184,7 @@ pub(super) fn build(company: &str, metadata: &Value, uids: &[i64]) -> Result<Val
             ds["QueryTable"].as_array_mut().unwrap().extend([row(json!({"TableID":alias,"DBSchemaName":"Erp","DBTableName":table,"TableType":"DB","Seq":1,"IsVisibleInDesigner":true})),row(json!({"TableID":"Calculated","TableType":"TT","Seq":-1,"IsVisibleInDesigner":false}))]);
             let fs = metadata
                 .get(table)
-                .ok_or_else(|| err("A graph table has no schema."))?;
+                .ok_or_else(|| err("A record set table has no schema."))?;
             let projected = [
                 (
                     "Kind",
@@ -240,11 +240,11 @@ fn results(response: &Value) -> Result<&Vec<Value>, Diagnostic> {
         .as_array()
         .is_some_and(|r| !r.is_empty())
     {
-        return Err(err("The native graph query returned errors."));
+        return Err(err("The Epicor record set query returned errors."));
     }
     response["returnObj"]["Results"]
         .as_array()
-        .ok_or_else(|| err("The native graph query omitted Results."))
+        .ok_or_else(|| err("The Epicor record set query omitted Results."))
 }
 pub(super) fn drive(r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     if let Some(d) = r.error {
@@ -263,7 +263,7 @@ pub(super) fn drive(r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             state,
         });
     }
-    let response = r.response.ok_or_else(|| err("Missing graph response."))?;
+    let response = r.response.ok_or_else(|| err("Epicor's response did not include the definition data. Nothing was saved for this item."))?;
     if state["phase"] == "graph-schema" {
         state["metadata"] = metadata(&response)?;
         let uids = if let Some(s) = state["_target"]["keys"]["ACTTypeUID"].as_str() {
@@ -290,7 +290,7 @@ pub(super) fn drive(r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         ));
     }
     if state["phase"] != "graph-rows" {
-        return Err(err("Unknown graph collection phase."));
+        return Err(err("Unknown record set collection phase."));
     }
     let graph = decode(results(&response)?, &state)?;
     let records = group_records(&graph, &state)?;
@@ -316,7 +316,7 @@ fn group_records(graph: &BTreeMap<String, Vec<Value>>, state: &Value) -> Result<
             .ok_or_else(|| err("Posting root omitted integer identity."))?;
         if let Some(target) = state["_target"]["keys"]["ACTTypeUID"].as_str() {
             if target != uid.to_string() {
-                return Err(err("The targeted graph returned a different root."));
+                return Err(err("The targeted record set returned a different root."));
             }
         }
         let mut data = json!({});
@@ -334,7 +334,7 @@ fn group_records(graph: &BTreeMap<String, Vec<Value>>, state: &Value) -> Result<
         maps.sort_by_key(|(position,_)|*position);
         if maps.len() != ids.len() {
             return Err(err(
-                "A referenced COA map is missing from the complete graph.",
+                "A referenced COA map is missing from the complete record set.",
             ));
         }
         data["COAMap"] = json!(maps.into_iter().map(|(_,row)|row).collect::<Vec<_>>());
@@ -384,31 +384,31 @@ pub(super) fn decode(
         let table = wire["Kind"]
             .as_str()
             .filter(|t| POSTING_TABLES.contains(t) || *t == "COAMap")
-            .ok_or_else(|| err("The bulk graph returned an unknown table."))?;
+            .ok_or_else(|| err("The bulk record set returned an unknown table."))?;
         let total = wire["Total"]
             .as_i64()
-            .ok_or_else(|| err("A graph row has no validation total."))?;
+            .ok_or_else(|| err("A record set row has no validation total."))?;
         if total >= 0 {
             if !wire["Payload"].is_null()
                 || !wire["RowId"].is_null()
                 || totals.insert(table, total as usize).is_some()
             {
-                return Err(err("The bulk graph repeats or corrupts a table manifest."));
+                return Err(err("The bulk record set repeats or corrupts a table manifest."));
             }
             continue;
         }
         if total != -1 {
-            return Err(err("Invalid graph row marker."));
+            return Err(err("Invalid record set row marker."));
         }
         let values: Value = serde_json::from_str(
             wire["Payload"]
                 .as_str()
-                .ok_or_else(|| err("A graph row omitted its payload."))?,
+                .ok_or_else(|| err("A record set row omitted its payload."))?,
         )
-        .map_err(|_| err("A graph payload is invalid JSON."))?;
+        .map_err(|_| err("A record set payload is invalid JSON."))?;
         let fs = fields(state, table)?.as_array().unwrap();
         if values.as_array().is_none_or(|a| a.len() != fs.len()) {
-            return Err(err("A graph payload omitted or added native fields."));
+            return Err(err("A record set payload omitted or added Epicor fields."));
         }
         let mut data: Value = Value::Object(
             fs.iter()
@@ -431,16 +431,16 @@ pub(super) fn decode(
         }
         let rid = data["SysRowID"]
             .as_str()
-            .ok_or_else(|| err("A graph payload omitted SysRowID."))?;
+            .ok_or_else(|| err("A record set payload omitted SysRowID."))?;
         if !seen.insert((table, rid.to_ascii_lowercase())) || data["Company"] != state["company"] {
-            return Err(err("A graph row repeats or has foreign ownership."));
+            return Err(err("A record set row repeats or has foreign ownership."));
         }
         graph.get_mut(table).unwrap().push(data);
     }
     for t in tables() {
         if totals.get(t).copied() != Some(graph[t].len()) {
             return Err(err(
-                "The bulk graph is truncated or missing a table manifest.",
+                "The bulk record set is truncated or missing a table manifest.",
             ));
         }
     }
@@ -451,13 +451,13 @@ pub(super) fn decode(
                 .as_i64()
                 .ok_or_else(|| err("A posting root omitted integer identity."))?,
         ) {
-            return Err(err("The complete graph repeats a posting identity."));
+            return Err(err("The complete record set repeats a posting identity."));
         }
     }
     for t in POSTING_TABLES {
         for r in &graph[*t] {
             if !r["ACTTypeUID"].as_i64().is_some_and(|n| uids.contains(&n)) {
-                return Err(err("A posting child has no root in the complete graph."));
+                return Err(err("A posting child has no root in the complete record set."));
             }
         }
     }

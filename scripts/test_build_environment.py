@@ -38,6 +38,7 @@ class BuildEnvironmentTests(unittest.TestCase):
                     "_CL_": "/DPRESERVED=1",
                     "CFLAGS": "/DUSER=1",
                     "CARGO_ENCODED_RUSTFLAGS": "--cfg\x1fexisting",
+                    "HERBERT_BUILD_HOME": temporary,
                 },
                 clear=True,
             ):
@@ -69,6 +70,7 @@ class BuildEnvironmentTests(unittest.TestCase):
                 "_CL_": "caller flags",
                 "CFLAGS": "-DUSER=1",
                 "CARGO_HOME": str(build.ROOT / "fixture-cache"),
+                "HERBERT_BUILD_HOME": str(build.ROOT / "fixture-build"),
             },
             clear=True,
         ):

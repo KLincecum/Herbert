@@ -69,11 +69,11 @@ pub fn parse(node: &Value) -> Result<Dataset, Diagnostic> {
         .filter(|e| e["namespace"] == XSD && e["name"] == "schema")
         .collect::<Vec<_>>();
     if schema.is_empty() {
-        return Err(error("The native DataSet has no inline schema."));
+        return Err(error("The Epicor DataSet has no inline schema."));
     } else if schema.len() == 1 {
         schemas(schema[0], &mut columns)?;
     } else {
-        return Err(error("The native DataSet repeats its inline XSD schema."));
+        return Err(error("The Epicor DataSet repeats its inline XSD schema."));
     }
     let mut tables: BTreeMap<String, Vec<Value>> =
         columns.keys().map(|k| (k.clone(), vec![])).collect();
@@ -86,7 +86,7 @@ pub fn parse(node: &Value) -> Result<Dataset, Diagnostic> {
             .ok_or_else(|| error("An XML DataSet row has no table name."))?;
         if &row["namespace"] != namespace || !columns.contains_key(table) {
             return Err(error(
-                "A native DataSet row is outside its declared table namespace or schema.",
+                "An Epicor DataSet row is outside its declared table namespace or schema.",
             ));
         }
         let mut fields = serde_json::Map::new();
@@ -96,12 +96,12 @@ pub fn parse(node: &Value) -> Result<Dataset, Diagnostic> {
                 .ok_or_else(|| error("A DataSet cell has no field name."))?;
             if &cell["namespace"] != namespace || !columns[table].contains_key(field) {
                 return Err(error(
-                    "A native DataSet cell is outside its declared namespace or schema.",
+                    "An Epicor DataSet cell is outside its declared namespace or schema.",
                 ));
             }
             if elements(cell).next().is_some() {
                 return Err(error(
-                    "A flat native DataSet cell contains nested elements.",
+                    "A flat Epicor DataSet cell contains nested elements.",
                 ));
             }
             let nil = cell["attributes"]
@@ -124,7 +124,7 @@ pub fn parse(node: &Value) -> Result<Dataset, Diagnostic> {
                 json!(text)
             };
             if fields.insert(field.into(), value).is_some() {
-                return Err(error("A native DataSet row repeats a field."));
+                return Err(error("An Epicor DataSet row repeats a field."));
             }
         }
         // DataSet XML omits values equal to an explicit schema default.

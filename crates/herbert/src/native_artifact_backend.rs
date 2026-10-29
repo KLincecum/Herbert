@@ -14,6 +14,53 @@ pub(crate) const QUERY: &str = "Ice.BO.DynamicQuerySvc";
 fn problem(code: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::new(code, message)
 }
+/// Epicor's BAQ importer log and per-question decisions, from either response shape.
+fn import_report(response: &Value) -> Value {
+    let field = |name: &str| {
+        response.pointer(&format!("/parameters/{name}")).or_else(|| response.get(name)).cloned().unwrap_or(Value::Null)
+    };
+    json!({"logResult": field("logResult"), "options": field("options")})
+}
+/// The refused BAQ import. The (already redacted) importer report is server text: technical
+/// detail beside the static message, as for helper compiler output.
+fn import_refused(report: Value) -> Diagnostic {
+    let mut refused = problem(
+        "ARTIFACT_IMPORT_REFUSED",
+        "Epicor refused to import the BAQ package. Check the BAQ in Epicor before trying again, because Herbert cannot confirm its current state. Epicor's import log is in the technical details.",
+    )
+    .with_context("check", "importRefused");
+    match &report["logResult"] {
+        Value::Null => {}
+        Value::String(log) => { refused.context.insert("serverMessage".into(), json!(log)); }
+        log => { refused.context.insert("serverMessage".into(), json!(log.to_string())); }
+    }
+    if !report["options"].is_null() {
+        refused.context.insert("importDecisions".into(), report["options"].clone());
+    }
+    refused
+}
+
+#[cfg(test)]
+mod import_refusal_tests {
+    use super::*;
+    #[test]
+    fn refused_baq_import_keeps_log_and_decisions_as_technical_detail() {
+        let nested = json!({"returnObj":false,"parameters":{"logResult":"Query MyBaq exists.","options":{"SameIDInCurrentCompany":"false"}}});
+        let refused = import_refused(import_report(&nested));
+        assert_eq!(refused.code, "ARTIFACT_IMPORT_REFUSED");
+        assert!(!refused.message.contains("MyBaq"), "server text never reaches the message");
+        assert_eq!(refused.context["check"], "importRefused");
+        assert_eq!(refused.context["serverMessage"], "Query MyBaq exists.");
+        assert_eq!(refused.context["importDecisions"], json!({"SameIDInCurrentCompany":"false"}));
+        assert!(refused.native_details.is_none());
+        // Top-level shape, a structured log, and nothing to report.
+        let flat = import_refused(import_report(&json!({"logResult":["a","b"],"options":null})));
+        assert_eq!(flat.context["serverMessage"], "[\"a\",\"b\"]");
+        assert!(!flat.context.contains_key("importDecisions"));
+        let empty = import_refused(import_report(&json!({"returnObj":false})));
+        assert!(!empty.context.contains_key("serverMessage") && !empty.context.contains_key("importDecisions"));
+    }
+}
 fn rows<'a>(value: &'a Value, table: &str) -> Result<&'a Vec<Value>, Diagnostic> {
     value
         .get("returnObj")
@@ -23,7 +70,7 @@ fn rows<'a>(value: &'a Value, table: &str) -> Result<&'a Vec<Value>, Diagnostic>
         .ok_or_else(|| {
             problem(
                 "ARTIFACT_READBACK_INVALID",
-                format!("Native response omitted {table}."),
+                format!("Epicor response omitted {table}."),
             )
         })
 }
@@ -31,7 +78,7 @@ fn string(row: &Value, field: &str) -> Result<String, Diagnostic> {
     row[field].as_str().map(String::from).ok_or_else(|| {
         problem(
             "ARTIFACT_READBACK_INVALID",
-            format!("Native response omitted {field}."),
+            format!("Epicor response omitted {field}."),
         )
     })
 }
@@ -64,7 +111,7 @@ pub(crate) async fn probe(
             {
                 return Err(problem(
                     "ARTIFACT_ABSENCE_UNVERIFIED",
-                    "The native query list did not prove complete absence.",
+                    "The Epicor query list did not prove complete absence.",
                 ));
             }
             return Ok(None);
@@ -72,7 +119,7 @@ pub(crate) async fn probe(
         if found.iter().any(|r| r["QueryID"].as_str() != Some(id)) {
             return Err(problem(
                 "ARTIFACT_IDENTITY_MISMATCH",
-                "The native exact-name list returned another query.",
+                "The Epicor exact-name list returned another query.",
             ));
         }
         (
@@ -91,7 +138,7 @@ pub(crate) async fn probe(
     if found.len() != 1 || found[0][id_field].as_str() != Some(id) {
         return Err(problem(
             "ARTIFACT_IDENTITY_MISMATCH",
-            "Native readback did not identify one exact installed artifact.",
+            "Epicor readback did not identify one exact installed artifact.",
         ));
     }
     let row = &found[0];
@@ -104,7 +151,7 @@ pub(crate) async fn probe(
     if uuid::Uuid::parse_str(&row_id).is_err() {
         return Err(problem(
             "ARTIFACT_IDENTITY_MISMATCH",
-            "The native artifact row identity is invalid.",
+            "The Epicor artifact row identity is invalid.",
         ));
     }
     Ok(Some((
@@ -131,7 +178,7 @@ pub(crate) async fn probe(
                 Some(row["Updatable"].as_bool().ok_or_else(|| {
                     problem(
                         "ARTIFACT_READBACK_INVALID",
-                        "The native query omits its update capability.",
+                        "The Epicor query omits its update capability.",
                     )
                 })?)
             },
@@ -165,13 +212,13 @@ pub(crate) async fn export(
             .decode(response.value["returnObj"].as_str().ok_or_else(|| {
                 problem(
                     "ARTIFACT_EXPORT_INVALID",
-                    "The native query export omitted its package bytes.",
+                    "The Epicor query export omitted its package bytes.",
                 )
             })?)
             .map_err(|_| {
                 problem(
                     "ARTIFACT_EXPORT_INVALID",
-                    "The native query export contained invalid base64.",
+                    "The Epicor query export contained invalid base64.",
                 )
             })
     }
@@ -199,22 +246,10 @@ pub(crate) async fn import(
     if kind != NativeArtifactType::FunctionLibrary
         && response.value["returnObj"].as_bool() != Some(true)
     {
-        return Err(problem(
-            "ARTIFACT_IMPORT_REFUSED",
-            format!(
-                "The native BAQ importer refused the package. Native log: {}. Native decisions: {}. Target readback is required before another write.",
-                response
-                    .value
-                    .pointer("/parameters/logResult")
-                    .or_else(|| response.value.get("logResult"))
-                    .unwrap_or(&Value::Null),
-                response
-                    .value
-                    .pointer("/parameters/options")
-                    .or_else(|| response.value.get("options"))
-                    .unwrap_or(&Value::Null)
-            ),
-        ));
+        let mut report = import_report(&response.value);
+        // Every string value is scrubbed of this connection's secrets, including the session token.
+        connection.redact_server_value(&mut report).await;
+        return Err(import_refused(report));
     }
     if kind == NativeArtifactType::FunctionLibrary {
         let errors = response
@@ -224,14 +259,14 @@ pub(crate) async fn import(
             .ok_or_else(|| {
                 problem(
                     "ARTIFACT_IMPORT_UNVERIFIED",
-                    "Native Function import omitted its diagnostic table. Readback is required.",
+                    "Epicor Function import omitted its diagnostic table. Readback is required.",
                 )
             })?;
         if !errors.is_empty() {
             return Err(problem(
                 "ARTIFACT_IMPORT_DIAGNOSTICS",
                 format!(
-                    "Native Function import returned diagnostics: {}",
+                    "Epicor Function import returned diagnostics: {}",
                     serde_json::to_string(errors).unwrap_or_default()
                 ),
             ));
@@ -266,7 +301,7 @@ pub(crate) fn verify_query(
             return Err(problem(
                 "ARTIFACT_QUERY_SIGNATURE_MISMATCH",
                 format!(
-                    "Query parameter {} does not match its required native type and required flag.",
+                    "Query parameter {} does not match its required Epicor type and required flag.",
                     required.name
                 ),
             ));
@@ -286,7 +321,7 @@ pub(crate) fn verify_functions(
     {
         return Err(problem(
             "ARTIFACT_FUNCTION_NOT_ACTIVE",
-            "The native Function library is not enabled and published.",
+            "The Epicor Function library is not enabled and published.",
         ));
     }
     let functions = library["Functions"].as_array().ok_or_else(|| {
@@ -317,7 +352,7 @@ pub(crate) fn verify_functions(
             return Err(problem(
                 "ARTIFACT_COMPILATION_FAILED",
                 format!(
-                    "Function {} is disabled or invalid after native compilation.",
+                    "Function {} is disabled or invalid after Epicor compilation.",
                     required.function
                 ),
             ));
@@ -325,7 +360,7 @@ pub(crate) fn verify_functions(
         let signature = function["FunctionSignature"].as_array().ok_or_else(|| {
             problem(
                 "ARTIFACT_FUNCTION_SIGNATURE_MISMATCH",
-                "Native function signature is missing.",
+                "Epicor function signature is missing.",
             )
         })?;
         let mut expected = Vec::new();
@@ -353,7 +388,7 @@ pub(crate) fn verify_functions(
             return Err(problem(
                 "ARTIFACT_FUNCTION_SIGNATURE_MISMATCH",
                 format!(
-                    "Function {} does not match its required native parameter signature.",
+                    "Function {} does not match its required Epicor parameter signature.",
                     required.function
                 ),
             ));
@@ -362,12 +397,17 @@ pub(crate) fn verify_functions(
     Ok(())
 }
 pub(crate) async fn enable(
-    connection: &Connection,
-    id: &str,
-    expected: &NativeIdentity,
-    source: &Value,
-    cancel: &CancellationToken,
+    connection: &Connection, id: &str, expected: &NativeIdentity,
+    source: &Value, cancel: &CancellationToken,
 ) -> Result<(), Diagnostic> {
+    let arguments=enable_arguments(connection,id,expected,source,cancel).await?;
+    apply_enable(connection,arguments,cancel).await
+}
+/// Prepare native rows before the owning lifecycle performs its final grant check.
+pub(crate) async fn enable_arguments(
+    connection: &Connection, id: &str, expected: &NativeIdentity,
+    source: &Value, cancel: &CancellationToken,
+) -> Result<Value, Diagnostic> {
     let (current, native) = probe(connection, NativeArtifactType::FunctionLibrary, id, cancel)
         .await?
         .ok_or_else(|| {
@@ -387,13 +427,13 @@ pub(crate) async fn enable(
         for row in tableset[table].as_array_mut().ok_or_else(|| {
             problem(
                 "ARTIFACT_READBACK_INVALID",
-                "Native enable rows are absent.",
+                "Epicor enable rows are absent.",
             )
         })? {
             if row["LibraryID"].as_str() != Some(id) {
                 return Err(problem(
                     "ARTIFACT_OWNER_MISMATCH",
-                    "A native compilation row belongs to another library.",
+                    "An Epicor compilation row belongs to another library.",
                 ));
             }
             let disabled = if table == "EfxLibrary" {
@@ -414,14 +454,10 @@ pub(crate) async fn enable(
             row["RowMod"] = json!("U");
         }
     }
-    let response = connection
-        .artifact_call(
-            EFX,
-            "ApplyChangesWithDiagnostics",
-            json!({"libraryTableset":tableset}),
-            cancel,
-        )
-        .await?;
+    Ok(json!({"libraryTableset":tableset}))
+}
+pub(crate) async fn apply_enable(connection:&Connection,arguments:Value,cancel:&CancellationToken)->Result<(),Diagnostic> {
+    let response=connection.artifact_call(EFX,"ApplyChangesWithDiagnostics",arguments,cancel).await?;
     crate::native_access::verify_update_result(&response.value)
 }
 pub(crate) async fn publish(
@@ -438,7 +474,7 @@ pub(crate) fn verify_compiled(package: &Value, source: &Value) -> Result<(), Dia
     let functions = package["Library"]["Functions"].as_array().ok_or_else(|| {
         problem(
             "ARTIFACT_COMPILATION_UNVERIFIED",
-            "Native compiled function rows are absent.",
+            "Epicor compiled function rows are absent.",
         )
     })?;
     let originals = source["Library"]["Functions"].as_array().ok_or_else(|| {
@@ -480,7 +516,7 @@ pub(crate) async fn delete(
     if !owns(&current, expected) {
         return Err(problem(
             "ARTIFACT_OWNER_MISMATCH",
-            "The native identity or ownership marker changed. The artifact was preserved.",
+            "The Epicor ID or ownership marker changed. The artifact was preserved.",
         ));
     }
     let result = if kind == NativeArtifactType::FunctionLibrary {
@@ -517,7 +553,7 @@ pub(crate) async fn delete(
         return Err(result.err().unwrap_or_else(|| {
             problem(
                 "ARTIFACT_CLEANUP_PENDING",
-                "The temporary artifact is still present after native cleanup.",
+                "The temporary artifact is still present after Epicor cleanup.",
             )
         }));
     }
@@ -528,7 +564,7 @@ pub(crate) async fn delete(
 /// Collection plugins parse their own exports through the generic JSON action.
 pub(crate) fn library_backup(response: &Value, library: &str) -> Result<(Vec<u8>, Value), Diagnostic> {
     use base64::Engine;
-    let invalid = || Diagnostic::new("NATIVE_EXPORT_INVALID", "The native helper backup has invalid encoding, structure, or identity.");
+    let invalid = || Diagnostic::new("NATIVE_EXPORT_INVALID", "The Epicor helper backup has invalid encoding, structure, or identity.");
     let encoded = response.get("returnObj").and_then(Value::as_str).ok_or_else(invalid)?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| invalid())?;
     let view = bytes.strip_prefix(&[0xEF,0xBB,0xBF]).unwrap_or(&bytes);

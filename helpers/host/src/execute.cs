@@ -27,7 +27,7 @@ catch (System.Exception error)
     {
         types.Add(new Newtonsoft.Json.Linq.JObject { ["type"] = current.GetType().FullName, ["hresult"] = current.HResult });
         sharing |= current is System.IO.IOException &&
-            // Native Linux qualification returns EAGAIN (11); Windows returns
+            // Linux returns EAGAIN (11); Windows returns
             // sharing/lock violation (32/33). Other IO failures are not retried.
             (current.HResult == 11 || (current.HResult & 0xffff) == 32 || (current.HResult & 0xffff) == 33);
         current = current.InnerException;

@@ -1,13 +1,13 @@
 """Publish the pinned companion without PowerShell or in-tree obj/bin output."""
 from pathlib import Path
-import argparse,json,os,subprocess,sys,winreg
+import argparse,os,shutil,subprocess,sys,winreg
 
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--rid',default='win-x64');args=parser.parse_args()
  source=Path(__file__).resolve().parent
- manifest=json.loads(Path('C:/Tools/Workbench/manifests/installed.json').read_text())
- dotnet=next(p['executable'] for p in manifest['packages'] if p['name']=='dotnet')
- work=Path(os.environ.get('HERBERT_BUILD_HOME','C:/Tools/Workbench/workspace/build/hoover'))/'managed-decompilation'
+ dotnet=os.environ.get('HERBERT_DOTNET') or shutil.which('dotnet')
+ if not dotnet:raise SystemExit('Set HERBERT_DOTNET to the .NET SDK dotnet executable or put dotnet on PATH.')
+ work=Path(os.environ.get('HERBERT_BUILD_HOME') or Path(os.environ.get('XDG_CACHE_HOME',str(Path.home()/'.cache')))/'herbert')/'managed-decompilation'
  work.mkdir(parents=True,exist_ok=True);env=os.environ.copy()
  for key,name in [('ProgramFiles','ProgramFilesDir'),('ProgramFiles(x86)','ProgramFilesDir (x86)')]:
   if not env.get(key):

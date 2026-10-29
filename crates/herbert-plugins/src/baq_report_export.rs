@@ -26,10 +26,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C16".into(),
+            category: "report-definitions".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C16".into(),
+                category: "report-definitions".into(),
                 kind: "BAQReport".into(),
                 scope: Scope::Company {
                     company: "C".into(),

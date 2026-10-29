@@ -9,7 +9,7 @@ fn invalid(message: &str) -> Diagnostic {
 fn length(n: usize) -> Result<[u8; 4], Diagnostic> {
     // BSON lengths are signed 32-bit values in the wire format.
     Ok(i32::try_from(n)
-        .map_err(|_| invalid("The BSON document exceeds its Int32 length field."))?
+        .map_err(|_| invalid("A compiled function file is too large to package (over 2 GB). The original bytes were kept."))?
         .to_le_bytes())
 }
 fn document(fields: impl IntoIterator<Item = (String, Value)>) -> Result<Vec<u8>, Diagnostic> {
@@ -97,7 +97,7 @@ pub fn build(export: &Value) -> Result<Vec<u8>, Diagnostic> {
         .map(|i| u8::from_str_radix(&compact[i..i + 2], 16).unwrap())
         .collect::<Vec<_>>();
     // Native .NET Guid.ToByteArray reverses the first three GUID components.
-    // Lab native EFXB declares these bytes with subtype 4.
+    // Native EFXB declares these bytes with subtype 4.
     bytes[..4].reverse();
     bytes[4..6].reverse();
     bytes[6..8].reverse();

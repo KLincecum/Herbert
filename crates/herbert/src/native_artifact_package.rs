@@ -19,29 +19,29 @@ fn invalid(message: impl Into<String>) -> Diagnostic {
 fn child<'a>(node: &'a Value, name: &str) -> Result<&'a Value, Diagnostic> {
     let children = node["content"]
         .as_array()
-        .ok_or_else(|| invalid("Native XML has no content."))?;
+        .ok_or_else(|| invalid("Epicor XML has no content."))?;
     let mut matches = children
         .iter()
         .filter_map(|v| v.get("element"))
         .filter(|v| v["name"].as_str() == Some(name));
     let result = matches
         .next()
-        .ok_or_else(|| invalid(format!("Native XML omits {name}.")))?;
+        .ok_or_else(|| invalid(format!("Epicor XML omits {name}.")))?;
     if matches.next().is_some() {
-        return Err(invalid(format!("Native XML repeats {name}.")));
+        return Err(invalid(format!("Epicor XML repeats {name}.")));
     }
     Ok(result)
 }
 fn text(node: &Value) -> Result<String, Diagnostic> {
     let content = node["content"]
         .as_array()
-        .ok_or_else(|| invalid("Native XML field has no content."))?;
+        .ok_or_else(|| invalid("Epicor XML field has no content."))?;
     let mut value = String::new();
     for part in content {
         if let Some(part) = part["text"].as_str() {
             value.push_str(part);
         } else {
-            return Err(invalid("Native metadata contains nested content."));
+            return Err(invalid("Epicor metadata contains nested content."));
         }
     }
     Ok(value)
@@ -49,7 +49,7 @@ fn text(node: &Value) -> Result<String, Diagnostic> {
 fn xml_text(bytes: &[u8]) -> Result<String, Diagnostic> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         if bytes.len() % 2 != 0 {
-            return Err(invalid("Native UTF-16 has an odd byte length."));
+            return Err(invalid("Epicor UTF-16 has an odd byte length."));
         }
         let little = bytes[0] == 0xff;
         let units = bytes[2..]
@@ -62,7 +62,7 @@ fn xml_text(bytes: &[u8]) -> Result<String, Diagnostic> {
                 }
             })
             .collect::<Vec<_>>();
-        String::from_utf16(&units).map_err(|_| invalid("Native UTF-16 is malformed."))
+        String::from_utf16(&units).map_err(|_| invalid("Epicor UTF-16 is malformed."))
     } else {
         String::from_utf8(
             bytes
@@ -70,7 +70,7 @@ fn xml_text(bytes: &[u8]) -> Result<String, Diagnostic> {
                 .unwrap_or(bytes)
                 .to_vec(),
         )
-        .map_err(|_| invalid("Native XML must be UTF-8 or BOM-marked UTF-16."))
+        .map_err(|_| invalid("This package contains XML in a text encoding that Epicor import does not accept, so Herbert will not import it. Download the item again to get a fresh copy."))
     }
 }
 
@@ -92,35 +92,35 @@ fn replace_root_field(
         let before = reader.buffer_position() as usize;
         let event = reader
             .read_event()
-            .map_err(|_| invalid("Native XML is malformed."))?;
+            .map_err(|_| invalid("Epicor XML is malformed."))?;
         let direct = stack.len() == 2 && stack[1].as_slice() == row.as_bytes();
         match event {
             Event::Start(e) => {
                 if stack.len() == 1 && e.local_name().as_ref() == row.as_bytes() {
                     let name = String::from_utf8(e.name().as_ref().to_vec())
-                        .map_err(|_| invalid("Native XML name is malformed."))?;
+                        .map_err(|_| invalid("Epicor XML name is malformed."))?;
                     if let Some((prefix, _)) = name.split_once(':') {
                         qualified = format!("{prefix}:{field}");
                     }
                 }
                 if direct && e.local_name().as_ref() == field.as_bytes() {
                     if found.is_some() || start.is_some() {
-                        return Err(invalid("Native ownership field is repeated."));
+                        return Err(invalid("Epicor ownership field is repeated."));
                     }
                     qualified = String::from_utf8(e.name().as_ref().to_vec())
-                        .map_err(|_| invalid("Native XML name is malformed."))?;
+                        .map_err(|_| invalid("Epicor XML name is malformed."))?;
                     start = Some(before);
                 }
                 stack.push(e.local_name().as_ref().to_vec());
             }
             Event::Empty(e) if direct && e.local_name().as_ref() == field.as_bytes() => {
                 qualified = String::from_utf8(e.name().as_ref().to_vec())
-                    .map_err(|_| invalid("Native XML name is malformed."))?;
+                    .map_err(|_| invalid("Epicor XML name is malformed."))?;
                 if found
                     .replace((before, reader.buffer_position() as usize))
                     .is_some()
                 {
-                    return Err(invalid("Native ownership field is repeated."));
+                    return Err(invalid("Epicor ownership field is repeated."));
                 }
             }
             Event::End(e) => {
@@ -131,7 +131,7 @@ fn replace_root_field(
                     found = Some((
                         start
                             .take()
-                            .ok_or_else(|| invalid("Native field token mismatch."))?,
+                            .ok_or_else(|| invalid("Epicor field token mismatch."))?,
                         reader.buffer_position() as usize,
                     ));
                 }
@@ -146,7 +146,7 @@ fn replace_root_field(
     }
     let (begin, end) = found
         .or_else(|| insert.map(|p| (p, p)))
-        .ok_or_else(|| invalid("Native artifact root row is absent."))?;
+        .ok_or_else(|| invalid("Epicor artifact root row is absent."))?;
     let replacement = format!(
         "<{qualified}>{}</{qualified}>",
         quick_xml::escape::escape(value)
@@ -197,7 +197,7 @@ pub(crate) fn prepare(
         let mut bytes = vec![0xef, 0xbb, 0xbf];
         bytes.extend(
             serde_json::to_vec(&package)
-                .map_err(|_| invalid("Cannot serialize the native Function export."))?,
+                .map_err(|_| invalid("Cannot serialize the Epicor Function export."))?,
         );
         return Ok(PreparedArtifact {
             bytes,
@@ -206,14 +206,14 @@ pub(crate) fn prepare(
         });
     }
     let mut archive = zip::ZipArchive::new(Cursor::new(source))
-        .map_err(|_| invalid("The BAQ export is not a native ZIP package."))?;
+        .map_err(|_| invalid("The BAQ export is not an Epicor ZIP package."))?;
     let mut names = BTreeSet::new();
     for index in 0..archive.len() {
         let member = archive
             .by_index(index)
-            .map_err(|_| invalid("Cannot read native package directory."))?;
+            .map_err(|_| invalid("Cannot read Epicor package directory."))?;
         if !names.insert(member.name().to_string()) {
-            return Err(invalid("Native package repeats a member name."));
+            return Err(invalid("Epicor package repeats a member name."));
         }
     }
     let mut xml_bytes = Vec::new();
@@ -221,13 +221,13 @@ pub(crate) fn prepare(
         .by_name("DynamicQuery")
         .map_err(|_| invalid("The BAQ export omits DynamicQuery."))?
         .read_to_end(&mut xml_bytes)
-        .map_err(|_| invalid("The native query member is damaged."))?;
+        .map_err(|_| invalid("The Epicor query member is damaged."))?;
     let parsed = crate::xml_archive::parse_xml(&xml_bytes)?;
     if parsed["name"] != "BAQDesignerDataSet"
         || parsed["namespace"] != "http://www.epicor.com/Ice/300/BO/BAQDesigner/BAQDesigner"
     {
         return Err(invalid(
-            "The BAQ export has a different native DataSet identity.",
+            "The BAQ export has a different Epicor DataSet identity.",
         ));
     }
     let row = child(&parsed, "DynamicQueryDesigner")?;
@@ -241,7 +241,7 @@ pub(crate) fn prepare(
         }
     {
         return Err(invalid(
-            "The declared BAQ/UBAQ type differs from the native export.",
+            "The declared BAQ/UBAQ type differs from Epicor's export.",
         ));
     }
     let comment = text(child(row, "Comment")?)?;
@@ -278,7 +278,7 @@ pub(crate) fn prepare(
     for index in 0..archive.len() {
         let member = archive
             .by_index(index)
-            .map_err(|_| invalid("Cannot read native package member."))?;
+            .map_err(|_| invalid("Cannot read Epicor package member."))?;
         if member.name() == "DynamicQuery" {
             output
                 .start_file(
@@ -286,19 +286,19 @@ pub(crate) fn prepare(
                     zip::write::SimpleFileOptions::default()
                         .compression_method(member.compression()),
                 )
-                .map_err(|_| invalid("Cannot write native query member."))?;
+                .map_err(|_| invalid("Cannot write Epicor query member."))?;
             output
                 .write_all(&rewritten)
-                .map_err(|_| invalid("Cannot preserve native query bytes."))?;
+                .map_err(|_| invalid("Cannot preserve Epicor query bytes."))?;
         } else {
             output
                 .raw_copy_file(member)
-                .map_err(|_| invalid("Cannot preserve a native package member."))?;
+                .map_err(|_| invalid("Cannot preserve an Epicor package member."))?;
         }
     }
     let bytes = output
         .finish()
-        .map_err(|_| invalid("Cannot complete native package."))?
+        .map_err(|_| invalid("Cannot complete Epicor package."))?
         .into_inner();
     Ok(PreparedArtifact {
         bytes,
@@ -344,7 +344,7 @@ pub(crate) fn verify_update_configuration(
     ] {
         let expected = source["content"]
             .as_array()
-            .ok_or_else(|| invalid("Native query content is missing."))?
+            .ok_or_else(|| invalid("Epicor query content is missing."))?
             .iter()
             .filter_map(|v| v.get("element"))
             .filter(|v| v["name"].as_str() == Some(table))
@@ -357,7 +357,7 @@ pub(crate) fn verify_update_configuration(
             .ok_or_else(|| {
                 Diagnostic::new(
                     "ARTIFACT_UBAQ_CONFIGURATION_UNVERIFIED",
-                    format!("Native readback omitted {table}."),
+                    format!("Epicor readback omitted {table}."),
                 )
             })?;
         let mut remaining = observed.iter().collect::<Vec<_>>();
@@ -365,14 +365,14 @@ pub(crate) fn verify_update_configuration(
             let mut fields = Vec::new();
             for entry in row["content"]
                 .as_array()
-                .ok_or_else(|| invalid("Native query row is malformed."))?
+                .ok_or_else(|| invalid("Epicor query row is malformed."))?
             {
                 let Some(field) = entry.get("element") else {
                     continue;
                 };
                 let name = field["name"]
                     .as_str()
-                    .ok_or_else(|| invalid("Native field name is missing."))?;
+                    .ok_or_else(|| invalid("Epicor field name is missing."))?;
                 if matches!(
                     name,
                     "Company"
@@ -411,7 +411,7 @@ pub(crate) fn verify_update_configuration(
                 return Err(Diagnostic::new(
                     "ARTIFACT_UBAQ_CONFIGURATION_CHANGED",
                     format!(
-                        "Native import did not preserve a supplied {table} row. The UBAQ will not be executed."
+                        "Epicor's import did not preserve a supplied {table} row. The UBAQ will not be executed."
                     ),
                 ));
             };
@@ -421,7 +421,7 @@ pub(crate) fn verify_update_configuration(
             return Err(Diagnostic::new(
                 "ARTIFACT_UBAQ_CONFIGURATION_CHANGED",
                 format!(
-                    "Native import added unexpected {table} rows. The UBAQ will not be executed."
+                    "Epicor's import added unexpected {table} rows. The UBAQ will not be executed."
                 ),
             ));
         }
@@ -446,16 +446,16 @@ mod update_verification_tests {
 
 fn bpm_member(bytes: &[u8]) -> Result<Option<Value>, Diagnostic> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|_| invalid("Native query export is not a ZIP package."))?;
+        .map_err(|_| invalid("Epicor query export is not a ZIP package."))?;
     let mut member = match archive.by_name("BpMethodDataset") {
         Ok(member) => member,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(_) => return Err(invalid("Cannot read the native UBAQ BPM member.")),
+        Err(_) => return Err(invalid("Cannot read the Epicor UBAQ BPM member.")),
     };
     let mut bytes = Vec::new();
     member
         .read_to_end(&mut bytes)
-        .map_err(|_| invalid("Cannot read native UBAQ BPM definitions."))?;
+        .map_err(|_| invalid("Cannot read Epicor UBAQ BPM definitions."))?;
     crate::xml_archive::parse_xml(&bytes).map(Some)
 }
 pub(crate) fn has_bpm(bytes: &[u8]) -> Result<bool, Diagnostic> {
@@ -511,7 +511,7 @@ pub(crate) fn verify_bpm(source: &[u8], exported: &[u8]) -> Result<(), Diagnosti
     let Some(expected) = bpm_member(source)? else {
         return Ok(());
     };
-    let observed = bpm_member(exported)?.ok_or_else(|| Diagnostic::new("ARTIFACT_UBAQ_BPM_MISSING", "Native import omitted the supplied UBAQ BPM definitions. The UBAQ will not be executed."))?;
+    let observed = bpm_member(exported)?.ok_or_else(|| Diagnostic::new("ARTIFACT_UBAQ_BPM_MISSING", "Epicor's import omitted the supplied UBAQ BPM definitions. The UBAQ will not be executed."))?;
     fn directives(
         root: &Value,
     ) -> Result<Vec<(String, String, String, String, Value)>, Diagnostic> {
@@ -543,7 +543,7 @@ pub(crate) fn verify_bpm(source: &[u8], exported: &[u8]) -> Result<(), Diagnosti
             return Err(Diagnostic::new(
                 "ARTIFACT_UBAQ_BPM_CHANGED",
                 format!(
-                    "Native import did not preserve UBAQ directive {} on method {}. Its original package is retained and the UBAQ will not be executed.",
+                    "Epicor's import did not preserve UBAQ directive {} on method {}. Its original package is retained and the UBAQ will not be executed.",
                     directive.1, directive.0
                 ),
             ));

@@ -4,14 +4,14 @@ use std::{
     env, fs,
     path::PathBuf,
 };
-// C12 backup owner resolution delegates a personal owner to the C13 tables route.
+// Kinetic applications and layers backup owner resolution delegates a personal owner to the Kinetic personalizations tables route.
 // Retain its specification and all kind-guarded start/continue/append code.
 fn dependency_kind(category: &str, kind: &str) -> bool {
     matches!(
         (category, kind),
-        ("C12", "PersistedKineticPersonalization")
-            | ("C19", "PersistedKineticApplicationFile")
-            | ("C17", "PersistedReportStyleRule")
+        ("kinetic-applications-and-layers", "PersistedKineticPersonalization")
+            | ("configurators", "PersistedKineticApplicationFile")
+            | ("report-styles-and-layouts", "PersistedReportStyleRule")
     )
 }
 fn main() {
@@ -24,7 +24,7 @@ fn main() {
         .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
         .filter_map(|path| {
             path.file_stem()
-                .map(|stem| stem.to_string_lossy().to_ascii_uppercase())
+                .map(|stem| stem.to_string_lossy().into_owned())
         })
         .collect();
     if let Some(ref category) = selected {

@@ -26,7 +26,7 @@ pub enum Step {
 pub fn start(company: &str, roots: &[Value], size: u32) -> Result<Step, Diagnostic> {
     if company.is_empty() || size == 0 || size > i32::MAX as u32 {
         return Err(error(
-            "Bulk reads require a company and a positive native Int32 page size.",
+            "Configurator reads need a selected company and a page size from 1 to 2147483647.",
         ));
     }
     let mut ids = BTreeSet::new();
@@ -67,7 +67,7 @@ fn next(mut state: Value) -> Result<Step, Diagnostic> {
         .ok_or_else(|| error("Missing bulk table index."))? as usize;
     if index == list.len() {
         let records: BTreeMap<String, Value> = serde_json::from_value(state["records"].clone())
-            .map_err(|_| error("Invalid bulk records."))?;
+            .map_err(|_| error("Epicor returned configurator records in a form Herbert does not recognize, so this page was not saved."))?;
         for (id, record) in &records {
             if record["PcStatus"].as_array().is_none_or(|r| r.len() != 1) {
                 return Err(error(format!(
@@ -80,7 +80,7 @@ fn next(mut state: Value) -> Result<Step, Diagnostic> {
                 .is_some_and(|(stored, visible)| stored.eq_ignore_ascii_case(visible))
             {
                 return Err(error(format!(
-                    "Configurator {id} changed identity after native discovery."
+                    "Configurator {id} changed identity after Epicor discovery."
                 )));
             }
         }
@@ -93,11 +93,11 @@ fn next(mut state: Value) -> Result<Step, Diagnostic> {
         let mut drawings: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, record) in state["records"]
             .as_object()
-            .ok_or_else(|| error("Missing bulk records."))?
+            .ok_or_else(|| error("Epicor's response contained no configurator records where some were expected. Nothing was saved for this page."))?
         {
             for row in record["PcInputs"]
                 .as_array()
-                .ok_or_else(|| error("Missing input rows."))?
+                .ok_or_else(|| error("Epicor did not return this configurator's inputs, so it was not saved."))?
             {
                 if row["ControlType"].as_str().is_some_and(|s| {
                     s.eq_ignore_ascii_case(
@@ -138,16 +138,16 @@ fn query(mut state: Value) -> Result<Step, Diagnostic> {
         .get(
             state["index"]
                 .as_u64()
-                .ok_or_else(|| error("Missing table index."))? as usize,
+                .ok_or_else(|| error("Herbert could not continue this download from its saved progress (configurator table position). Start the download again."))? as usize,
         )
-        .ok_or_else(|| error("Invalid table index."))?;
+        .ok_or_else(|| error("Herbert could not continue this download from its saved progress (configurator table position). Start the download again."))?;
     let company = state["company"]
         .as_str()
-        .ok_or_else(|| error("Missing company."))?;
+        .ok_or_else(|| error("Epicor did not say which company these records belong to, so they were not saved."))?;
     let size = state["size"]
         .as_u64()
         .and_then(|s| u32::try_from(s).ok())
-        .ok_or_else(|| error("Invalid page size."))?;
+        .ok_or_else(|| error("The page size for this download must be a whole number of 1 or more. Correct it in the plugin settings."))?;
     let mut criteria = vec![(
         "Company".into(),
         "=".into(),
@@ -164,7 +164,7 @@ fn query(mut state: Value) -> Result<Step, Diagnostic> {
         };
         let ids: Vec<_> = keys
             .as_object()
-            .ok_or_else(|| error("Missing selected identities."))?
+            .ok_or_else(|| error("Herbert could not continue this download from its saved progress (selected configurators). Start the download again."))?
             .keys()
             .collect();
         if ids.is_empty() {
@@ -207,24 +207,24 @@ fn query(mut state: Value) -> Result<Step, Diagnostic> {
     args["queryDS"]["DynamicQuery"][0]["Description"] =
         json!("Unsaved configurator page backup read");
     state["phase"] = json!("rows");
-    Ok(Step::Read {
-        action: HostAction::NativeRead {
-            service: "Ice.BO.DynamicQuerySvc".into(),
-            method: "Execute".into(),
-            arguments: args,
-            export: false,
-        },
-        state,
-    })
+    let (service, method) = ("Ice.BO.DynamicQuerySvc".to_owned(), "Execute".to_owned());
+    // Company-wide PcInputVar is identical for every configurator page (only Company, the shared dictionary
+    // fields, page size and keyset position): a SharedNativeRead lets the host serve it once per run.
+    let action = if table == "PcInputVar" {
+        HostAction::SharedNativeRead { service, method, arguments: args, export: false }
+    } else {
+        HostAction::NativeRead { service, method, arguments: args, export: false }
+    };
+    Ok(Step::Read { action, state })
 }
 pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
     let list = tables();
     let index = state["index"]
         .as_u64()
-        .ok_or_else(|| error("Missing table index."))? as usize;
+        .ok_or_else(|| error("Herbert could not continue this download from its saved progress (configurator table position). Start the download again."))? as usize;
     let table = list
         .get(index)
-        .ok_or_else(|| error("Invalid table index."))?;
+        .ok_or_else(|| error("Herbert could not continue this download from its saved progress (configurator table position). Start the download again."))?;
     if state["phase"] == "dictionary" {
         let fields = response
             .pointer("/returnObj/TableFieldList")
@@ -265,7 +265,7 @@ pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
         !errors.is_null() && errors.as_array().is_none_or(|rows| !rows.is_empty())
     }) {
         return Err(error(format!(
-            "Native stored {table} query returned errors."
+            "Epicor stored {table} query returned errors."
         )));
     }
     let rows = response
@@ -274,10 +274,10 @@ pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
         .ok_or_else(|| error(format!("Stored {table} response omitted Results.")))?;
     let size = state["size"]
         .as_u64()
-        .ok_or_else(|| error("Missing page size."))? as usize;
+        .ok_or_else(|| error("No page size was set for this download. Enter a page size of 1 or more in the plugin settings."))? as usize;
     if rows.len() > size {
         return Err(error(
-            "Stored page exceeded its requested native page size.",
+            "Stored page exceeded its requested Epicor page size.",
         ));
     }
     for row in rows {
@@ -330,7 +330,7 @@ pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
     if rows.len() == size {
         let after = rows.last().unwrap()["SysRowID"].clone();
         if after == state["after"] {
-            return Err(error("Stored page cursor did not advance."));
+            return Err(error("Stored page saved position did not advance."));
         }
         state["after"] = after;
         return query(state);
@@ -453,8 +453,28 @@ mod tests {
         assert!(receive(state, json!({"returnObj":{}})).is_err());
     }
     #[test]
+    fn company_input_vars_are_one_shared_read_identical_across_pages() {
+        // Two different configurator pages must ask for byte-identical PcInputVar reads, as a SharedNativeRead,
+        // so the host's run cache answers the second page; per-configurator tables stay ordinary NativeReads.
+        let fields = json!({"returnObj":{"TableFieldList":[{"FieldName":"Company","DataType":"nvarchar"},{"FieldName":"SysRowID","DataType":"uniqueidentifier"},{"FieldName":"VarName","DataType":"nvarchar"}]}});
+        let read = |id: &str| {
+            let root = json!({"Company":"C","ConfigID":id,"SysRowID":format!("00000000-0000-0000-0000-00000000000{}", id.len())});
+            let Step::Read { mut state, .. } = start("C", &[root], 5).unwrap() else { panic!() };
+            state["index"] = json!(tables().iter().position(|t| t == "PcInputVar").unwrap());
+            state["phase"] = json!("dictionary");
+            let Step::Read { action, .. } = receive(state, fields.clone()).unwrap() else { panic!() };
+            action
+        };
+        let (HostAction::SharedNativeRead { arguments: a, .. }, HostAction::SharedNativeRead { arguments: b, .. }) = (read("A"), read("BB")) else { panic!("PcInputVar must be a SharedNativeRead") };
+        assert_eq!(a, b);
+        let root = json!({"Company":"C","ConfigID":"A","SysRowID":"00000000-0000-0000-0000-000000000001"});
+        let Step::Read { state, .. } = start("C", &[root], 5).unwrap() else { panic!() };
+        let Step::Read { action, .. } = receive(state, json!({"returnObj":{"TableFieldList":[{"FieldName":"Company","DataType":"nvarchar"},{"FieldName":"ConfigID","DataType":"nvarchar"},{"FieldName":"SysRowID","DataType":"uniqueidentifier"}]}})).unwrap() else { panic!() };
+        assert!(matches!(action, HostAction::NativeRead { .. }));
+    }
+    #[test]
     fn supplied_two_root_bulk_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -538,7 +558,7 @@ mod tests {
     }
     #[test]
     fn supplied_native_bulk_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {

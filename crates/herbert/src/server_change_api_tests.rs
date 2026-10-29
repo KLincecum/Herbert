@@ -3,18 +3,18 @@ use super::*;
 use crate::input::{AuthMode,Credentials};
 use std::{io::{BufRead,BufReader,Read,Write},net::{TcpListener,TcpStream},sync::Mutex as StdMutex};
 
-struct Server {endpoint:url::Url,calls:Arc<StdMutex<Vec<String>>>,stop:Arc<AtomicBool>,worker:Option<std::thread::JoinHandle<()>>}
+pub(crate) struct Server {pub(crate) endpoint:url::Url,pub(crate) calls:Arc<StdMutex<Vec<String>>>,stop:Arc<AtomicBool>,worker:Option<std::thread::JoinHandle<()>>}
 impl Server {
-    fn new()->Self {
+    pub(crate) fn new()->Self {
         let listener=TcpListener::bind(("127.0.0.1",0)).unwrap();let endpoint=url::Url::parse(&format!("http://{}/fixture/",listener.local_addr().unwrap())).unwrap();let calls=Arc::new(StdMutex::new(Vec::new()));let seen=calls.clone();let stop=Arc::new(AtomicBool::new(false));let done=stop.clone();
         let worker=std::thread::spawn(move||for stream in listener.incoming(){let mut stream=stream.unwrap();if done.load(Ordering::SeqCst){break;}let mut reader=BufReader::new(&mut stream);let mut first=String::new();reader.read_line(&mut first).unwrap();let route=first.split_whitespace().nth(1).unwrap().to_owned();let method=route.rsplit('/').next().unwrap().to_owned();let mut length=0;loop{let mut line=String::new();reader.read_line(&mut line).unwrap();if line=="\r\n"{break;}if let Some((key,value))=line.split_once(':'){if key.eq_ignore_ascii_case("content-length"){length=value.trim().parse().unwrap();}}}let mut body=vec![0;length];reader.read_exact(&mut body).unwrap();drop(reader);seen.lock().unwrap().push(method.clone());let value=match method.as_str(){"GetUserFile"=>json!({"returnObj":{"UserFile":[{"DcdUserID":"fixture","SecurityMgr":true,"UserDisabled":false,"LockedOut":false}]}}),"GetDatabaseVersion"=>json!({"returnObj":"5.2.100"}),_=>json!({"unexpected":method})};let text=serde_json::to_string(&value).unwrap();write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",text.len()).unwrap();});
         Self{endpoint,calls,stop,worker:Some(worker)}
     }
 }
 impl Drop for Server {fn drop(&mut self){self.stop.store(true,Ordering::SeqCst);let _=TcpStream::connect(self.endpoint.socket_addrs(||None).unwrap()[0]);self.worker.take().unwrap().join().unwrap();}}
-fn module(root:&Path,label:&str) {
+pub(crate) fn module(root:&Path,label:&str) {
     std::fs::create_dir_all(root).unwrap();
-    let descriptor=GuestReply::Descriptor{abi:PLUGIN_ABI,methods:vec![("Ice.BO.DynamicReportSvc".into(),"ExportToFile".into())],entities:vec![],binary_exports:vec![],response_policies:vec![],category:Category{id:"C16".into(),name:label.into(),selected:true,description:"Local authorization fixture".into(),plugin_version:Some("test".into()),available:true,qualification:"fixture".into(),roles:vec!["collector".into()],helpers:vec![],artifacts:vec![],settings:vec![PluginSetting::integer("itemsPerPage","Batch",100,1,i32::MAX as u32)],help:vec![]}};
+    let descriptor=GuestReply::Descriptor{abi:PLUGIN_ABI,methods:vec![("Ice.BO.DynamicReportSvc".into(),"ExportToFile".into())],entities:vec![],binary_exports:vec![],response_policies:vec![],category:Category{id:"report-definitions".into(),name:label.into(),selected:true,description:"Local authorization fixture".into(),plugin_version:Some("test".into()),available:true,qualification:"fixture".into(),roles:vec!["collector".into()],helpers:vec![],artifacts:vec![],settings:vec![PluginSetting::integer("itemsPerPage","Batch",100,1,i32::MAX as u32)],help:vec![]}};
     let bytes=serde_json::to_vec(&descriptor).unwrap();let escaped=bytes.iter().map(|b|format!("\\{b:02x}")).collect::<String>();let packed=(65536u64<<32)|bytes.len()as u64;
     let wat=format!(r#"(module (memory (export "memory") 4) (data (i32.const 65536) "{escaped}") (func (export "hoover_abi") (result i32) i32.const 1) (func (export "hoover_alloc") (param i32) (result i32) i32.const 0) (func (export "hoover_free") (param i32 i32)) (func (export "hoover_call") (param i32 i32) (result i64) i64.const {packed}))"#);
     std::fs::write(root.join("fixture.wasm"),wat::parse_str(wat).unwrap()).unwrap();
@@ -22,7 +22,7 @@ fn module(root:&Path,label:&str) {
 async fn fixture(root:&Path)->(Arc<Host>,Server) {
     let server=Server::new();let plugins=root.join("plugins");module(&plugins,"Original");let host=Host::new(root.join("state"),plugins);let connection=Connection::new(server.endpoint.clone(),"C".into(),AuthMode::BasicApiKey,Credentials{username:"fixture".into(),password:"fictional".into(),api_key:Some("fictional".into())},OperatingSettings::default(),Budget::new(4).unwrap()).unwrap();connection.connect(&CancellationToken::new()).await.unwrap();*host.connection.write().await=Some(connection);(host,server)
 }
-fn request(root:&Path,id:&str)->Value {json!({"requestId":id,"destination":root.join("output"),"outputMode":"refresh","categories":["C16"],"collectionMethod":"directOnly","temporaryAccess":false,"pluginSettings":{"C16":{"itemsPerPage":100}}})}
+fn request(root:&Path,id:&str)->Value {json!({"requestId":id,"destination":root.join("output"),"outputMode":"refresh","categories":["report-definitions"],"collectionMethod":"directOnly","temporaryAccess":false,"pluginSettings":{"report-definitions":{"itemsPerPage":100}}})}
 async fn call(host:&Arc<Host>,method:&str,args:Value)->Reply{host.execute(Command{schema_version:1,method:method.into(),arguments:args}).await}
 async fn preview(host:&Arc<Host>,run:Value)->Value {let reply=call(host,"serverChanges.preview",json!({"fullBackup":true,"run":run})).await;assert!(reply.ok,"{:?}",reply.error);reply.result.unwrap()}
 fn acknowledgement(preview:&Value,lifetime:Value)->Value {json!({"previewId":preview["previewId"],"materialDigest":preview["materialDigest"],"lifetime":lifetime})}
@@ -53,6 +53,38 @@ async fn start_requires_explicit_authority_binds_journal_and_reconciles_original
 #[tokio::test]
 async fn stale_module_preview_cannot_create_authority_and_workflow_and_session_contexts_are_explicit() {
     let root=tempfile::tempdir().unwrap();let(host,_server)=fixture(root.path()).await;let mut run=request(root.path(),"original");let p=preview(&host,run.clone()).await;module(&host.plugin_root,"Changed native semantics");let stale=call(&host,"serverChanges.authorize",acknowledgement(&p,json!({"kind":"session"}))).await;assert!(!stale.ok);assert!(crate::server_changes::list(&host.state_root).unwrap().is_empty());
-    let p=preview(&host,run.clone()).await;let created=call(&host,"serverChanges.authorize",acknowledgement(&p,json!({"kind":"workflow","workflowId":"nightly"}))).await;assert!(created.ok,"{:?}",created.error);let id=created.result.unwrap()["authorization"]["id"].clone();run["authorizationId"]=id;let decoded:StartInput=decode(run.clone()).unwrap();assert!(host.admit_server_changes(&decoded,true).await.is_err());run["workflowId"]=json!("nightly");let decoded:StartInput=decode(run.clone()).unwrap();assert!(host.admit_server_changes(&decoded,true).await.unwrap().is_some());run["pluginSettings"]["C16"]["itemsPerPage"]=json!(300);let tuned=preview(&host,run).await;assert_eq!(tuned["matchingAuthorizations"].as_array().unwrap().len(),1);
+    let p=preview(&host,run.clone()).await;let created=call(&host,"serverChanges.authorize",acknowledgement(&p,json!({"kind":"workflow","workflowId":"nightly"}))).await;assert!(created.ok,"{:?}",created.error);let id=created.result.unwrap()["authorization"]["id"].clone();run["authorizationId"]=id;let decoded:StartInput=decode(run.clone()).unwrap();assert!(host.admit_server_changes(&decoded,true).await.is_err());run["workflowId"]=json!("nightly");let decoded:StartInput=decode(run.clone()).unwrap();assert!(host.admit_server_changes(&decoded,true).await.unwrap().is_some());run["pluginSettings"]["report-definitions"]["itemsPerPage"]=json!(300);let tuned=preview(&host,run).await;assert_eq!(tuned["matchingAuthorizations"].as_array().unwrap().len(),1);
     let p=preview(&host,request(root.path(),"session-run")).await;let session=call(&host,"serverChanges.authorize",acknowledgement(&p,json!({"kind":"session"}))).await.result.unwrap()["authorization"].clone();let mut run=request(root.path(),"session-run");run["authorizationId"]=session["id"].clone();let decoded:StartInput=decode(run).unwrap();assert!(host.admit_server_changes(&decoded,true).await.is_ok());*host.authorization_session.write().await=uuid::Uuid::new_v4().to_string();assert!(host.admit_server_changes(&decoded,true).await.is_err());host.shutdown().await;
+}
+/// Memory between runs while connected: every settled run must be released, not just on
+/// disconnect. Each run's own Arc must reach zero strong references, and no per-run entry
+/// may stay in the host's run-keyed maps.
+#[tokio::test]
+async fn three_runs_in_one_connection_release_every_settled_run() {
+    use std::time::Duration;
+    let root=tempfile::tempdir().unwrap();let(host,_server)=fixture(root.path()).await;let mut grant=Value::Null;
+    for index in 0..3 {
+        let mut run=request(root.path(),&format!("memory-{index}"));let p=preview(&host,run.clone()).await;
+        if grant.is_null() {let approved=call(&host,"serverChanges.authorize",acknowledgement(&p,json!({"kind":"session"}))).await;assert!(approved.ok,"{:?}",approved.error);grant=approved.result.unwrap()["authorization"]["id"].clone();}
+        run["authorizationId"]=grant.clone();
+        let started=call(&host,"backup.start",run).await;assert!(started.ok,"{:?}",started.error);let run_id=started.result.unwrap()["runId"].as_str().unwrap().to_owned();
+        let weak=host.runs.lock().await.get(&run_id).map(Arc::downgrade);
+        // A local loopback run settles well inside this; the limit only diagnoses a hang or a retained run.
+        tokio::time::timeout(Duration::from_secs(30),async {loop {
+            let status=call(&host,"run.status",json!({"id":run_id})).await;
+            if status.result.as_ref().is_some_and(|status|status["executionActive"]==false) && !host.runs.lock().await.contains_key(&run_id) {break;}
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }}).await.unwrap_or_else(|_|panic!("run {index} never left `runs`: its destination release did not complete"));
+        if let Some(weak)=weak {
+            tokio::time::timeout(Duration::from_secs(30),async {while weak.strong_count()>0 {tokio::time::sleep(Duration::from_millis(5)).await;}})
+                .await.unwrap_or_else(|_|panic!("run {index} settled but {} strong references remain",weak.strong_count()));
+        }
+        assert!(host.settled_runs.lock().await.contains_key(&run_id));
+        assert!(!host.native_operations.lock().await.keys().any(|(holder,_)|holder==&run_id),"run {index} left a native operation");
+        assert!(!host.server_leases.lock().await.contains_key(&run_id),"run {index} left a lease keeper");
+        assert!(!host.borrow_preview_negative.lock().unwrap().contains_key(&run_id),"run {index} left a borrow-preview memo");
+    }
+    assert!(host.runs.lock().await.is_empty(),"no run stays live between collections in one connection");
+    assert!(host.connection.read().await.is_some(),"the connection stays open throughout");
+    host.shutdown().await;
 }

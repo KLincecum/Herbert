@@ -46,11 +46,11 @@ For saved credentials, select `profileId` and `credentialSource:{"type":"secureS
 For a user-authored file, use this credential source:
 
 ```json
-{"type":"userFile","path":"C:/Private/environments.json","environment_id":"authorized-lab"}
+{"type":"userFile","path":"C:/Private/environments.json","environmentId":"example"}
 ```
 
 Select the exact environment ID. Herbert does not change that file.
-The `environment_id` key in this credential source uses an underscore.
+The schema names this key `environmentId`. The older `environment_id` spelling is still accepted.
 Herbert also accepts inline credentials through stdin. Follow the actual schema.
 Keep secrets out of shell arguments, logs, source control and collected output.
 Use `credentials_status` to check saved credential presence.
@@ -61,11 +61,23 @@ Call `connection_connect` to open the connection for collection.
 For example, these are tool arguments for an existing authorized profile:
 
 ```json
-{"profileId":"authorized-lab","company":"LAB","credentialSource":{"type":"secureStore"}}
+{"profileId":"example","company":"EXAMPLE","credentialSource":{"type":"secureStore"}}
 ```
 
-Check the returned endpoint, company, caller, auth mode and admission.
+Check the returned endpoint, company, caller, auth mode, admission and `transportTrust`.
 Use `companies_list` only through the active authorized connection.
+
+If the company is unknown, call `connection_test` without `company`.
+It returns `availableCompanies` (`[{id,name}]`), `companySource` (`userAccess`, `companyList` or `unavailable`), `selectedCompany` and `companyListDiagnostic`, then signs out.
+Let the user choose a company unless the task already names one.
+`connection_connect` and downloads without a company return `COMPANY_REQUIRED`.
+`profiles_upsert` without a company returns the warning `COMPANY_NOT_SET` in `warnings[]`.
+
+Set `allowUntrustedCertificate` only when the user explicitly asks. Never infer it from `CERTIFICATE_UNTRUSTED`.
+It relaxes only the unknown-issuer check. The server name and certificate dates are still checked.
+Nothing is pinned, and any presented certificate can act as the anchor, so use it only for servers the user controls.
+`transportTrust.mode` is `verified`, `relaxedUntrustedIssuer` or `unencrypted` (plain `http://`).
+Read [Allow self-signed certificate](../../docs/MCP-GUIDE.md#allow-self-signed-certificate) for the fields and failure codes.
 
 If admission fails and `error.context.connectionRetained` is true, preserve both the primary error and cleanup diagnostic.
 Call `connection_disconnect` in that same host.
@@ -82,21 +94,32 @@ Do not invent keys or copy another category's settings.
 
 Omitted run values inherit saved plugin values. Explicit blank filter overrides clear that filter for one run without saving. Saving a blank with `plugin_configure` clears the saved value. GUI category toggles, Select all available, Clear selection and Save plugin options save the current option draft too. Never infer that a filter is inactive by comparing with descriptor defaults: saved values become those defaults.
 
-C01's declared `codeTypeIdPrefix` is a literal, case-sensitive prefix, preserving spaces and all entered characters without wildcard expansion or normalization. Use `"pluginSettings":{"C01":{"codeTypeIdPrefix":"EXAMPLE"}}` for selected discovery, or an explicit `""` to clear it for that run. Matching contract: `c01-code-type-id-prefix-v1`. The collector reads/validates native pages in bulk, then emits complete selected types and entries locally. Exact `UDCodeType` retrieval ignores this discovery filter.
+The UD codes plugin's declared `codeTypeIdPrefix` is a literal, case-sensitive prefix, preserving spaces and all entered characters without wildcard expansion or normalization. Use `"pluginSettings":{"ud-codes":{"codeTypeIdPrefix":"EXAMPLE"}}` for selected discovery, or an explicit `""` to clear it for that run. Matching contract: `ud-codes-code-type-id-prefix-v1`. The collector reads native pages in bulk with a broad server match, then emits complete selected types and entries locally. Exact `UDCodeType` retrieval ignores this discovery filter.
 
-C04 declares `queryIdPrefix` (**Query ID starts with**, `c04-query-id-prefix-v1`); C08 declares `libraryIdPrefix` (**Library ID starts with**, `c08-library-id-prefix-v1`). They use the same literal case-sensitive rule, preserving all characters, and the same blank/omission/save behavior. Use their declared keys under `pluginSettings.C04` or `pluginSettings.C08`. Keep whole queries/libraries and required dependencies; empty selected pages retain native continuation. Optional compiled settings apply only to selected owners and remain separate from root selection.
+Most ID-prefix filters are sent to the server as a broad superset (`LIKE '<stem>%'`, or an OData `startswith` filter for Access and assignments, where the stem is the prefix up to its first `%`, `_`, `[` or `]`); the exact literal, case-sensitive check stays local and rows outside the selection are not validated and produce no diagnostics. Menus and launch definitions, Searches and navigation, Business rules and mappings, the Report styles and layouts `packagePathPrefix` and the Programs and extensions externals list read every eligible row and select locally; Kinetic applications and layers selects locally from a light identity-only inventory and fetches content only for selected applications. Sources with no server filter (Quick, Predictive and context-menu searches, and current stored report packages) are read whole, and rows outside the selection still produce no diagnostics. Unselected families are not requested. Automation and integrations asks Epicor only for the rows its native service admits for the caller (each table read is restricted to those row identities), so rows outside the caller's visibility are never downloaded.
 
-C04 `retrieve_start` acquisition is unsupported: use its prefix with paged `backup_start`. C08 exact global `EfxLibrary` retrieval by `LibraryID` ignores the discovery prefix. Its complete Function/signature/reference/company-mapping graph remains intact; referenced libraries are not automatically collected.
+The BAQs and UBAQs plugin declares `queryIdPrefix` (**Query ID starts with**, `baqs-and-ubaqs-query-id-prefix-v1`); the Functions plugin declares `libraryIdPrefix` (**Library ID starts with**, `functions-library-id-prefix-v1`). They use the same literal case-sensitive rule, preserving all characters, and the same blank/omission/save behavior. Use their declared keys under `pluginSettings["baqs-and-ubaqs"]` or `pluginSettings.functions`. Keep whole queries/libraries and required dependencies; empty selected pages retain native continuation. Optional compiled settings apply only to selected owners and remain separate from root selection.
+
+The BAQs and UBAQs plugin does not support `retrieve_start` acquisition: use its prefix with paged `backup_start`. For Functions, exact global `EfxLibrary` retrieval by `LibraryID` ignores the discovery prefix. Its complete Function/signature/reference/company-mapping graph remains intact; referenced libraries are not automatically collected.
 
 For a read-only check, explicitly set `collectionMethod:"directOnly"` and `temporaryAccess:false`, select one plugin, and use a small existing selection. Do not inherit server-changing defaults for that check.
 
 Direct only uses existing services without installing collection helpers.
 Server Assisted permits temporary helpers where required or useful.
 Temporary access can add owned permissions under native policy.
-Fresh defaults enable Server Assisted and temporary access.
+Omitted run fields mean `collectionMethod:"directOnly"` and `temporaryAccess:false`.
 Set `collectionMethod` and `temporaryAccess` explicitly to match the authorized task.
 A collection request does not authorize unrelated native changes.
 This skill grants no authority to change an Epicor server.
+
+Before any start, call `serverChanges_preview` with `fullBackup` (true for `backup_start`, false for `retrieve_start`) and `run` set to the start arguments.
+If `authorizationRequired` is false, start without an authorization.
+Otherwise reuse an entry in `matchingAuthorizations`, or obtain explicit authority for the previewed effects.
+Do not authorize while `unresolved` is not empty.
+Then call `serverChanges_authorize` with `previewId`, `materialDigest` and `lifetime` (`{"kind":"oneRun"}`, `{"kind":"session"}` or `{"kind":"workflow","workflowId":"<name>"}`).
+Pass the returned `authorization.id` as `authorizationId` in the same start arguments.
+Some native exports create temporary server files and need authorization even under Direct only.
+See [server-change preview and authorization](../../docs/MCP-GUIDE.md#server-change-preview-and-authorization).
 
 Use declared page sizes and effective host settings.
 They are operating choices, not total-item limits.
@@ -107,14 +130,14 @@ Read back effective settings. See the [settings guidance](../../docs/MCP-GUIDE.m
 
 Use `backup_start` for discovery within selected categories and effective plugin options.
 Choose category IDs from `capabilities`. Explicit unavailable categories cause rejection.
-This example uses an available C02 category and an example destination:
+This example uses an available UD schema category and an example destination:
 
 ```json
 {
   "requestId": "schema-001",
   "destination": "C:/Backups/Herbert",
   "outputMode": "separate",
-  "categories": ["C02"],
+  "categories": ["ud-schema"],
   "collectionMethod": "directOnly",
   "temporaryAccess": false
 }
@@ -131,8 +154,9 @@ After a lost response, inspect `run_list` and the saved journal before starting 
 
 Use `structuredContent` as the authoritative result.
 The common envelope has `schemaVersion`, `ok`, `result` and `error`.
-On failure, inspect the stable error code, message, retry guidance and safe context.
-MCP also sets `isError:true`.
+On failure, branch on the stable `error.code`. `error.message` says what happened and what to do next. `error.context` holds technical details such as paths, IDs and server text. `error.retryable` says whether the same request can succeed later.
+MCP also sets `isError:true`, and `content[1]` gives the message with a `Next step:` line for text-only clients.
+A retired category code is refused with `LEGACY_CATEGORY_ID`. Resend with the ID in `error.context.replacementCategory`.
 
 An accepted start returns `runId`. It does not establish completion.
 Poll `run_status` with:
@@ -144,6 +168,7 @@ Poll `run_status` with:
 Continue until `executionActive` is false, even when the phase already says completed, failed or canceled.
 Then call `run_status` without `summary` and inspect the full journal.
 Check artifacts, discovery, partial or failed items, diagnostics and cleanup.
+Read `serverChanges` (`leaseLost`, `resources`, `foreignPending`) separately from completeness. Cleanup removes resources the run owns, and also removes recognized helpers left by earlier Herbert versions when no running Herbert holds them. Report what `foreignPending` kept (`active`, `recognized` or `unrecognized`).
 An empty file list alone does not prove that the requested content is absent.
 Report actual outcomes against the requested scope. `scope:fullBackup` is the persisted discovery mode, not proof of full-environment coverage. Inspect `pluginSettings`, `pluginSelectionContracts`, `pluginHashes` and actual identities. Completed overall discovery with no selected roots yields a successful empty-selection message in `discoveryMessages`; distinguish that from invalid settings, missing exact identities and denied/failed reads. Empty intermediate pages can still continue. Preserve existing files outside a selected refresh scope.
 
@@ -154,13 +179,13 @@ After network work and cleanup stop, call `connection_disconnect` in the owning 
 
 ## Retrieve an exact item
 
-Use `retrieve_start` with a stable request ID, destination, output mode and `identities` only where the installed plugin supports acquisition. C04 requires filtered paged discovery instead.
+Use `retrieve_start` with a stable request ID, destination, output mode and `identities` only where the installed plugin supports acquisition. The BAQs and UBAQs plugin requires filtered paged discovery instead.
 Read each category, kind, scope and native key from installed capabilities and reliable source evidence.
 Do not guess identity from a filename.
-For a known C02 schema, the identity shape is:
+For a known UD schema table, the identity shape is:
 
 ```json
-{"category":"C02","kind":"UDTableSchema","scope":{"type":"global"},"keys":{"SystemCode":"Ice","DataTableID":"Example_UD"}}
+{"category":"ud-schema","kind":"UDTableSchema","scope":{"type":"global"},"keys":{"SystemCode":"Ice","DataTableID":"Example_UD"}}
 ```
 
 Replace the example keys with verified values and put this object in the `identities` array.

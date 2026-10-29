@@ -1,18 +1,12 @@
-//! Explicit native qualification. Ordinary test runs never connect to Epicor.
+//! Explicit native test. Ordinary test runs never connect to Epicor.
 use super::*;
 
 #[tokio::test]
-#[ignore = "Explicit lab-only server lease qualification; creates and removes one helper."]
+#[ignore = "Explicit test-only server lease test; creates and removes one helper."]
 async fn native_server_lease_storage() {
     use crate::native_artifact_backend as backend;
     let endpoint = std::env::var("HERBERT_QUALIFY_ENDPOINT").unwrap();
-    assert!(
-        [
-            "https://kinetic-2026-1.lab.test:9448/",
-            "https://kinetic-2025-2.lab.test:9449/"
-        ]
-        .contains(&endpoint.as_str())
-    );
+    assert!(crate::test_targets::endpoints().contains(&endpoint.as_str()));
     let profile = std::env::var("HERBERT_QUALIFY_PROFILE").unwrap();
     let root = PathBuf::from(std::env::var("HERBERT_QUALIFY_OUTPUT").unwrap());
     std::fs::create_dir_all(&root).unwrap();
@@ -190,20 +184,21 @@ async fn native_server_lease_storage() {
 }
 
 #[tokio::test]
-#[ignore = "Explicit operator action: authenticate and create the 2025.2 lab profile."]
+#[ignore = "Explicit operator action: authenticate and create the 2025.2 test profile."]
 async fn create_lab_2025_profile() {
     let root = PathBuf::from(std::env::var("HERBERT_PROFILE_ROOT").unwrap());
     let profiles = profiles::Profiles::new(&root);
-    let source = profiles.get("lab-2026-1").unwrap();
+    let (source_url, source_id) = crate::test_targets::lane("2026.1");
+    let (endpoint, target_id) = crate::test_targets::lane("2025.2");
+    let source = profiles.get(source_id).unwrap();
     let source_endpoint = crate::input::endpoint(&source.url).unwrap().to_string();
-    assert_eq!(source_endpoint, "https://kinetic-2026-1.lab.test:9448/");
-    let endpoint = "https://kinetic-2025-2.lab.test:9449/";
+    assert_eq!(source_endpoint, source_url);
     assert!(
         profiles
             .list()
             .unwrap()
             .iter()
-            .all(|p| p.id != "lab-2025-2")
+            .all(|p| p.id != target_id)
     );
     let mut credentials = profiles::secure_read(&source_endpoint, &source.id).unwrap();
     credentials.api_key = None;
@@ -224,19 +219,19 @@ async fn create_lab_2025_profile() {
         panic!("Destination authentication failed: {}", error.code);
     }
     connection.logout(&CancellationToken::new()).await.unwrap();
-    profiles::secure_save(endpoint, "lab-2025-2", &credentials).unwrap();
+    profiles::secure_save(endpoint, target_id, &credentials).unwrap();
     let mut target = source;
-    target.id = "lab-2025-2".into();
-    target.name = Some("Lab 2025.2".into());
+    target.id = target_id.into();
+    target.name = Some("Kinetic 2025.2".into());
     target.url = endpoint.into();
     target.auth_mode = AuthMode::Session;
     target.defaults.company = Some("TESTCO".into());
     target.defaults.concurrency = Some(8);
     target.user_file = None;
     profiles.upsert(target).unwrap();
-    assert_eq!(profiles.get("lab-2025-2").unwrap().url, endpoint);
+    assert_eq!(profiles.get(target_id).unwrap().url, endpoint);
     assert_eq!(
-        profiles::secure_status(endpoint, "lab-2025-2").unwrap(),
+        profiles::secure_status(endpoint, target_id).unwrap(),
         "saved"
     );
 }
@@ -264,20 +259,16 @@ async fn request(
 }
 
 #[tokio::test]
-#[ignore = "Requires explicit lab profile, plugin path, and retained evidence directory."]
+#[ignore = "Requires explicit test profile, plugin path, and retained evidence directory."]
 async fn native_host_qualification() {
     let endpoint = std::env::var("HERBERT_QUALIFY_ENDPOINT").unwrap();
     assert!(
-        [
-            "https://kinetic-2026-1.lab.test:9448/",
-            "https://kinetic-2025-2.lab.test:9449/",
-        ]
-        .contains(&endpoint.as_str()),
-        "This test is restricted to the two qualified lab endpoints."
+        crate::test_targets::endpoints().contains(&endpoint.as_str()),
+        "This test is restricted to the configured test endpoints."
     );
     let profile = std::env::var("HERBERT_QUALIFY_PROFILE").unwrap();
     let root = PathBuf::from(std::env::var("HERBERT_QUALIFY_OUTPUT").unwrap());
-    assert!(!root.exists(), "Preserve an earlier qualification result.");
+    assert!(!root.exists(), "Preserve an earlier test result.");
     std::fs::create_dir_all(&root).unwrap();
     let plugin = Plugin::load(Path::new(&std::env::var("HERBERT_QUALIFY_PLUGIN").unwrap()))
         .await
@@ -545,7 +536,7 @@ async fn native_host_qualification() {
     .await
     .unwrap();
     let mut tasks = tokio::task::JoinSet::new();
-    // Eight is Kevin's acceptance setting, not a product workload limit.
+    // Eight is the chosen acceptance setting, not a product workload limit.
     for index in 0..8 {
         let (host, plugin, run, connection) = (
             host.clone(),

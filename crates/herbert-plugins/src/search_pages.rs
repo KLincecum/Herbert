@@ -4,17 +4,34 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 struct Selection { family: String, prefix: String }
+/// The prefix's literal stem: up to its first LIKE wildcard, bracket or non-ASCII character.
+fn like_stem(prefix: &str) -> Option<&str> {
+    let stem = &prefix[..prefix.find(|c: char| matches!(c, '%' | '_' | '[' | ']') || !c.is_ascii()).unwrap_or(prefix.len())];
+    (!stem.is_empty()).then_some(stem)
+}
+/// The native GetRows root where clause, narrowed to a broad server-side superset of the
+/// selected ID prefix. The exact case-sensitive prefix is still applied locally.
+fn where_clause(stream: u64, prefix: &str) -> String {
+    let (base,field)=if stream==2 {("SystemFlag = false","SearchID")}else{("","NSId")};
+    match like_stem(prefix) {
+        Some(stem)=>format!("{base}{}{field} LIKE '{}%'",if base.is_empty() {""}else{" AND "},stem.replace('\'',"''")),
+        None=>base.into(),
+    }
+}
+fn id_key(kind: &str) -> Option<&'static str> {
+    match kind {"PersistedQuickSearch"=>Some("QuickSearchID"),"PersistedNamedSearch"=>Some("NSId"),"PersistedESSearch"=>Some("SearchID"),_=>None}
+}
 fn acquired_graph_errors(identity: &Identity, data: &Value) -> Vec<Diagnostic> {
     let mut errors=Vec::new();
     if let Some(values)=data["errors"].as_array() {
         for value in values {
-            let mut diagnostic=serde_json::from_value::<Diagnostic>(value.clone()).unwrap_or_else(|_|Diagnostic::new("SEARCH_PAGE_INVALID","An acquired child graph has an invalid failure diagnostic."));
+            let mut diagnostic=serde_json::from_value::<Diagnostic>(value.clone()).unwrap_or_else(|_|Diagnostic::new("SEARCH_PAGE_INVALID","An downloaded child record set has an invalid failure diagnostic."));
             diagnostic.identity=Some(identity.clone());errors.push(diagnostic);
         }
     }
     // Reuse the owning materialization validators. These validate saved XML,
-    // native text lengths and required child structure before any graph can
-    // disappear through selection. The returned definition is not emitted.
+    // native text lengths and required child structure of selected (or
+    // unattributable) graphs only. The returned definition is not emitted.
     let validation=match identity.kind.as_str() {
         "PersistedQuickSearch"=>crate::search_archive::quick_definition(data).map(|_|()),
         "PersistedContextMenuXml"=>crate::search_archive::context_definition(data).map(|_|()),
@@ -39,26 +56,44 @@ impl Selection {
         }
         Ok(Self {family,prefix:text("searchIdPrefix","")?})
     }
+    /// Whether a source stream holds any selected family (see the stream labels in handle).
+    fn reads(&self, stream: u64) -> bool {
+        self.family=="all" || match stream {
+            0=>matches!(self.family.as_str(),"quickSearch"|"predictiveSearch"|"savedContextMenu"),
+            1=>self.family=="namedSearch",
+            2=>self.family=="enterpriseSearch",
+            _=>self.family=="legacyContextMenu",
+        }
+    }
+    /// Whether a source kind can hold a selected family at all. An undeclared
+    /// kind cannot be attributed, so its failure is kept.
+    fn kind_selected(&self, kind: &str) -> bool {
+        self.family=="all" || match kind {
+            "PersistedQuickSearch"=>matches!(self.family.as_str(),"quickSearch"|"predictiveSearch"),
+            "PersistedNamedSearch"=>self.family=="namedSearch",
+            "PersistedESSearch"=>self.family=="enterpriseSearch",
+            "PersistedContextMenuXml"=>self.family=="savedContextMenu",
+            "PersistedContextMenu"=>self.family=="legacyContextMenu",
+            _=>true,
+        }
+    }
     fn matches(&self, identity: &Identity, data: Option<&Value>) -> Result<bool, Diagnostic> {
-        let (family,id_key)=match identity.kind.as_str() {
-            "PersistedQuickSearch" => {
-                let predictive=match data {
-                    Some(data)=>Some(data["row"]["IsPredictive"].as_bool().ok_or_else(||Diagnostic::new("SEARCH_PAGE_INVALID","The acquired search omitted its native IsPredictive flag."))?),
-                    None=>None,
-                };
-                (predictive.map(|p|if p {"predictiveSearch"}else{"quickSearch"}),Some("QuickSearchID"))
+        let family=match identity.kind.as_str() {
+            "PersistedQuickSearch" => match data {
+                Some(data)=>Some(if data["row"]["IsPredictive"].as_bool().ok_or_else(||Diagnostic::new("SEARCH_PAGE_INVALID","The downloaded search omitted its Epicor IsPredictive flag."))? {"predictiveSearch"}else{"quickSearch"}),
+                None=>None,
             },
-            "PersistedNamedSearch" => (Some("namedSearch"),Some("NSId")),
-            "PersistedESSearch" => (Some("enterpriseSearch"),Some("SearchID")),
-            "PersistedContextMenuXml" => (Some("savedContextMenu"),None),
-            "PersistedContextMenu" => (Some("legacyContextMenu"),None),
+            "PersistedNamedSearch" => Some("namedSearch"),
+            "PersistedESSearch" => Some("enterpriseSearch"),
+            "PersistedContextMenuXml" => Some("savedContextMenu"),
+            "PersistedContextMenu" => Some("legacyContextMenu"),
             _ => return Err(Diagnostic::new("SEARCH_PAGE_INVALID","The acquired search has an undeclared source family.")),
         };
         // A diagnostic-only QuickSearch identity cannot establish IsPredictive.
         // Keep its diagnostic, but do not guess a family-specific selected ID.
         let family_match=self.family=="all" || family==Some(self.family.as_str());
-        let prefix_match=match id_key {
-            Some(key)=>identity.keys.get(key).ok_or_else(||Diagnostic::new("SEARCH_PAGE_INVALID","The acquired search omitted its native search ID."))?.starts_with(&self.prefix),
+        let prefix_match=match id_key(&identity.kind) {
+            Some(key)=>identity.keys.get(key).ok_or_else(||Diagnostic::new("SEARCH_PAGE_INVALID","The downloaded search omitted its Epicor search ID."))?.starts_with(&self.prefix),
             None=>true,
         };
         Ok(family_match && prefix_match)
@@ -70,17 +105,20 @@ impl Selection {
                 let mut acquired=BTreeSet::new();let mut errors=Vec::new();
                 for (identity,data) in std::mem::take(records) {
                     let key=serde_json::to_string(&identity).unwrap();acquired.insert(key.clone());
-                    let record_errors=acquired_graph_errors(&identity,&data);let invalid=!record_errors.is_empty();errors.extend(record_errors);
-                    let matches=match self.matches(&identity,Some(&data)) {
-                        Ok(matches)=>matches,
+                    // Only selected records are validated and reported. A record whose flag or ID
+                    // cannot be read stays reported unless its kind or literal ID already excludes it.
+                    let (matches,report,unreadable)=match self.matches(&identity,Some(&data)) {
+                        Ok(matches)=>(matches,matches,None),
                         Err(mut diagnostic)=>{
-                            if !invalid {diagnostic.identity=Some(identity.clone());errors.push(diagnostic);}
+                            diagnostic.identity=Some(identity.clone());
+                            let excluded=!self.kind_selected(&identity.kind) || id_key(&identity.kind).and_then(|key|identity.keys.get(key)).is_some_and(|id|!id.starts_with(&self.prefix));
                             // Preserve the previous all-family recovery-source
                             // path when the ID matches, without guessing a
                             // restricted Quick/Predictive family from bad data.
-                            self.family=="all" && self.matches(&identity,None).unwrap_or(false)
+                            (self.family=="all" && self.matches(&identity,None).unwrap_or(false),!excluded,Some(diagnostic))
                         },
                     };
+                    if report {let record_errors=acquired_graph_errors(&identity,&data);if record_errors.is_empty() {errors.extend(unreadable);}else{errors.extend(record_errors);}}
                     if matches {selected.insert(key);selected_records.push((identity,data));}
                 }
                 *records=selected_records;
@@ -89,13 +127,13 @@ impl Selection {
                     let mut kept=Vec::new();
                     for identity in std::mem::take(identities) {
                         let key=serde_json::to_string(&identity).unwrap();
-                        if selected.contains(&key) || !acquired.contains(&key) && self.matches(&identity,None)? {kept.push(identity);}
+                        if selected.contains(&key) || !acquired.contains(&key) && self.kind_selected(&identity.kind) && self.matches(&identity,None)? {kept.push(identity);}
                     }
                     *identities=kept;
                 }
             },
             GuestReply::Inventory {identities,..} => {
-                let mut kept=Vec::new();for identity in std::mem::take(identities) {if self.matches(&identity,None)? {kept.push(identity);}}*identities=kept;
+                let mut kept=Vec::new();for identity in std::mem::take(identities) {if self.kind_selected(&identity.kind) && self.matches(&identity,None)? {kept.push(identity);}}*identities=kept;
             },
             _=>{},
         }
@@ -129,7 +167,7 @@ fn family(
     }
 }
 pub fn methods() -> Vec<(String, String)> {
-    let mut methods = crate::collectors::methods("C14");
+    let mut methods = crate::collectors::methods("searches-and-navigation");
     for stream in 1..=2 {
         methods.push((format!("Ice.BO.{}Svc", family(stream).0), "GetRows".into()));
     }
@@ -167,7 +205,7 @@ fn native_records(
         }
         let owner = row["UserID"].as_str().unwrap_or("");
         let id = Identity {
-            category: "C14".into(),
+            category: "searches-and-navigation".into(),
             kind: format!("Persisted{}", tables[0]),
             keys: keys
                 .iter()
@@ -230,7 +268,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         .transpose()
     {
         Ok(v) => v.unwrap_or(json!({"searchVersion":1,"stream":0,"page":1,"cursor":null})),
-        Err(_) => return failure("The search continuation is invalid."),
+        Err(_) => return failure("The search resume point is invalid."),
     };
     let Some(stream @ 0..=3) = cursor["stream"].as_u64() else {
         return failure("The search source is invalid.");
@@ -238,7 +276,19 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if cursor["searchVersion"] != 1 {
         return failure("Restart search discovery to use the bulk collector.");
     }
+    // Bulk-first: a source holding no selected family is not read at all.
+    if request.response.is_none() && request.error.is_none() && !selection.reads(stream) {
+        return GuestReply::Inventory {
+            identities: vec![],
+            next_cursor: (stream < 3).then(|| json!({"searchVersion":1,"stream":stream+1,"page":1}).to_string()),
+            authoritative: true,
+            diagnostics: vec![],
+        };
+    }
     let original = request.clone();
+    // Streams 0 and 3 use the generic table reader, which takes no extra
+    // criteria: they are read whole and filtered locally (unselected rows stay silent).
+    let narrowed = (stream == 1 || stream == 2) && like_stem(&selection.prefix).is_some();
     let reply = if stream == 0 || stream == 3 {
         request.cursor = cursor["cursor"].as_str().map(str::to_owned);
         request.state = with_settings(request.state.get("inner").cloned().unwrap_or(Value::Null),&original.state);
@@ -256,11 +306,11 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 .pointer("/parameters/morePages")
                 .and_then(Value::as_bool)
             else {
-                return failure("The native search page omitted morePages.");
+                return failure("The Epicor search page omitted morePages.");
             };
             let body = crate::body(&response);
             if more && body[tables[0]].as_array().is_none_or(Vec::is_empty) {
-                return failure("The native search page did not advance.");
+                return failure("The Epicor search page did not advance.");
             }
             let records = match native_records(stream, body, &request.company) {
                 Ok(records) => records,
@@ -278,8 +328,12 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             }
         } else {
             let Some(page @ 1..=2147483647) = cursor["page"].as_u64() else {
-                return failure("The native page must be a positive Int32.");
+                return failure("Herbert could not continue this download from its saved progress (page position). Start the download again.");
             };
+            // Page numbers are only meaningful for the where clause that produced them.
+            if page > 1 && (cursor["narrowed"] == true) != narrowed {
+                return failure("Restart search discovery. This saved page position was read with a different search ID filter.");
+            }
             let Some(size) = request.page_size.filter(|n| *n > 0) else {
                 return failure("Supply a positive search page size.");
             };
@@ -287,9 +341,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             for table in tables {
                 args[format!("whereClause{table}")] = json!("");
             }
-            if stream == 2 {
-                args["whereClauseESSearch"] = json!("SystemFlag = false");
-            }
+            args[format!("whereClause{}", tables[0])] = json!(where_clause(stream, &selection.prefix));
             crate::native(
                 &format!("Ice.BO.{service}Svc"),
                 "GetRows",
@@ -305,7 +357,9 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 if stream == 0 || stream == 3 {
                     json!({"searchVersion":1,"stream":stream,"cursor":inner})
                 } else {
-                    json!({"searchVersion":1,"stream":stream,"page":inner.parse::<u64>().unwrap()})
+                    let mut c=json!({"searchVersion":1,"stream":stream,"page":inner.parse::<u64>().unwrap()});
+                    if narrowed {c["narrowed"]=json!(true);}
+                    c
                 }
                 .to_string(),
             )
@@ -338,7 +392,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 ..
             } = inventory.as_mut()
             else {
-                return failure("Invalid search inventory.");
+                return failure("Herbert could not continue this download from its saved progress (search list). Start the download again.");
             };
             if stream == 3 {
                 records.retain(|(_, data)| crate::search_archive::has_custom_context(data));
@@ -445,7 +499,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C14".into(),
+            category: "searches-and-navigation".into(),
             company: "C".into(),
             identity: None,
             cursor: Some(json!({"searchVersion":1,"stream":1,"page":1}).to_string()),
@@ -464,7 +518,7 @@ mod tests {
         let mut r=request();r.state["_pluginSettings"]=json!({"definitionFamily":family,"searchIdPrefix":prefix});r
     }
     fn fixture_id(kind: &str,keys: &[(&str,&str)]) -> Identity {
-        Identity {category:"C14".into(),kind:kind.into(),scope:Scope::Company {company:"C".into()},keys:keys.iter().map(|(key,value)|(key.to_string(),value.to_string())).collect()}
+        Identity {category:"searches-and-navigation".into(),kind:kind.into(),scope:Scope::Company {company:"C".into()},keys:keys.iter().map(|(key,value)|(key.to_string(),value.to_string())).collect()}
     }
     fn selected_records() -> Vec<(Identity,Value)> {
         let mut records=vec![
@@ -496,7 +550,7 @@ mod tests {
         let selection=Selection::read(&selected_request("quickSearch"," Ω%_ ' ")).unwrap();let GuestReply::InventoryData {records,..}=selection.select(inventory(literal)).unwrap()else{panic!()};assert_eq!(records.len(),1);
     }
     #[test]
-    fn selection_preserves_diagnostics_and_raw_bare_inventory_without_guessing_predictive_family() {
+    fn selection_preserves_bare_diagnostics_and_reports_only_selected_or_unattributable_flag_failures() {
         let records=selected_records();let ids=records.iter().map(|(id,_)|id.clone()).collect::<Vec<_>>();
         let mut diagnostic=Diagnostic::new("SOURCE_UNVERIFIED","Acquired source coverage is incomplete");diagnostic.identity=Some(records[2].0.clone());
         for family in ["all","predictiveSearch","savedContextMenu"] {
@@ -507,28 +561,42 @@ mod tests {
             assert_eq!(identities.len(),if family=="all" {6}else if family=="savedContextMenu" {1}else{0});
         }
         let mut malformed=selected_records();malformed[2].1["row"]["IsPredictive"]=Value::Null;
-        let selection=Selection::read(&selected_request("namedSearch","Alpha")).unwrap();
-        let GuestReply::InventoryData {records,inventory:coverage}=selection.select(inventory(malformed.clone())).unwrap()else{panic!()};assert_eq!(records.len(),1);assert_eq!(records[0].0.kind,"PersistedNamedSearch");assert!(!serde_json::to_string(&records).unwrap().contains("excluded"));
+        // Excluded by kind or by literal ID: silent and still authoritative.
+        for (family,prefix) in [("namedSearch","Alpha"),("quickSearch","Alpha"),("predictiveSearch","Alpha")] {
+            let selection=Selection::read(&selected_request(family,prefix)).unwrap();
+            let GuestReply::InventoryData {records,inventory:coverage}=selection.select(inventory(malformed.clone())).unwrap()else{panic!()};assert_eq!(records.len(),1,"{family}");assert!(!records.iter().any(|(id,_)|id.keys.get("QuickSearchID").map(String::as_str)==Some("Beta")));
+            assert!(matches!(*coverage,GuestReply::Inventory {authoritative:true,ref diagnostics,..} if diagnostics.is_empty()),"{family}");
+        }
+        // The ID is selected but the Quick/Predictive family cannot be read: keep the failure, emit nothing.
+        let selection=Selection::read(&selected_request("quickSearch","Beta")).unwrap();
+        let GuestReply::InventoryData {records,inventory:coverage}=selection.select(inventory(malformed.clone())).unwrap()else{panic!()};assert!(records.is_empty());
         assert!(matches!(*coverage,GuestReply::Inventory {authoritative:false,diagnostics,..} if diagnostics.len()==1 && diagnostics[0].identity.as_ref().unwrap().keys["QuickSearchID"]=="Beta"));
-        let selection=Selection::read(&selected_request("all","")).unwrap();let GuestReply::InventoryData {records,..}=selection.select(inventory(malformed.clone())).unwrap()else{panic!()};assert_eq!(records,malformed);
+        let selection=Selection::read(&selected_request("all","")).unwrap();let GuestReply::InventoryData {records,inventory:coverage}=selection.select(inventory(malformed.clone())).unwrap()else{panic!()};assert_eq!(records,malformed);
+        assert!(matches!(*coverage,GuestReply::Inventory {authoritative:false,diagnostics,..} if diagnostics.len()==1));
     }
     #[test]
-    fn excluded_acquired_graph_errors_keep_selected_good_peers_and_incomplete_coverage() {
-        let mut records=selected_records();let failed=records[2].0.clone();records[2].1["errors"]=json!([Diagnostic::new("NATIVE_CHILD_DENIED","The child definition read was denied.")]);
+    fn unselected_acquired_graph_errors_are_silent_and_selected_errors_make_coverage_incomplete() {
+        let mut records=selected_records();records[2].1["errors"]=json!([Diagnostic::new("NATIVE_CHILD_DENIED","The child definition read was denied.")]);
         let selection=Selection::read(&selected_request("namedSearch","Alpha")).unwrap();
         let GuestReply::InventoryData {records:actual,inventory:coverage}=selection.select(inventory(records.clone())).unwrap()else{panic!()};assert_eq!(actual,vec![records[3].clone()]);
-        let GuestReply::Inventory {identities,authoritative,diagnostics,next_cursor}=*coverage else{panic!()};assert!(!authoritative);assert_eq!(identities,vec![records[3].0.clone()]);assert_eq!(next_cursor.as_deref(),Some("raw-next"));assert_eq!(diagnostics.len(),1);assert_eq!(diagnostics[0].code,"NATIVE_CHILD_DENIED");assert_eq!(diagnostics[0].identity.as_ref(),Some(&failed));
-        let selection=Selection::read(&selected_request("namedSearch","Missing")).unwrap();let GuestReply::InventoryData {records,inventory:coverage}=selection.select(inventory(records)).unwrap()else{panic!()};assert!(records.is_empty());assert!(matches!(*coverage,GuestReply::Inventory {authoritative:false,..}));
+        let GuestReply::Inventory {identities,authoritative,diagnostics,next_cursor}=*coverage else{panic!()};assert!(authoritative);assert!(diagnostics.is_empty());assert_eq!(identities,vec![records[3].0.clone()]);assert_eq!(next_cursor.as_deref(),Some("raw-next"));
+        records[3].1["errors"]=records[2].1["errors"].clone();let failed=records[3].0.clone();
+        let GuestReply::InventoryData {records:actual,inventory:coverage}=selection.select(inventory(records.clone())).unwrap()else{panic!()};assert_eq!(actual,vec![records[3].clone()]);
+        let GuestReply::Inventory {authoritative,diagnostics,next_cursor,..}=*coverage else{panic!()};assert!(!authoritative);assert_eq!(next_cursor.as_deref(),Some("raw-next"));assert_eq!(diagnostics.len(),1);assert_eq!(diagnostics[0].code,"NATIVE_CHILD_DENIED");assert_eq!(diagnostics[0].identity.as_ref(),Some(&failed));
+        let selection=Selection::read(&selected_request("namedSearch","Missing")).unwrap();let GuestReply::InventoryData {records,inventory:coverage}=selection.select(inventory(records)).unwrap()else{panic!()};assert!(records.is_empty());assert!(matches!(*coverage,GuestReply::Inventory {authoritative:true,diagnostics,..} if diagnostics.is_empty()));
     }
     #[test]
-    fn excluded_malformed_content_and_child_lengths_validate_before_selection_without_payload_leaks() {
+    fn unselected_malformed_content_and_child_lengths_are_silent_and_selected_ones_fail_without_payload_leaks() {
         for defect in ["xml","length","children"] {
             let mut records=selected_records();let failed=if defect=="children" {records[2].0.clone()}else{records[5].0.clone()};
             if defect=="xml" {records[5].1["row"]["Content"]=json!("<PRIVATE_EXCLUDED_PAYLOAD>");records[5].1["row"]["HerbertContentBytes"]=json!("<PRIVATE_EXCLUDED_PAYLOAD>".encode_utf16().count()*2);}
             else if defect=="length" {records[5].1["row"]["HerbertContentBytes"]=json!(0);}
             else {records[2].1["children"]["QuickSearchCriteria"]=json!([{"CriteriaValue":"PRIVATE_EXCLUDED_PAYLOAD","HerbertCriteriaValueBytes":0}]);}
             let selection=Selection::read(&selected_request("namedSearch","Alpha")).unwrap();let GuestReply::InventoryData {records:actual,inventory:coverage}=selection.select(inventory(records.clone())).unwrap()else{panic!()};assert_eq!(actual,vec![records[3].clone()]);assert!(!serde_json::to_string(&actual).unwrap().contains("PRIVATE_EXCLUDED_PAYLOAD"));
-            let GuestReply::Inventory {authoritative,diagnostics,..}=*coverage else{panic!()};assert!(!authoritative);assert_eq!(diagnostics.len(),1);assert_eq!(diagnostics[0].identity.as_ref(),Some(&failed));assert!(!serde_json::to_string(&diagnostics).unwrap().contains("PRIVATE_EXCLUDED_PAYLOAD"));
+            let GuestReply::Inventory {authoritative,diagnostics,..}=*coverage else{panic!()};assert!(authoritative,"{defect}");assert!(diagnostics.is_empty(),"{defect}");
+            let (family,prefix)=if defect=="children" {("quickSearch","Beta")}else{("savedContextMenu","")};
+            let selection=Selection::read(&selected_request(family,prefix)).unwrap();let GuestReply::InventoryData {records:actual,inventory:coverage}=selection.select(inventory(records.clone())).unwrap()else{panic!()};assert_eq!(actual.len(),1);assert_eq!(actual[0].0,failed);
+            let GuestReply::Inventory {authoritative,diagnostics,..}=*coverage else{panic!()};assert!(!authoritative,"{defect}");assert_eq!(diagnostics.len(),1);assert_eq!(diagnostics[0].identity.as_ref(),Some(&failed));assert!(!serde_json::to_string(&diagnostics).unwrap().contains("PRIVATE_EXCLUDED_PAYLOAD"));
         }
     }
     #[test]
@@ -546,18 +614,55 @@ mod tests {
         }
     }
     #[test]
-    fn selection_validates_unselected_native_children_and_keeps_raw_empty_page_continuation() {
+    fn selection_keeps_orphan_native_child_failures_and_raw_empty_narrowed_page_continuation() {
         let mut r=selected_request("namedSearch","Missing");r.response=Some(json!({"returnObj":page(),"parameters":{"morePages":true}}));
-        let GuestReply::PreparedPage {state,next_cursor,next_state}=handle(r.clone())else{panic!()};assert_eq!(state["records"],json!([]));assert_eq!(serde_json::from_str::<Value>(next_cursor.as_deref().unwrap()).unwrap()["page"],2);assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);
-        r.state=next_state;r.cursor=next_cursor;r.response=None;let GuestReply::Action {state,..}=handle(r.clone())else{panic!()};assert_eq!(state["_pluginSettings"]["searchIdPrefix"],"Missing");
+        let GuestReply::PreparedPage {state,next_cursor,next_state}=handle(r.clone())else{panic!()};assert_eq!(state["records"],json!([]));assert!(matches!(serde_json::from_value::<GuestReply>(state["inventory"].clone()).unwrap(),GuestReply::Inventory {authoritative:true,diagnostics,..} if diagnostics.is_empty()));
+        let cursor=serde_json::from_str::<Value>(next_cursor.as_deref().unwrap()).unwrap();assert_eq!(cursor["page"],2);assert_eq!(cursor["narrowed"],true);assert_eq!(next_state["_pluginSettings"],r.state["_pluginSettings"]);
+        r.state=next_state;r.cursor=next_cursor;r.response=None;let GuestReply::Action {state,action}=handle(r.clone())else{panic!()};assert_eq!(state["_pluginSettings"]["searchIdPrefix"],"Missing");
+        assert!(matches!(action,HostAction::NativeRead {arguments,..} if arguments["absolutePage"]==2 && arguments["whereClauseNamedSearch"]=="NSId LIKE 'Missing%'"));
         r.state=state;r.state["_hostPreparePage"]=json!(true);let mut later=page();later["NamedSearch"][0]["NSId"]=json!("MissingLater");later["WhereClause"][0]["NSId"]=json!("MissingLater");r.response=Some(json!({"returnObj":later,"parameters":{"morePages":false}}));
         let GuestReply::PreparedPage {state,next_cursor,..}=handle(r.clone())else{panic!()};assert_eq!(state["records"].as_array().unwrap().len(),1);assert_eq!(serde_json::from_str::<Value>(next_cursor.as_deref().unwrap()).unwrap()["stream"],2);
         let mut broken=page();broken["WhereClause"][1]["UserID"]=json!("foreign");r.response=Some(json!({"returnObj":broken,"parameters":{"morePages":false}}));assert!(matches!(handle(r),GuestReply::Failure {..}));
     }
     #[test]
+    fn native_streams_push_like_stem_superset_and_exact_acquisition_does_not() {
+        for (prefix,stem) in [("O'Brien","O''Brien"),("Ab%c","Ab"),("Ab_c","Ab"),("Ab[c]","Ab"),("AbΩc","Ab"),("%Ab",""),("Ωb",""),("","")] {
+            for (stream,root,others,base,field) in [(1,"NamedSearch",&["ControlSetting","WhereClause"][..],"","NSId"),(2,"ESSearch",&["ESSearchFields"][..],"SystemFlag = false","SearchID")] {
+                let mut r=selected_request("all",prefix);r.cursor=Some(json!({"searchVersion":1,"stream":stream,"page":1}).to_string());
+                let GuestReply::Action {action:HostAction::NativeRead {method,arguments,..},..}=handle(r)else{panic!("{prefix}/{stream}")};assert_eq!(method,"GetRows");
+                let expected=if stem.is_empty() {base.to_owned()}else if base.is_empty() {format!("{field} LIKE '{stem}%'")}else{format!("{base} AND {field} LIKE '{stem}%'")};
+                assert_eq!(arguments[format!("whereClause{root}")],expected,"{prefix}/{stream}");
+                for table in others {assert_eq!(arguments[format!("whereClause{table}")],"","{prefix}/{stream}");}
+            }
+        }
+        // A saved page position from a differently filtered read cannot be reused.
+        let mut r=selected_request("all","Same");r.cursor=Some(json!({"searchVersion":1,"stream":1,"page":2}).to_string());assert!(matches!(handle(r.clone()),GuestReply::Failure {..}));
+        r.cursor=Some(json!({"searchVersion":1,"stream":1,"page":2,"narrowed":true}).to_string());assert!(matches!(handle(r),GuestReply::Action {..}));
+        let mut r=selected_request("all","%");r.cursor=Some(json!({"searchVersion":1,"stream":2,"page":2}).to_string());assert!(matches!(handle(r),GuestReply::Action {..}));
+        let mut exact=request();exact.operation="acquire".into();exact.cursor=None;exact.identity=Some(fixture_id("PersistedNamedSearch",&[("Company","C"),("SearchForm","Form"),("NSId","Same"),("UserID","alice"),("CalledFrom","")]));
+        let baseline=serde_json::to_value(handle(exact.clone())).unwrap();exact.state["_pluginSettings"]=json!({"definitionFamily":"namedSearch","searchIdPrefix":"Other"});
+        let filtered=serde_json::to_value(handle(exact)).unwrap();assert_eq!(filtered["action"],baseline["action"]);assert!(!filtered["action"].to_string().contains("LIKE"));
+    }
+    #[test]
+    fn unselected_family_sources_make_no_request() {
+        for (family,read) in [("all",[true,true,true,true]),("quickSearch",[true,false,false,false]),("predictiveSearch",[true,false,false,false]),("savedContextMenu",[true,false,false,false]),("namedSearch",[false,true,false,false]),("enterpriseSearch",[false,false,true,false]),("legacyContextMenu",[false,false,false,true])] {
+            for stream in 0..4u64 {
+                let mut r=selected_request(family,"");r.cursor=Some(json!({"searchVersion":1,"stream":stream,"page":1}).to_string());
+                match handle(r) {
+                    GuestReply::Action {..} => assert!(read[stream as usize],"{family} read stream {stream}"),
+                    GuestReply::Inventory {identities,next_cursor,authoritative:true,diagnostics} => {
+                        assert!(!read[stream as usize]&&identities.is_empty()&&diagnostics.is_empty(),"{family}/{stream}");
+                        assert_eq!(next_cursor.map(|cursor|serde_json::from_str::<Value>(&cursor).unwrap()),(stream<3).then(||json!({"searchVersion":1,"stream":stream+1,"page":1})));
+                    },
+                    reply => panic!("{family}/{stream}: {reply:?}"),
+                }
+            }
+        }
+    }
+    #[test]
     fn selection_freezes_outer_inner_stream_states_and_exact_routes_ignore_conflicts() {
-        for stream in [0,1,2,3] {
-            let mut r=selected_request("savedContextMenu"," Ω%_ ' ");r.cursor=Some(json!({"searchVersion":1,"stream":stream,"page":1}).to_string());
+        for (stream,family) in [(0,"savedContextMenu"),(1,"namedSearch"),(2,"enterpriseSearch"),(3,"legacyContextMenu")] {
+            let mut r=selected_request(family," Ω%_ ' ");r.cursor=Some(json!({"searchVersion":1,"stream":stream,"page":1}).to_string());
             let GuestReply::Action {state,..}=handle(r.clone())else{panic!()};assert_eq!(state["_pluginSettings"],r.state["_pluginSettings"]);
             if stream==0 || stream==3 {assert_eq!(state["inner"]["_pluginSettings"],r.state["_pluginSettings"]);}
         }

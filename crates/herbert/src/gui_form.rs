@@ -1,4 +1,4 @@
-//! Compact forms. Options are labeled and visible. There are no hidden expanders.
+//! Connection and content stay visible. Reviewed tuning uses Advanced.
 use super::*;
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String, secret: bool) {
     let label = ui.label(label);
@@ -53,7 +53,7 @@ impl Gui {
                 if ui.button("Copy example (placeholders only)").clicked() {
                     ctx.copy_text(CREDENTIAL_FILE_EXAMPLE.into());
                 }
-                ui.label(RichText::new(CREDENTIAL_FILE_EXAMPLE).monospace().size(13.0));
+                ui.label(RichText::new(CREDENTIAL_FILE_EXAMPLE).monospace().size(TEXT_DETAIL));
                 ui.label("You can also use a full browser URL. Herbert removes browser and API suffixes. It keeps capitalization in the instance path.");
                 ui.label("For Basic authentication with an API key, set authMode to basicApiKey. Replace null with the quoted API key.");
                 ui.label("For a managed session, set authMode to session. Set an API key only when the server requires one.");
@@ -65,6 +65,13 @@ impl Gui {
         self.file_help_open &= open;
     }
     pub(super) fn connection_form(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        self.connection_fields(ui, Some(frame));
+    }
+    #[cfg(test)]
+    pub(super) fn connection_card(&mut self, ui: &mut egui::Ui) {
+        self.connection_fields(ui, None);
+    }
+    fn connection_fields(&mut self, ui: &mut egui::Ui, frame: Option<&eframe::Frame>) {
         if !self.profiles_loaded || !self.settings_loaded {
             if self.diagnostic.is_none() {
                 ui.horizontal(|ui| { ui.spinner(); ui.label("Loading saved environments and settings…"); });
@@ -82,6 +89,7 @@ impl Gui {
                 ui.heading("Connection");
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
+                    super::gui_connection::trust_pill(ui, self.allow_untrusted_certificate, None);
                     ui.label("Environment");
                     let selected = self
                         .profiles
@@ -138,25 +146,26 @@ impl Gui {
                 }
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add_enabled(
-                            self.settings_loaded,
-                            egui::Button::new(RichText::new(if self.source == Source::Entered && !self.profile_id.is_empty() { "Save updated credentials" } else { "Save" }).strong())
-                                .min_size(egui::vec2(96.0, 34.0)),
-                        )
-                        .clicked()
-                    {
+                    let save = super::gui_connection::primary_button(ui, if self.source == Source::Entered && !self.profile_id.is_empty() { "Save updated credentials" } else { "Save" }, egui::vec2(96.0, 34.0));
+                    if ui.add_enabled(self.settings_loaded, save).clicked() {
                         self.save_environment(ui.ctx());
                     }
-                    ui.label(
-                        RichText::new(if self.source == Source::File {
-                            "Save this environment file reference."
-                        } else {
-                            "Save the environment and credentials securely on this device."
-                        })
-                        .weak(),
-                    );
+                    self.test_connection_button(ui);
                 });
+                ui.label(
+                    RichText::new(if self.source == Source::File {
+                        "Save this environment file reference."
+                    } else {
+                        "Save the environment and credentials securely on this device."
+                    })
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                self.connection_test_result(ui);
+                if self.source != Source::File {
+                    ui.add_space(6.0);
+                    self.company_field(ui);
+                }
             });
         });
         if self.working || self.picker_pending {
@@ -166,7 +175,10 @@ impl Gui {
                 ui.visuals().error_fg_color
             } else { ui.visuals().text_color() }));
         }
-        if let Some(code) = &self.diagnostic { ui.label(RichText::new(code).small()); }
+        if let Some(code) = &self.diagnostic {
+            ui.label(RichText::new(code).small());
+            technical(ui, "connection-notice-technical", self.error_detail.as_deref());
+        }
     }
     pub(super) fn download_form(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
         let actions = self.download_content(ui);
@@ -179,11 +191,13 @@ impl Gui {
             return DownloadActions::default();
         }
         let editable = self.editable();
+        self.account_readiness_panel(ui);
         let previous_method = self.collection_method;
         ui.add_enabled_ui(editable, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Prepare download");
-                ui.add(egui::Label::new(format!("{} · {}", if self.name.is_empty() { "Select an environment on Connection" } else { &self.name },self.company)).truncate());
+                super::gui_connection::trust_pill(ui, self.allow_untrusted_certificate, None);
+                ui.add(egui::Label::new(header_context(&self.name, &self.company)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.sound_control(ui));
             });
             ui.add_space(4.0);
@@ -198,7 +212,7 @@ impl Gui {
                         let summary = if method == herbert_contract::CollectionMethod::DirectOnly {
                             "Existing Epicor services. No helpers."
                         } else { "Native calls, with helpers when needed or useful." };
-                        ui.add(egui::Label::new(RichText::new(summary).size(14.0)).truncate()).on_hover_text(method.description());
+                        ui.add(egui::Label::new(RichText::new(summary).size(TEXT_DENSE)).truncate()).on_hover_text(method.description());
                     });
                 }
             });
@@ -211,6 +225,10 @@ impl Gui {
                 self.show_error(error);
             }
         }
+        if ui.add_enabled_ui(editable, |ui| super::gui_server_changes::lifetime_controls(ui, &mut self.authorization_choice, &mut self.authorization_workflow)).inner {
+            self.open_saved_authorizations();
+        }
+        let company_missing = self.company_missing();
         let actions=download_settings(ui, DownloadForm {
             destination: &mut self.destination,
             output_mode: &mut self.output_mode,
@@ -222,6 +240,9 @@ impl Gui {
             busy: self.working || self.picker_pending,
             notice: &self.notice,
             diagnostic: self.diagnostic.as_deref(),
+            detail: self.error_detail.as_deref(),
+            company_missing,
+            advanced_open: None,
         });
         if self.diagnostic.is_some() && ui.add_enabled(!self.diagnostic_export_pending,egui::Button::new("Save diagnostics…")).on_hover_text("Save a sanitized packet without credentials, source or business values.").clicked() {
             self.save_diagnostics(ui.ctx());
@@ -247,9 +268,12 @@ impl Gui {
                 .into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" / ");
             ui.horizontal(|ui| {
                 ui.heading("Download monitor");
+                let relaxed = self.journal.as_ref().is_some_and(|journal| journal["transportTrust"]["mode"] == "relaxedUntrustedIssuer");
+                super::gui_connection::trust_pill(ui, relaxed, self.journal.as_ref().map(|journal| &journal["transportTrust"]));
                 ui.add(egui::Label::new(&context).truncate()).on_hover_text(&context);
                 self.sound_control(ui);
             });
+            if let Some(grant) = self.selected_authorization.as_ref() { ui.label(super::gui_server_changes::authorization_label(grant)); }
             ui.add_space(4.0);
             self.progress(ui);
         });
@@ -266,12 +290,12 @@ impl Gui {
             .weak(),
         );
         ui.label(RichText::new("Paste the full browser URL or just the instance URL. Herbert removes /apps/ERP or /api/v2 and anything after it, regardless of case, plus ? and # navigation details. Instance path capitalization is preserved.").small().weak());
-        field(ui, "Company ID", &mut self.company, false);
         ui.label("Authentication");
         ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut self.mode, AuthMode::Session, "Managed session");
             ui.radio_value(&mut self.mode, AuthMode::BasicApiKey, "Basic + API key");
         });
+        self.certificate_option(ui);
     }
     fn credential_fields(&mut self, ui: &mut egui::Ui) {
         if self.source == Source::Saved {
@@ -316,7 +340,7 @@ impl Gui {
         }
         ui.label(RichText::new("A Security Manager account is required. Download does not save newly entered credentials; use Save for that.").small());
     }
-    fn input_file_form(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+    fn input_file_form(&mut self, ui: &mut egui::Ui, frame: Option<&eframe::Frame>) {
         ui.label("Use a JSON credentials file you created yourself. Herbert reads it; it never creates or changes it.");
         let input_label = ui.label("Credentials file (.json)");
         ui.horizontal(|ui| {
@@ -331,7 +355,7 @@ impl Gui {
                     self.load_file_choices(ui.ctx());
                 }
                 if ui.button("Choose file…").clicked() {
-                    self.pick_path(Picker::Input, ui.ctx(), frame);
+                    if let Some(frame) = frame { self.pick_path(Picker::Input, ui.ctx(), frame); }
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.input_file)
@@ -382,8 +406,9 @@ impl Gui {
                 "Basic + API key"
             }
         ));
+        ui.label(if self.allow_untrusted_certificate { "Certificate: self-signed allowed (set in the file)" } else { "Certificate: verified by Windows" });
         if self.file_company_override {
-            field(ui, "Company ID", &mut self.company, false);
+            self.company_field(ui);
         } else {
             ui.label(format!("Company: {}", self.company));
         }
@@ -415,6 +440,9 @@ impl Gui {
                         self.save_plugin_selection(&id, ui.ctx());
                     }
                 }
+                if self.capabilities_loaded {
+                    ui.label(RichText::new(selection_count(&self.categories, &self.capabilities)).strong());
+                }
             });
             if !self.capabilities_loaded { ui.spinner(); ui.label("Loading installed plugins…"); }
             for category in self.capabilities.clone() {
@@ -437,7 +465,7 @@ impl Gui {
                         ui.visuals_mut().widgets.inactive.fg_stroke = egui::Stroke::new(2.0, if selected { accent } else { ui.visuals().text_color() });
                         if ui.add_enabled(available, egui::Checkbox::new(
                             self.categories.entry(id.into()).or_insert(false),
-                            RichText::new(category["name"].as_str().unwrap_or(id)).strong().size(17.0))).changed() {
+                            RichText::new(category["name"].as_str().unwrap_or(id)).strong().size(TEXT_TITLE))).changed() {
                             self.save_plugin_selection(id, ui.ctx());
                         }
                         });
@@ -450,7 +478,15 @@ impl Gui {
                             crate::gui::gui_plugin_settings::helper_label(ui, &category, self.collection_method);
                         if let Some(description) = category["description"].as_str() { ui.label(RichText::new(description).italics()); }
                         if !available { ui.label(RichText::new("Not available for download. See the plugin options below.").small().color(ui.visuals().warn_fg_color)); }
-                        if let Ok(artifacts) = serde_json::from_value::<Vec<herbert_contract::NativeArtifactDeclaration>>(category["artifacts"].clone()) {
+                        // Name, description, availability and options stay visible. Longer
+                        // helper, artifact and help text is available under a collapsed header.
+                        let helpers = gui_plugin_settings::helper_details(&category);
+                        let artifacts = serde_json::from_value::<Vec<herbert_contract::NativeArtifactDeclaration>>(category["artifacts"].clone()).unwrap_or_default();
+                        let sections = serde_json::from_value::<Vec<herbert_contract::HelpSection>>(category["help"].clone()).unwrap_or_default();
+                        if !helpers.is_empty() || !artifacts.is_empty() || !sections.is_empty() {
+                            ui.add_space(4.0);
+                            egui::CollapsingHeader::new("About this plugin").id_salt("about-plugin").default_open(false).show(ui, |ui| {
+                            for description in helpers { ui.add(egui::Label::new(description).wrap()); }
                             if !artifacts.is_empty() { ui.add_space(6.0); ui.label(RichText::new("Native artifacts").strong()); }
                             for artifact in artifacts {
                                 ui.label(&artifact.effects.description);
@@ -468,20 +504,19 @@ impl Gui {
                                 if artifact.effects.invokes_custom_actions { ui.label(RichText::new("This plugin can invoke UBAQ custom actions.").strong()); }
                                 ui.add_space(4.0);
                             }
-                        }
-                        if let Ok(sections) = serde_json::from_value::<Vec<herbert_contract::HelpSection>>(category["help"].clone()) {
                             for section in sections {
                                 ui.add_space(8.0);
-                                if !section.title.is_empty() { ui.label(RichText::new(&section.title).strong().size(15.0)); }
+                                if !section.title.is_empty() { ui.label(RichText::new(&section.title).strong().size(TEXT_BODY)); }
                                 ui.indent(section.title, |ui| {
                                     for paragraph in section.paragraphs { ui.label(RichText::new(paragraph).weak()); }
                                 });
                             }
+                            });
                         }
                         if category["settings"].as_array().is_some_and(|settings| !settings.is_empty()) {
                             ui.add_space(10.0);
                             ui.separator();
-                            ui.label(RichText::new("Options").strong().size(16.0));
+                            ui.label(RichText::new("Options").strong().size(TEXT_SECTION));
                         }
                         gui_plugin_settings::show(ui, &category, self.plugin_settings.entry(id.into()).or_insert(json!({})));
                         if category["settings"].as_array().is_some_and(|settings| !settings.is_empty()) {
@@ -497,6 +532,7 @@ impl Gui {
         });
         if self.diagnostic.is_some() {
             ui.label(RichText::new(&self.notice).color(ui.visuals().error_fg_color));
+            technical(ui, "plugins-notice-technical", self.error_detail.as_deref());
         }
     }
     fn save_plugin_selection(&mut self, id: &str, ctx: &egui::Context) {
@@ -533,15 +569,30 @@ struct DownloadForm<'a> {
     busy: bool,
     notice: &'a str,
     diagnostic: Option<&'a str>,
+    detail: Option<&'a str>,
+    company_missing: bool,
+    /// None leaves Advanced under the user's control; layout tests force it open.
+    advanced_open: Option<bool>,
 }
 #[derive(Default)]
 pub(super) struct DownloadActions { choose_folder: bool, download: bool }
+/// Plugins header count, such as "12 of 24 selected", over the installed plugins.
+fn selection_count(categories: &BTreeMap<String, bool>, capabilities: &[Value]) -> String {
+    let ids = capabilities.iter().filter_map(|category| category["id"].as_str());
+    let (selected, total) = ids.fold((0, 0), |(selected, total), id| (selected + usize::from(categories.get(id) == Some(&true)), total + 1));
+    format!("{selected} of {total} selected")
+}
+/// Download header context: the environment and company, without a dangling separator.
+fn header_context(name: &str, company: &str) -> String {
+    let environment = if name.is_empty() { "Select an environment on Connection" } else { name };
+    [environment, company].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ")
+}
 fn download_settings(ui: &mut egui::Ui, form: DownloadForm<'_>) -> DownloadActions {
     let mut actions = DownloadActions::default();
     surface(ui).inner_margin(12).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.add_enabled_ui(form.editable, |ui| {
-            ui.label(RichText::new("Save files").strong().size(17.0));
+            ui.label(RichText::new("Save files").strong().size(TEXT_TITLE));
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Choose folder…").clicked() { actions.choose_folder=true; }
@@ -560,39 +611,53 @@ fn download_settings(ui: &mut egui::Ui, form: DownloadForm<'_>) -> DownloadActio
     surface(ui).inner_margin(12).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.add_enabled_ui(form.editable, |ui| {
-            ui.label(RichText::new("Temporary access").strong().size(17.0));
+            ui.label(RichText::new("Temporary access").strong().size(TEXT_TITLE));
             ui.checkbox(&mut *form.temporary_access,"Allow Herbert to temporarily add my Epicor user to required security groups")
                 .on_hover_text("This separate permission permits eligible group changes only with explicit scoped authorization. Herbert preserves preexisting memberships and other active owners.");
             ui.label(RichText::new("Herbert records temporary additions and verifies cleanup. Pending, failed or unknown cleanup remains visible.").small().weak());
         });
     });
     ui.add_space(8.0);
-    egui::CollapsingHeader::new("Advanced").default_open(false).show(ui,|ui| {
+    egui::CollapsingHeader::new("Advanced").id_salt("download-advanced").default_open(false).open(form.advanced_open).show(ui,|ui| {
         ui.add_enabled_ui(form.editable,|ui|form.settings.ui(ui));
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        let button=egui::Button::new(RichText::new("Download").strong()
-            .color(ui.visuals().selection.stroke.color))
-            .fill(ui.visuals().selection.bg_fill).min_size(egui::vec2(140.0,36.0));
-        if ui.add_enabled(form.editable && form.ready,button).clicked() { actions.download=true; }
+        let button=super::gui_connection::primary_button(ui,"Preview download",egui::vec2(140.0,36.0));
+        if ui.add_enabled(form.editable && form.ready && !form.company_missing,button)
+            .on_disabled_hover_text(if form.company_missing { super::gui_connection::EMPTY_COMPANY } else { "Finish loading settings and plugins first." })
+            .clicked() { actions.download=true; }
         ui.label(format!("{} plugins selected · Review the selection on Plugins",form.selected));
         if form.busy { ui.spinner(); }
     });
+    if form.company_missing { super::gui_connection::warning(ui, super::gui_connection::EMPTY_COMPANY); }
     // Status changes below the action, never between the action and its options.
     if !form.notice.is_empty() {
         ui.label(RichText::new(form.notice).color(if form.diagnostic.is_some() {
             ui.visuals().error_fg_color
         } else { ui.visuals().text_color() }));
     }
-    if let Some(code)=form.diagnostic { ui.label(RichText::new(code).small()); }
+    if let Some(code)=form.diagnostic {
+        ui.label(RichText::new(code).small());
+        technical(ui, "download-notice-technical", form.detail);
+    }
     actions
+}
+/// Collapsed lower-level detail under an error notice; nothing when there is none.
+pub(super) fn technical(ui: &mut egui::Ui, salt: &str, detail: Option<&str>) {
+    let Some(detail) = detail else { return };
+    egui::CollapsingHeader::new("Technical details").id_salt(salt).default_open(false).show(ui, |ui| {
+        ui.add(egui::Label::new(RichText::new(detail).monospace()).wrap().selectable(true));
+    });
 }
 
 #[cfg(test)]
 mod download_layout_tests {
     use super::*;
     fn measure(width: f32, height: f32, busy: bool, notice: &str, diagnostic: Option<&str>) -> (egui::Vec2, egui::Rect) {
+        measure_with(width, height, busy, notice, diagnostic, false)
+    }
+    fn measure_with(width: f32, height: f32, busy: bool, notice: &str, diagnostic: Option<&str>, advanced_open: bool) -> (egui::Vec2, egui::Rect) {
         let ctx = egui::Context::default();
         configure_style(&ctx);
         let mut destination = String::new();
@@ -610,7 +675,8 @@ mod download_layout_tests {
                         let actions = download_settings(ui, DownloadForm {
                             destination: &mut destination, output_mode: &mut mode, temporary_access: &mut access,
                             settings: &mut settings, editable: !busy, ready: true, selected: 5,
-                            busy, notice, diagnostic,
+                            busy, notice, diagnostic, detail: None, company_missing: false,
+                            advanced_open: advanced_open.then_some(true),
                         });
                         assert!(!actions.choose_folder && !actions.download);
                         ui.add_space(12.0);
@@ -648,10 +714,78 @@ mod download_layout_tests {
         assert!(content.y <= viewport.height(), "default controls require scrolling");
         assert!(content.x <= viewport.width() + 1.0, "horizontal overflow");
     }
+    // Replaces download_form_keeps_narrow_controls_in_vertical_scroll_content:
+    // tuning moved under the collapsed Advanced section, so the collapsed
+    // narrow form now fits. Opened Advanced still needs the vertical scroll.
     #[test]
-    fn download_form_keeps_narrow_controls_in_vertical_scroll_content() {
+    fn download_form_scrolls_narrow_controls_vertically_with_advanced_open() {
         let (content, viewport) = measure(720.0, 560.0, true, "Choose a destination folder…", None);
-        assert!(content.y > viewport.height());
-        assert!(content.x <= viewport.width() + 1.0, "narrow horizontal overflow: {content:?} in {viewport:?}");
+        assert!(content.x <= viewport.width() + 1.0, "narrow horizontal overflow (collapsed): {content:?} in {viewport:?}");
+        let (open, viewport) = measure_with(720.0, 560.0, true, "Choose a destination folder…", None, true);
+        assert!(open.y > content.y, "Advanced did not open: {open:?} vs {content:?}");
+        assert!(open.y > viewport.height(), "opened Advanced should use the vertical scroll: {open:?} in {viewport:?}");
+        assert!(open.x <= viewport.width() + 1.0, "narrow horizontal overflow (open): {open:?} in {viewport:?}");
+    }
+    #[test]
+    fn download_header_joins_only_present_parts() {
+        assert_eq!(header_context("Polish check", ""), "Polish check");
+        assert_eq!(header_context("", ""), "Select an environment on Connection");
+        assert_eq!(header_context("Test", "EPIC"), "Test · EPIC");
+        assert_eq!(header_context("", "EPIC"), "Select an environment on Connection · EPIC");
+    }
+    #[test]
+    fn plugin_selection_count_covers_installed_plugins_only() {
+        let capabilities = vec![json!({"id":"a"}), json!({"id":"b"}), json!({"id":"c"}), json!({"name":"no id"})];
+        let mut categories = BTreeMap::from([("a".to_owned(), true), ("b".to_owned(), false), ("gone".to_owned(), true)]);
+        assert_eq!(selection_count(&categories, &capabilities), "1 of 3 selected");
+        categories.insert("c".into(), true);
+        assert_eq!(selection_count(&categories, &capabilities), "2 of 3 selected");
+        assert_eq!(selection_count(&BTreeMap::new(), &[]), "0 of 0 selected");
+    }
+}
+#[cfg(test)]
+mod plugin_card_tests {
+    use super::*;
+    fn texts(ctx: &egui::Context, app: &mut Gui, events: Vec<egui::Event>) -> Vec<(String, egui::Rect)> {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 2400.0))), events, ..Default::default() }, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| app.plugins_form(ui));
+        });
+        output.textures_delta.clear();
+        output.shapes.into_iter().filter_map(|shape| if let egui::Shape::Text(text) = shape.shape {
+            Some((text.galley.text().to_owned(), egui::Rect::from_min_size(text.pos, text.galley.size())))
+        } else { None }).collect()
+    }
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }
+    }
+    #[test]
+    fn plugin_options_stay_visible_while_about_this_plugin_is_collapsed() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        let mut app = super::super::gui_progress_layout_tests::app(&ctx, &runtime, false);
+        app.run_id.clear(); app.journal = None; app.profiles_loaded = true; app.settings_loaded = true; app.capabilities_loaded = true;
+        let setting = herbert_contract::PluginSetting::checkbox("includeDisabled", "Include disabled directives", false).description("Also collect disabled directives.");
+        app.capabilities = vec![json!({"id":"bpm-directives","name":"BPM directives","available":true,
+            "description":"Directive definitions and their code.",
+            "helpers":[{"purpose":"requiredContent","coverage":"someContent","effects":{"description":"HELPER EFFECT TEXT"}}],
+            "help":[{"title":"HELP TITLE","paragraphs":["HELP PARAGRAPH"]}],
+            "settings":[setting]})];
+        let count = |labels: &[(String, egui::Rect)], wanted: &str| labels.iter().filter(|(text, _)| text == wanted).count();
+        let mut labels = Vec::new();
+        for _ in 0..3 { labels = texts(&ctx, &mut app, vec![]); }
+        for visible in ["BPM directives", "Directive definitions and their code.", "Requires helpers for some content", "Options", "Include disabled directives", "Save plugin options", "About this plugin"] {
+            assert_eq!(count(&labels, visible), 1, "{visible} must be visible once while collapsed");
+        }
+        for hidden in ["HELPER EFFECT TEXT", "HELP TITLE", "HELP PARAGRAPH"] {
+            assert_eq!(count(&labels, hidden), 0, "{hidden} belongs under the collapsed header");
+        }
+        let header = labels.iter().find(|(text, _)| text == "About this plugin").unwrap().1.center();
+        texts(&ctx, &mut app, vec![egui::Event::PointerMoved(header), press(header, true)]);
+        texts(&ctx, &mut app, vec![press(header, false)]);
+        for _ in 0..10 { labels = texts(&ctx, &mut app, vec![]); }
+        for shown in ["HELPER EFFECT TEXT", "HELP TITLE", "HELP PARAGRAPH", "Include disabled directives", "Save plugin options"] {
+            assert_eq!(count(&labels, shown), 1, "{shown} must appear exactly once when expanded");
+        }
     }
 }

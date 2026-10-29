@@ -1,18 +1,14 @@
-//! Explicit owned-lab acceptance for the C04 caller and actual shared engine.
+//! Explicit test acceptance for the BAQs and UBAQs caller and actual shared engine.
 use super::*;
 use crate::input::AuthMode;
 use std::fs;
 use std::collections::BTreeSet;
 
 #[tokio::test]
-#[ignore = "Requires explicit lab reservation, matching C04 WASM/host/companion and owned output"]
+#[ignore = "Requires explicit test reservation, matching BAQs and UBAQs WASM/host/companion and owned output"]
 async fn compiled_ubaq_native_host_collection() {
     let lane = std::env::var("HERBERT_UBAQ_LANE").unwrap();
-    let (endpoint, profile) = match lane.as_str() {
-        "2025.2" => ("https://kinetic-2025-2.lab.test:9449/", "lab-2025-2"),
-        "2026.1" => ("https://kinetic-2026-1.lab.test:9448/", "lab-2026-1"),
-        _ => panic!("Only authorized owned labs"),
-    };
+    let (endpoint, profile) = crate::test_targets::lane(&lane);
     let package = PathBuf::from(std::env::var("HERBERT_UBAQ_PACKAGE").unwrap());
     let output = PathBuf::from(std::env::var("HERBERT_UBAQ_OUTPUT").unwrap());
     assert!(!output.exists(), "Preserve earlier evidence");
@@ -37,7 +33,7 @@ async fn compiled_ubaq_native_host_collection() {
     let plugin = Plugin::load(&package.join("plugins/BAQs and UBAQs/BAQs and UBAQs.wasm"))
         .await
         .unwrap();
-    assert_eq!(plugin.category.id, "C04");
+    assert_eq!(plugin.category.id, "baqs-and-ubaqs");
     let host = Host::with_roots(
         output.join("state"),
         package.join("plugins"),
@@ -55,7 +51,7 @@ async fn compiled_ubaq_native_host_collection() {
     };
     let project = std::env::var("HERBERT_UBAQ_PROJECT").as_deref() != Ok("false");
     let download = std::env::var("HERBERT_UBAQ_DOWNLOAD").as_deref() != Ok("false");
-    journal.plugin_settings.insert("C04".into(),json!({"queriesPerPage":100,"downloadCompiledAssemblies":download,"decompileCompiledAssemblies":project}));
+    journal.plugin_settings.insert("baqs-and-ubaqs".into(),json!({"queriesPerPage":100,"downloadCompiledAssemblies":download,"decompileCompiledAssemblies":project}));
     let run = make_run(Storage::open(&output.join("collection"), false, journal).unwrap());
     assert!(
         host.prepare_native_artifacts(&run, &connection, &[plugin.clone()])
@@ -66,7 +62,7 @@ async fn compiled_ubaq_native_host_collection() {
         let company =
             std::env::var("HERBERT_UBAQ_TARGET_COMPANY").unwrap_or_else(|_| "TESTCO".into());
         let identity = Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: "UBAQ".into(),
             scope: if company.is_empty() {
                 Scope::Global
@@ -136,7 +132,7 @@ fn make_run(store: Storage) -> Arc<Run> {
 }
 fn status_owner(query: &str) -> Identity {
     Identity {
-        category: "C04".into(),
+        category: "baqs-and-ubaqs".into(),
         kind: "UBAQ".into(),
         scope: Scope::Company {
             company: "LAB".into(),
@@ -187,14 +183,14 @@ async fn optional_processing_failure_preserves_acquisition_files_and_discovery_t
     store
         .journal
         .category_outcomes
-        .insert("C04".into(), "discovered".into());
-    store.journal.discovery_finished.insert("C04".into(), true);
+        .insert("baqs-and-ubaqs".into(), "discovered".into());
+    store.journal.discovery_finished.insert("baqs-and-ubaqs".into(), true);
     let run = make_run(store);
     let failure = status_failure(owner.clone());
-    record_page_diagnostic(&run, "C04", &[owner.clone()], failure.clone())
+    record_page_diagnostic(&run, "baqs-and-ubaqs", &[owner.clone()], failure.clone())
         .await
         .unwrap();
-    record_page_diagnostic(&run, "C04", &[owner.clone()], failure.clone())
+    record_page_diagnostic(&run, "baqs-and-ubaqs", &[owner.clone()], failure.clone())
         .await
         .unwrap();
     let mut store = run.storage.lock().unwrap();
@@ -203,8 +199,8 @@ async fn optional_processing_failure_preserves_acquisition_files_and_discovery_t
     assert_eq!(current.files, artifact.files);
     assert_eq!(current.processing, "partial");
     assert_eq!(current.diagnostics, vec![failure]);
-    assert_eq!(store.journal.category_outcomes["C04"], "discovered");
-    assert_eq!(store.journal.discovery_finished["C04"], true);
+    assert_eq!(store.journal.category_outcomes["baqs-and-ubaqs"], "discovered");
+    assert_eq!(store.journal.discovery_finished["baqs-and-ubaqs"], true);
     assert_eq!(collection::terminal_phase(&store.journal), "partial");
     for file in &current.files {
         store.verify(file).unwrap();
@@ -238,12 +234,12 @@ async fn optional_processing_failure_cannot_mutate_another_page_owner() {
     for other in [
         status_owner("two"),
         Identity {
-            category: "C06".into(),
+            category: "bpm-directives".into(),
             ..owner.clone()
         },
     ] {
         assert!(
-            record_page_diagnostic(&run, "C04", &[owner.clone()], status_failure(other))
+            record_page_diagnostic(&run, "baqs-and-ubaqs", &[owner.clone()], status_failure(other))
                 .await
                 .is_err()
         );
@@ -256,7 +252,7 @@ fn verified_absence_without_a_processing_failure_does_not_force_partial() {
     let mut journal = storage::new_journal("optional-absent".into());
     journal
         .category_outcomes
-        .insert("C04".into(), "discovered".into());
+        .insert("baqs-and-ubaqs".into(), "discovered".into());
     journal.artifacts.push(Artifact {
         identity: status_owner("one"),
         classification: "discoveredDefinition".into(),

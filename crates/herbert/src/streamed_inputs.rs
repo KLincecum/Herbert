@@ -252,12 +252,7 @@ impl Host {
                         &plugin.category.name,
                         batch.len(),
                     );
-                    let completed = collection::snapshot(run)
-                        .await?
-                        .artifacts
-                        .iter()
-                        .filter(|a| a.identity.category == plugin.category.id)
-                        .count();
+                    let completed = collection::category_count(run, &plugin.category.id).await?;
                     batch_progress.progress_scope(&plugin.category.id, completed);
                     for (index, input) in batch.iter().enumerate() {
                         progress.status(format!(
@@ -283,12 +278,12 @@ impl Host {
                             .insert(storage::identity_key(&input.identity));
                         batch_progress.processed(index + 1);
                     }
-                    let completed = collection::snapshot(run)
-                        .await?
-                        .artifacts
-                        .iter()
-                        .filter(|a| a.identity.category == plugin.category.id)
-                        .count();
+                    // Items were recorded on the paced schedule. Save the batch
+                    // before accepting it, so an accepted input is never unsaved.
+                    let storage = run.storage.clone();
+                    blocking(move || storage.lock().map_err(|_| Diagnostic::new(
+                        "RUN_STATE_FAILED", "Run state is unavailable."))?.checkpoint_all()).await?;
+                    let completed = collection::category_count(run, &plugin.category.id).await?;
                     batch_progress.processing_complete(completed);
                     published.accept(&batch);
                     progress.status(format!(
@@ -330,7 +325,7 @@ mod tests {
     fn selection(count: usize) -> Vec<StagingIdentity> {
         (0..count).map(|n| StagingIdentity {
             file_id: format!("{n:032x}.input"), name: format!("{n}.baq"),
-            identity: serde_json::from_value(json!({"category":"C04","kind":"BAQ","scope":{"type":"company","company":"EPIC06"},"keys":{"QueryID":format!("Q{n}"),"Company":"EPIC06"}})).unwrap(),
+            identity: serde_json::from_value(json!({"category":"baqs-and-ubaqs","kind":"BAQ","scope":{"type":"company","company":"EPIC06"},"keys":{"QueryID":format!("Q{n}"),"Company":"EPIC06"}})).unwrap(),
         }).collect()
     }
     fn snapshot(inputs: &[StagingIdentity]) -> Value {
@@ -377,7 +372,7 @@ mod tests {
         let output = tempfile::tempdir().unwrap();
         let mut journal = storage::new_journal("streamed-output".into());
         journal.company = "EPIC06".into();
-        journal.category_names.insert("C04".into(), "BAQs".into());
+        journal.category_names.insert("baqs-and-ubaqs".into(), "BAQs".into());
         let mut storage = Storage::open(output.path(), false, journal).unwrap();
         let (send, mut receive) = tokio::sync::mpsc::channel(1);
         let (ack, mut acknowledgments) = tokio::sync::mpsc::channel(1);

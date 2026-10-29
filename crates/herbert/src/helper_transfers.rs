@@ -214,7 +214,7 @@ impl Host {
                         saved.dispatch_count.checked_add(1).ok_or_else(|| {
                             Diagnostic::new(
                                 "HELPER_RESOURCE_COUNTER_OVERFLOW",
-                                "The retained attempt counter exceeds its u64 representation.",
+                                "Herbert's retry record for this helper is damaged. Run helper cleanup before starting another download.",
                             )
                         })?;
                     storage.checkpoint()?;
@@ -223,7 +223,7 @@ impl Host {
                 if !begin {
                     return Err(Diagnostic::new(
                         "HELPER_RESOURCE_NOT_ADMITTED",
-                        "This transfer has no retained local admission record.",
+                        "This transfer has no retained local start check record.",
                     ));
                 }
                 intent.phase = "admitted".into();
@@ -457,7 +457,18 @@ impl Host {
         };
         let mut errors = Vec::new();
         for record in records {
-            let result = self.cleanup_helper_transfer(run, connection, &record).await;
+            // Close owned staging under the authority its helper instance was
+            // installed with, so revocation or a lost lease cannot strand it.
+            // Older instances without a reference are recorded in this run's own
+            // journal, which is the exact match required.
+            let reference = journal.helper_libraries.iter()
+                .find(|lease| lease.instance.global_id == record.claim.global_id)
+                .and_then(|lease| lease.authorization.clone());
+            let result = match reference {
+                Some(reference) => self.with_owned_cleanup(run, connection, reference,
+                    self.cleanup_helper_transfer(run, connection, &record)).await,
+                None => super::server_leases::as_cleanup(self.cleanup_helper_transfer(run, connection, &record)).await,
+            };
             let closed = result.is_ok();
             let storage = run.storage.clone();
             let id = record.operation_id.clone();

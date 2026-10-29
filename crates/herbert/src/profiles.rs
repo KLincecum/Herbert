@@ -271,10 +271,10 @@ mod tests {
     fn saved_profile_uses_normalized_instance_url() {
         let root = tempfile::tempdir().unwrap();
         let profiles = Profiles::new(root.path());
-        profiles.upsert(Profile { id: "lab".into(), name: Some("Lab".into()),
+        profiles.upsert(Profile { id: "test".into(), name: Some("Test".into()),
             url: "https://EXAMPLE.test/MyInstance/APPS/erp/Home?company=C#screen".into(),
-            auth_mode: Default::default(), defaults: Default::default(), user_file: None }).unwrap();
-        assert_eq!(profiles.get("lab").unwrap().url, "https://example.test/MyInstance/");
+            auth_mode: Default::default(), defaults: Default::default(), user_file: None, allow_untrusted_certificate: false }).unwrap();
+        assert_eq!(profiles.get("test").unwrap().url, "https://example.test/MyInstance/");
     }
 
     #[test]
@@ -288,6 +288,7 @@ mod tests {
             auth_mode: Default::default(),
             defaults: Default::default(),
             user_file: None,
+            allow_untrusted_certificate: false,
         };
         // A first launch must create its directory before opening the lock.
         Profiles::new(&state).upsert(initial.clone()).unwrap();

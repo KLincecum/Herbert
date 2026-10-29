@@ -162,7 +162,7 @@ fn query(
     };
     if read_size == 0 || read_size > u32::MAX as u64 {
         return Err(invalid(
-            "The identity page size must be a positive native page size.",
+            "The identity page size must be a positive Epicor page size.",
         ));
     }
     state["readPageSize"] = json!(read_size);
@@ -349,16 +349,16 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         }
         "parents" => {
             let more_pages = r.response.as_ref().and_then(|v| v.pointer("/parameters/morePages"))
-                .and_then(Value::as_bool).ok_or_else(|| invalid("The native parent response omitted its paging status."))?;
+                .and_then(Value::as_bool).ok_or_else(|| invalid("The Epicor parent response omitted its paging status."))?;
             // Native GenXData reads retain tenant-layer rows that a company BAQ
             // can omit. Its string fields are native full values, not BAQ text
             // projections; record their UTF-16 sizes for the shared writer.
             let native = r.response.as_ref().and_then(|v| v.pointer("/returnObj/XXXDef"))
-                .and_then(Value::as_array).ok_or_else(|| invalid("The native parent-layer response omitted its rows."))?;
+                .and_then(Value::as_array).ok_or_else(|| invalid("The Epicor parent-layer response omitted its rows."))?;
             let mut native = native.clone();
             for row in &mut native {
                 for field in ["Content", "SysCharacter01", "SysCharacter03"] {
-                    let text = row[field].as_str().ok_or_else(|| invalid("A native parent layer omitted its full text."))?;
+                    let text = row[field].as_str().ok_or_else(|| invalid("An Epicor parent layer omitted its full text."))?;
                     row[format!("Herbert{field}Bytes")] = json!(text.encode_utf16().count() * 2);
                 }
             }
@@ -375,9 +375,9 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     return Err(invalid("A parent-layer read returned an out-of-scope row."));
                 }
                 if r.state["parentPageSeen"].as_array().is_some_and(|seen| seen.contains(&row["SysRowID"])) {
-                    return Err(invalid("The native parent pages repeat a physical row."));
+                    return Err(invalid("The Epicor parent pages repeat a physical row."));
                 }
-                r.state["parentPageSeen"].as_array_mut().ok_or_else(|| invalid("The native parent paging state is missing."))?.push(row["SysRowID"].clone());
+                r.state["parentPageSeen"].as_array_mut().ok_or_else(|| invalid("The Epicor parent paging state is missing."))?.push(row["SysRowID"].clone());
                 let matches = r.state["parentLookup"]
                     .as_array()
                     .unwrap()
@@ -398,7 +398,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 }
             }
             if more_pages {
-                if rows.is_empty() { return Err(invalid("The native parent page made no progress.")); }
+                if rows.is_empty() { return Err(invalid("The Epicor parent page made no progress.")); }
                 return parent_page(&r, json!(r.state["parentPage"].as_u64().unwrap_or(1) + 1));
             }
             let looked = r.state["parentLookup"].clone();
@@ -492,7 +492,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .response
                 .as_ref()
                 .and_then(|v| v["returnObj"].as_array())
-                .ok_or_else(|| invalid("The native version response is missing."))?;
+                .ok_or_else(|| invalid("The Epicor version response is missing."))?;
             for row in rows {
                 if r.state["scopes"]
                     .as_array()
@@ -529,11 +529,11 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .as_ref()
                 .ok_or_else(|| invalid("The history helper returned no response."))?;
             if response["oSuccess"] != true {
-                return Err(invalid(
-                    response["oMessage"]
-                        .as_str()
-                        .unwrap_or("The history helper failed."),
-                ));
+                let error = invalid("Herbert could not read the application version history on the Epicor server. Retry the download; the server's message is in the technical details.");
+                return Err(match response["oMessage"].as_str().filter(|s| !s.is_empty()) {
+                    Some(text) => error.with_context("serverMessage", text),
+                    None => error,
+                });
             }
             let page: Value = response["oJson"]
                 .as_str()
@@ -545,7 +545,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .ok_or_else(|| invalid("The history page omitted its scanned count."))?;
             let next = page["nextOffset"]
                 .as_u64()
-                .ok_or_else(|| invalid("The history page omitted its cursor."))?;
+                .ok_or_else(|| invalid("The history page omitted its saved position."))?;
             if page["offset"] != offset
                 || scanned > size(&r)? as u64
                 || next != offset + scanned
@@ -592,7 +592,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             }
         }
         _ => Err(invalid(
-            "The Kinetic checkpoint is invalid. Restart this collection.",
+            "The Kinetic saved progress is invalid. Restart this collection.",
         )),
     }
 }
@@ -612,7 +612,7 @@ fn inventory(r: &GuestRequest, after: Value) -> Result<GuestReply, Diagnostic> {
 }
 fn identity(view: &str, company: &str) -> Identity {
     Identity {
-        category: "C12".into(),
+        category: "kinetic-applications-and-layers".into(),
         kind: "KineticApplicationBundle".into(),
         scope: Scope::Company {
             company: company.into(),
@@ -627,7 +627,7 @@ fn begin_batch(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     let metadata = r.state["metadata"]
         .as_array()
         .cloned()
-        .ok_or_else(|| invalid("The Kinetic inventory checkpoint is missing."))?;
+        .ok_or_else(|| invalid("The Kinetic inventory saved progress is missing."))?;
     let prefix = if r.identity.is_some() {String::new()} else {application_prefix(&r)?};
     let all: BTreeSet<String> = metadata
         .iter()
@@ -642,16 +642,16 @@ fn begin_batch(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
         .as_deref()
         .map(serde_json::from_str)
         .transpose()
-        .map_err(|_| invalid("The Kinetic cursor is invalid."))?
+        .map_err(|_| invalid("The Kinetic saved position is invalid."))?
         .unwrap_or(json!({"version":1,"offset":0}));
     if cursor["version"] != 1 {
         return Err(invalid(
-            "Restart discovery with the current Kinetic cursor.",
+            "Restart discovery with the current Kinetic saved position.",
         ));
     }
     let offset = cursor["offset"]
         .as_u64()
-        .ok_or_else(|| invalid("The Kinetic cursor offset is missing."))? as usize;
+        .ok_or_else(|| invalid("The Kinetic saved position offset is missing."))? as usize;
     let selected: Vec<_> = if let Some(id) = &r.identity {
         let view_id = id
             .keys
@@ -761,7 +761,7 @@ fn parent_page(r: &GuestRequest, after: Value) -> Result<GuestReply, Diagnostic>
     let views: BTreeSet<_> = lookups.iter().filter_map(|p| p["view"].as_str()).collect();
     let quote = |v: &str| format!("'{}'", v.replace('\'', "''"));
     let group = |field: &str, values: Vec<&str>| -> Result<String, Diagnostic> {
-        if values.is_empty() { return Err(invalid("A native parent lookup requires an explicit scope.")); }
+        if values.is_empty() { return Err(invalid("An Epicor parent lookup requires an explicit scope.")); }
         Ok(format!("({})", values.into_iter().map(|v| format!("{field} = {}", quote(v))).collect::<Vec<_>>().join(" OR ")))
     };
     let scopes = r.state["scopes"].as_array().ok_or_else(|| invalid("Parent scope is missing."))?;
@@ -985,7 +985,7 @@ fn history_view(row: &Value) -> Option<&str> {
         row["Key2"].as_str()
     }
 }
-// UXAppVersion is not exposed by BAQ field metadata in the qualified lab.
+// UXAppVersion is not exposed by BAQ field metadata in the tested versions.
 // Its native reader returns all retained file bodies for an app in one call.
 fn start_history(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     // History is optional. Current drafts are already present in the saved rows.
@@ -1110,7 +1110,7 @@ fn process(r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     let mut records = Vec::new();
     let mut identities = Vec::new();
     let mut diagnostics: Vec<Diagnostic> = serde_json::from_value(r.state["errors"].clone())
-        .map_err(|_| invalid("The Kinetic diagnostics checkpoint is invalid."))?;
+        .map_err(|_| invalid("The Kinetic diagnostics saved progress is invalid."))?;
     let rows_by_view = named_rows(rows, view);
     let versions_by_view = named_rows(r.state["versions"].as_array().unwrap(), history_view);
     let mut chunks_by_key = BTreeMap::<String, Vec<(usize, &Value)>>::new();
@@ -1200,7 +1200,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

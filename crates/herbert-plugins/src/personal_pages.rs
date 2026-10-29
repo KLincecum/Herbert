@@ -22,13 +22,13 @@ fn recovery_contract(request: &mut GuestRequest) -> Option<GuestReply> {
                     "zipRoot":if parts[0] == 4 && parts[1] == 3 {"Layers"} else {"Personalizations"}
                 }),
                 None => json!({"diagnostic":Diagnostic::new("PERSONAL_RECOVERY_VERSION_INVALID",
-                    "The native base version did not identify a personalization recovery format.")}),
+                    "The Epicor base version did not identify a personalization recovery format.")}),
             }
         };
         let pending = request.state.as_object_mut().unwrap().remove("_archivePending")
             .unwrap_or(Value::Null);
         if !pending.is_object() {
-            return Some(crate::failure("PERSONAL_PAGE_INVALID", "The recovery-format continuation is missing."));
+            return Some(crate::failure("PERSONAL_PAGE_INVALID", "The recovery-format resume point is missing."));
         }
         request.state["scope"]["recoveryContract"] = contract;
         request.state["phase"] = pending["phase"].clone();
@@ -37,7 +37,7 @@ fn recovery_contract(request: &mut GuestRequest) -> Option<GuestReply> {
         request.error = if pending["error"].is_null() {None} else {
             match serde_json::from_value(pending["error"].clone()) {
                 Ok(error) => Some(error),
-                Err(_) => return Some(crate::failure("PERSONAL_PAGE_INVALID", "The saved native diagnostic is malformed.")),
+                Err(_) => return Some(crate::failure("PERSONAL_PAGE_INVALID", "The saved Epicor diagnostic is malformed.")),
             }
         };
         return None;
@@ -68,6 +68,63 @@ fn with_settings(mut state: Value, settings: Option<&Value>) -> Value {
 }
 fn selected_owner(identity: &Identity, prefix: &str) -> bool {
     prefix.is_empty() || matches!(&identity.scope, Scope::Personal {owner,..} if owner.starts_with(prefix))
+}
+/// The server LIKE literal: the prefix up to its first LIKE metacharacter. The
+/// pushed filter is only a broad superset; `selected_owner` still decides.
+pub(crate) fn server_literal(prefix: &str) -> &str {
+    prefix.split(['%', '_', '[', ']']).next().unwrap_or("")
+}
+/// Owner column of a separate-read root query, mirroring tables.json
+/// `owner_field` (guarded by a test). `Some(None)`: a known ownerless source;
+/// `None`: an unrecognized source, which is left exactly as before.
+fn owner_rule(query: &QuerySpec) -> Option<Option<&'static str>> {
+    let type_code = query.criteria.iter().find(|c| c.field == "TypeCode")
+        .and_then(|c| query.parameters.get(&c.parameter)).and_then(Value::as_str);
+    match (query.tables.first()?.table.as_str(), type_code) {
+        ("XXXDef", Some("KineticGridLayout")) => Some(Some("Key1")),
+        ("XXXDef", Some("KNTCPersLayer")) => Some(Some("SysCharacter02")),
+        ("ShellLayoutPersonal" | "HomeUserOption" | "FavFolder" | "FavItems", _) => Some(Some("UserID")),
+        ("ShellLayout", _) => Some(None),
+        _ => None,
+    }
+}
+fn root_query(reply: &mut GuestReply) -> Option<&mut QuerySpec> {
+    match reply {
+        GuestReply::Action {action: HostAction::Query {query} | HostAction::SharedQuery {query},..}
+            if !query.order.is_empty() => Some(query),
+        _ => None,
+    }
+}
+/// Rebuild this separate page's root query (pure, no native call) to learn its owner column.
+/// Returns the owner rule and the keyset (order) column.
+fn page_owner_rule(request: &GuestRequest) -> Option<(Option<&'static str>, String)> {
+    let probe = GuestRequest {abi:request.abi,operation:request.operation.clone(),category:request.category.clone(),
+        company:request.company.clone(),identity:request.identity.clone(),cursor:request.cursor.clone(),
+        page_size:request.page_size,state:request.state.clone(),response:None,error:None};
+    let mut reply = crate::tables::handle(probe);
+    let query = root_query(&mut reply)?;
+    Some((owner_rule(query)?, query.order[0].field.clone()))
+}
+fn push_owner_prefix(query: &mut QuerySpec, prefix: &str) {
+    let literal = server_literal(prefix);
+    if let (Some(Some(field)), false) = (owner_rule(query), literal.is_empty()) {
+        query.parameters.insert("ownerPrefix".into(), json!(format!("{literal}%")));
+        query.criteria.push(QueryCriterion {table:"DefinitionSource".into(),field:field.into(),
+            operator:"LIKE".into(),parameter:"ownerPrefix".into()});
+    }
+}
+/// Select before validation: an unselected root becomes a system-marked stub
+/// that discovery skips silently. Row count and the keyset column are kept, so
+/// native paging and continuation are unchanged.
+fn preselect_rows(rows: &mut [Value], owner: Option<&str>, order: &str, prefix: &str) {
+    for row in rows {
+        let selected = owner.is_some_and(|field| row[field].as_str().is_some_and(|o| o.starts_with(prefix)));
+        if !selected {
+            let mut stub = json!({"SystemFlag":true});
+            stub[order] = row[order].clone();
+            *row = stub;
+        }
+    }
 }
 fn select_page(mut reply: GuestReply, prefix: &str) -> GuestReply {
     match &mut reply {
@@ -131,7 +188,11 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         request.state["scope"] = json!({"tenant":parameters["tenantID"]});
         request.response = None;
     }
-    if let Some(reply) = recovery_contract(&mut request) {return reply;}
+    // Only collecting operations freeze the recovery contract. Any other
+    // operation must reach the existing rejection without native work.
+    if matches!(request.operation.as_str(), "discover" | "acquire" | "materialize") {
+        if let Some(reply) = recovery_contract(&mut request) {return reply;}
+    }
     if request.operation == "acquire" {
         let scope = request.state["scope"].clone();
         if tenant_identity {
@@ -184,7 +245,24 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         request.state["_hostCaller"] = caller.clone();
     }
     let combined = original.state["_pluginSettings"]["combinedRead"] == true;
-    let reply = select_page(if combined { crate::tables::personal_union(request) } else { crate::tables::handle(request) }, &prefix);
+    // Separate reads: a root page (no inner phase) gets a server owner LIKE
+    // superset, and its response is selected before per-row validation.
+    // The combined BAQ applies both in personal_union. Exact acquire never
+    // reaches here, so it stays unfiltered.
+    let root_page = !combined && !prefix.is_empty() && request.state["phase"].is_null() && request.error.is_none();
+    if root_page && request.response.is_some() {
+        if let Some((owner, order)) = page_owner_rule(&request) {
+            if let Some(rows) = request.response.as_mut().and_then(|r| r.get_mut("rows")).and_then(Value::as_array_mut) {
+                preselect_rows(rows, owner, &order, &prefix);
+            }
+        }
+    }
+    let initial = root_page && request.response.is_none();
+    let mut reply = if combined { crate::tables::personal_union(request) } else { crate::tables::handle(request) };
+    if initial {
+        if let Some(query) = root_query(&mut reply) {push_owner_prefix(query, &prefix);}
+    }
+    let reply = select_page(reply, &prefix);
     match reply {
         GuestReply::Action { action, state } => {
             let label = if combined {
@@ -265,7 +343,7 @@ fn process(mut request: GuestRequest) -> GuestReply {
             else {
                 return crate::failure(
                     "PERSONAL_PAGE_INVALID",
-                    "The personalization inventory checkpoint is invalid.",
+                    "The personalization inventory saved progress is invalid.",
                 );
             };
             if let GuestReply::Inventory {
@@ -282,7 +360,7 @@ fn process(mut request: GuestRequest) -> GuestReply {
             let Ok(records) = serde_json::from_value(request.state["output"].clone()) else {
                 return crate::failure(
                     "PERSONAL_PAGE_INVALID",
-                    "The personalization output checkpoint is invalid.",
+                    "The personalization output saved progress is invalid.",
                 );
             };
             return GuestReply::InventoryData {
@@ -293,7 +371,7 @@ fn process(mut request: GuestRequest) -> GuestReply {
         let Ok(identity) = serde_json::from_value::<Identity>(record[0].clone()) else {
             return crate::failure(
                 "PERSONAL_PAGE_INVALID",
-                "The personalization identity checkpoint is invalid.",
+                "The personalization identity saved progress is invalid.",
             );
         };
         // Pass only this record to the collector. Copying the page here also
@@ -380,7 +458,7 @@ fn acquire(request: GuestRequest, contract: &Value) -> GuestReply {
         else {
             return crate::failure(
                 "PERSONAL_PAGE_INVALID",
-                "The saved image checkpoint is invalid.",
+                "The saved image saved progress is invalid.",
             );
         };
         if let GuestReply::Definition {
@@ -473,7 +551,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             company: "C".into(),
             identity: None,
             cursor: Some(json!({"family":5,"global":false}).to_string()),
@@ -494,11 +572,11 @@ mod tests {
         }
     }
     fn personal_id(owner: &str) -> Identity {
-        Identity {category:"C13".into(),kind:"PersistedFavFolder".into(),scope:Scope::Personal {company:"C".into(),owner:owner.into()},keys:std::collections::BTreeMap::from([("UserID".into(),owner.into()),("FolderSeq".into(),"1".into())])}
+        Identity {category:"kinetic-personalizations".into(),kind:"PersistedFavFolder".into(),scope:Scope::Personal {company:"C".into(),owner:owner.into()},keys:std::collections::BTreeMap::from([("UserID".into(),owner.into()),("FolderSeq".into(),"1".into())])}
     }
     #[test]
     fn user_prefix_filters_both_inventory_shapes_without_hiding_diagnostics_or_continuation() {
-        let alpha = personal_id("Alpha");let beta = personal_id("Beta");let shared = Identity {category:"C13".into(),kind:"PersistedShellLayout".into(),scope:Scope::Global,keys:std::collections::BTreeMap::new()};
+        let alpha = personal_id("Alpha");let beta = personal_id("Beta");let shared = Identity {category:"kinetic-personalizations".into(),kind:"PersistedShellLayout".into(),scope:Scope::Global,keys:std::collections::BTreeMap::new()};
         let mut diagnostic = Diagnostic::new("SOURCE_UNVERIFIED","Acquired row was malformed");diagnostic.identity = Some(beta.clone());
         let inventory = GuestReply::Inventory {identities:vec![alpha.clone(),beta.clone(),shared.clone()],next_cursor:Some("raw-next".into()),authoritative:false,diagnostics:vec![diagnostic.clone()]};
         for prefix in ["","Al","alpha"," Alpha","%"] {
@@ -516,7 +594,7 @@ mod tests {
     }
     #[test]
     fn user_prefix_uses_native_owner_fields_for_all_personal_sources_and_excludes_shared_standalone() {
-        let specs: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!("tables.json")).unwrap().into_iter().filter(|spec|spec["category"] == "C13").collect();
+        let specs: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!("tables.json")).unwrap().into_iter().filter(|spec|spec["category"] == "kinetic-personalizations").collect();
         for (family,spec) in specs.iter().enumerate() {
             let rows: Vec<Value> = ["Alpha","Beta"].into_iter().enumerate().map(|(index,owner)| {
                 let kind = spec["kind"].as_str().unwrap();
@@ -533,6 +611,35 @@ mod tests {
             } else {assert!(records.is_empty(),"Ownerless published layouts are not standalone user matches");}
             r.state["_pluginSettings"]["userIdPrefix"] = json!("");let (state,_) = finish_inventory(r);assert_eq!(state["records"].as_array().unwrap().len(),2);
         }
+    }
+    #[test]
+    fn user_prefix_pushes_owner_like_superset_and_selects_before_validation() {
+        assert_eq!(server_literal("Ab%c"),"Ab");assert_eq!(server_literal("%x"),"");assert_eq!(server_literal("a_b[c]"),"a");
+        let specs: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!("tables.json")).unwrap().into_iter().filter(|spec|spec["category"] == "kinetic-personalizations").collect();
+        for (family,spec) in specs.iter().enumerate() {
+            let mut r = request();r.cursor = Some(json!({"family":family,"global":false}).to_string());r.response = None;
+            r.state["inner"] = json!({});r.state["_pluginSettings"] = json!({"userIdPrefix":"Ab%c"});
+            let GuestReply::Action {action: HostAction::Query {query} | HostAction::SharedQuery {query},..} = handle(r.clone()) else {panic!()};
+            // Guards owner_rule against tables.json drift.
+            assert_eq!(owner_rule(&query).unwrap(),spec["owner_field"].as_str(),"{}",spec["kind"]);
+            let like: Vec<_> = query.criteria.iter().filter(|c|c.operator == "LIKE").collect();
+            if let Some(owner) = spec["owner_field"].as_str() {
+                assert_eq!(like.len(),1);assert_eq!(like[0].field,owner);assert_eq!(query.parameters[&like[0].parameter],"Ab%");
+            } else {assert!(like.is_empty());}
+            r.state["_pluginSettings"]["userIdPrefix"] = json!("%x");
+            let GuestReply::Action {action: HostAction::Query {query} | HostAction::SharedQuery {query},..} = handle(r) else {panic!()};
+            assert!(query.criteria.iter().all(|c|c.operator != "LIKE"));
+        }
+        // An unselected row that fails validation produces no diagnostic; keyset paging continues.
+        let mut r = request();r.page_size = Some(2);
+        r.response = Some(json!({"rows":[{"UserID":"Beta","FolderSeq":1,"Company":"OTHER","SysRowID":"bad"},{"UserID":"Alpha","FolderSeq":1,"SysRowID":"good","SysRevID":1}]}));
+        let mut unfiltered = r.clone();
+        r.state["_pluginSettings"] = json!({"userIdPrefix":"Al"});
+        let (state,next) = finish_inventory(r);
+        assert_eq!(state["records"].as_array().unwrap().len(),1);assert!(!state["inventory"].to_string().contains("SCOPE_MISMATCH"));
+        assert!(next.unwrap().contains("good"));
+        unfiltered.state["_pluginSettings"] = json!({"userIdPrefix":""});
+        let (state,_) = finish_inventory(unfiltered);assert!(state["inventory"].to_string().contains("SCOPE_MISMATCH"));
     }
     #[test]
     fn user_prefix_combined_and_separate_favorites_preserve_full_selected_output_and_work_items() {
@@ -555,7 +662,7 @@ mod tests {
     fn user_prefix_retains_required_ownerless_base_and_original_image_bytes_for_selected_personal_layout() {
         let image_id = "a83369f8-766c-4fc1-abde-080d5093b4de";
         let row = json!({"TenantID":"","UserID":"Alpha","LayoutID":"owned","HomePageType":"Modern","SubType":"","ShellHomePage":"","HerbertHomeBytes":0,"BaseTenantID":"","BaseLayoutID":"base-outside-user-prefix","BaseHomePageType":"Modern","BaseSubType":""});
-        let id = Identity {category:"C13".into(),kind:"PersistedShellLayoutPersonal".into(),scope:Scope::Personal {company:"C".into(),owner:"Alpha".into()},keys:["TenantID","UserID","LayoutID","HomePageType","SubType"].into_iter().map(|name|(name.into(),row[name].as_str().unwrap().into())).collect()};
+        let id = Identity {category:"kinetic-personalizations".into(),kind:"PersistedShellLayoutPersonal".into(),scope:Scope::Personal {company:"C".into(),owner:"Alpha".into()},keys:["TenantID","UserID","LayoutID","HomePageType","SubType"].into_iter().map(|name|(name.into(),row[name].as_str().unwrap().into())).collect()};
         let mut r=request();r.operation="materialize".into();r.response=None;r.state=json!({"phase":"processing","scope":{"tenant":"","recoveryContract":{"version":"5.2.100.9","zipRoot":"Personalizations"}},"_pluginSettings":{"userIdPrefix":"Al"},"records":[[id,{"row":row,"children":{},"errors":[]}]],"inventory":GuestReply::Inventory {identities:vec![id],next_cursor:None,authoritative:true,diagnostics:vec![]},"index":0,"output":[],"errors":[]});
         let mut base_reads=0;let mut image_reads=0;
         loop {
@@ -595,7 +702,7 @@ mod tests {
         let mut initial=request();initial.state=json!({"_pluginSettings":{"userIdPrefix":"Al","combinedRead":false}});initial.response=None;
         let GuestReply::Action {state,..}=handle(initial.clone())else{panic!()};assert_eq!(state["_pluginSettings"]["userIdPrefix"],"Al");initial.state=state;initial.response=Some(json!({"parameters":{"companyID":"C","tenantID":"42"}}));
         let GuestReply::Action {state,..}=handle(initial)else{panic!()};assert_eq!(state["scope"]["tenant"],"42");assert_eq!(state["_pluginSettings"]["userIdPrefix"],"Al");
-        for id in [personal_id("Beta"),Identity {category:"C13".into(),kind:"PersistedShellLayout".into(),scope:Scope::Global,keys:[("TenantID",""),("LayoutID","shared"),("HomePageType","Modern"),("SubType","")].into_iter().map(|(k,v)|(k.into(),v.into())).collect()}] {
+        for id in [personal_id("Beta"),Identity {category:"kinetic-personalizations".into(),kind:"PersistedShellLayout".into(),scope:Scope::Global,keys:[("TenantID",""),("LayoutID","shared"),("HomePageType","Modern"),("SubType","")].into_iter().map(|(k,v)|(k.into(),v.into())).collect()}] {
             let mut exact=request();exact.operation="acquire".into();exact.identity=Some(id);exact.cursor=None;exact.response=None;
             let base=serde_json::to_value(handle(exact.clone())).unwrap();assert_eq!(base["type"],"action");exact.state["_pluginSettings"]=json!({"userIdPrefix":"Missing"});
             assert_eq!(serde_json::to_value(handle(exact)).unwrap()["action"],base["action"]);
@@ -721,7 +828,7 @@ mod tests {
     fn wave1_page_preserves_exact_partial_status_and_valid_peer() {
         let mut r = request();
         let row = json!({"Company":"C","ProductID":"EP","TypeCode":"KineticGridLayout","Key1":"owner","Key2":"Form","Key3":"grid","CGCCode":"","SysRowID":"row","SystemFlag":false,"Content":"{}","HerbertContentBytes":4});
-        let identity = Identity { category:"C13".into(),kind:"PersistedXXXDef".into(),scope:Scope::Personal{company:"C".into(),owner:"owner".into()},keys:["Company","ProductID","TypeCode","Key1","Key2","Key3","CGCCode"].into_iter().map(|k|(k.into(),row[k].as_str().unwrap().into())).collect() };
+        let identity = Identity { category:"kinetic-personalizations".into(),kind:"PersistedXXXDef".into(),scope:Scope::Personal{company:"C".into(),owner:"owner".into()},keys:["Company","ProductID","TypeCode","Key1","Key2","Key3","CGCCode"].into_iter().map(|k|(k.into(),row[k].as_str().unwrap().into())).collect() };
         let mut bad = row.clone(); bad["HerbertContentBytes"] = json!(0);
         let mut bad_id = identity.clone(); bad_id.keys.insert("Key3".into(),"bad".into()); bad["Key3"] = json!("bad");
         r.operation="materialize".into(); r.response=None;
@@ -735,6 +842,17 @@ mod tests {
     }
 
 
+    #[test]
+    fn personalization_prelude_runs_only_for_collecting_operations() {
+        for operation in ["inspect", "status", "unknown"] {
+            let mut r=request();r.state["scope"].as_object_mut().unwrap().remove("recoveryContract");r.operation=operation.into();
+            let reply=handle(r);
+            assert!(!matches!(reply,GuestReply::Action{action:HostAction::SharedNativeRead{..}|HostAction::NativeRead{..},..}),"{operation} requested native work: {reply:?}");
+        }
+        let mut r=request();r.state["scope"].as_object_mut().unwrap().remove("recoveryContract");
+        let GuestReply::Action{action:HostAction::SharedNativeRead{method,..},..}=handle(r) else {panic!("discover must freeze the recovery contract first")};
+        assert_eq!(method,"GetBaseLevel");
+    }
     #[test]
     fn recovery_contract_preserves_pending_response_phase_and_native_error() {
         let mut r=request();r.state["scope"].as_object_mut().unwrap().remove("recoveryContract");

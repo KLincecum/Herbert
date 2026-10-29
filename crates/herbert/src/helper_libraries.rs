@@ -31,6 +31,10 @@ pub(crate) struct LibraryLease {
     pub package_sha256: Option<String>,
     #[serde(default)]
     pub frozen_package: Option<String>,
+    /// The run authority the instance was installed under. Cleanup uses it after
+    /// revocation; leases from earlier versions have none (own-journal match).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<crate::server_changes::AuthorizationRef>,
 }
 
 /// A one-shot operation keeps this lock until teardown finishes. Another host
@@ -151,6 +155,7 @@ impl LeaseFile {
                     transitions: vec!["reserved".into()],
                     package_sha256: None,
                     frozen_package: None,
+                    authorization: None,
                 }
             }
             Err(_) => return Err(state_error()),
@@ -164,7 +169,7 @@ impl LeaseFile {
         {
             return Err(Diagnostic::new(
                 "HELPER_OWNER_MISMATCH",
-                "The saved native library lease belongs to another operation, source or caller.",
+                "The saved Epicor library lease belongs to another operation, source or Epicor user.",
             ));
         }
         let file = Self { path, lease };
@@ -288,7 +293,7 @@ impl LeaseFile {
         {
             return Err(Diagnostic::new(
                 "HELPER_COMPILATION_UNVERIFIED",
-                "Native readback did not find enabled, valid functions in the exact owned helper.",
+                "Epicor readback did not find enabled, valid functions in the exact owned helper.",
             ));
         }
         Ok(())
@@ -302,7 +307,7 @@ impl LeaseFile {
         {
             return Err(Diagnostic::new(
                 "HELPER_NOT_OWNED",
-                "Native library ownership metadata changed. Preserve the library without overwriting or removing it.",
+                "Epicor library ownership metadata changed. Preserve the library without overwriting or removing it.",
             ));
         }
         for function in &self.lease.instance.functions {
@@ -374,14 +379,10 @@ pub(crate) fn for_holder(
         match read() {
             Ok(Some(file)) => files.push(file),
             Ok(None) => {}
-            Err(error) => diagnostics.push(Diagnostic::new(
-                &error.code,
-                format!(
-                    "{} Preserved ownership file: {}.",
-                    error.message,
-                    path.display()
-                ),
-            )),
+            Err(error) => diagnostics.push(
+                Diagnostic::new(&error.code, error.message)
+                    .with_context("ownershipFile", path.display().to_string()),
+            ),
         }
     }
     Ok((files, diagnostics))
@@ -425,7 +426,7 @@ pub(crate) async fn exists(
         .ok_or_else(|| {
             Diagnostic::new(
                 "HELPER_READBACK_INVALID",
-                "The native library read omitted its identity table.",
+                "The Epicor library read omitted its identity table.",
             )
         })?;
     if rows.is_empty() {
@@ -434,7 +435,7 @@ pub(crate) async fn exists(
     if rows.len() != 1 || rows[0]["LibraryID"].as_str() != Some(library) {
         return Err(Diagnostic::new(
             "HELPER_READBACK_INVALID",
-            "The native read did not identify one exact helper library.",
+            "The Epicor read did not identify one exact helper library.",
         ));
     }
     Ok(true)
@@ -444,7 +445,7 @@ fn reject_link(path: &Path) -> Result<(), Diagnostic> {
     if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err(Diagnostic::new(
             "UNSAFE_PATH",
-            "Native helper ownership files cannot use symbolic links or junctions.",
+            "Epicor helper ownership files cannot use symbolic links or junctions.",
         ));
     }
     Ok(())
@@ -453,7 +454,7 @@ fn reject_link(path: &Path) -> Result<(), Diagnostic> {
 fn state_error() -> Diagnostic {
     Diagnostic::new(
         "HELPER_OWNERSHIP_STATE_FAILED",
-        "Cannot read or checkpoint native helper ownership. Preserve the state without a native write.",
+        "Cannot read or saved progress Epicor helper ownership. Preserve the state without a change in Epicor.",
     )
 }
 
@@ -486,6 +487,7 @@ mod recovery_tests {
             transitions: vec!["reserved".into(), "ready".into(), "removed".into()],
             package_sha256: Some("fixture-package-hash".into()),
             frozen_package: None,
+            authorization: None,
         };
         let directory = root.join("helper-libraries");
         fs::create_dir_all(&directory).unwrap();

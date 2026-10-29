@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn typed_local_request_rejects_command_and_path_overrides() {
         let value=serde_json::json!({"protocolVersion":1,"requestId":"capture","expectedEngine":MANAGED_ENGINE_ID,"createProject":true,"capture":{
-            "owner":{"category":"C08","kind":"EfxLibrary","scope":{"type":"global"},"keys":{"LibraryID":"Sample"}},
+            "owner":{"category":"functions","kind":"EfxLibrary","scope":{"type":"global"},"keys":{"LibraryID":"Sample"}},
             "selector":{"folder":":Efx","assembly":"efx.sample","version":""},"binaryState":"captured","diagnostics":[],"observation":{"SysRevID":"AAAA"},"definitionSha256":"a".repeat(64),"definitionRevision":1,
             "input":{"path":"issued.dll","sha256":"b".repeat(64),"bytes":1,"role":"native"},"symbols":null,"symbolMode":"none"}});
         let request:ManagedDecompilationRequest=serde_json::from_value(value.clone()).unwrap();

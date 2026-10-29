@@ -19,7 +19,7 @@ pub fn start(request: &mut GuestRequest) -> Option<HostAction> {
     let Some(kinetic) = root["Kinetic"].as_bool() else {
         error(
             request,
-            "The configurator omitted its native Kinetic export mode.",
+            "The configurator omitted its Epicor Kinetic export mode.",
         );
         return None;
     };
@@ -28,33 +28,45 @@ pub fn start(request: &mut GuestRequest) -> Option<HostAction> {
     {
         error(
             request,
-            "The native export root does not match the selected company and configurator.",
+            "Epicor's export root does not match the selected company and configurator.",
         );
         return None;
     }
     let Some(config_type) = root["ConfigType"].as_str() else {
         error(
             request,
-            "The configurator omitted its native configuration type.",
+            "The configurator omitted its Epicor configuration type.",
         );
         return None;
     };
     // Native NIC configurations reject inputs, smart strings and global variables.
     let inputs = !config_type.eq_ignore_ascii_case("NIC");
+    // Only this native export consumes the layered-image tableset, so it is read here, once, for the fallback
+    // route; the local XML/ZIP route never asks for it (the stored graph keeps PcInputsLayerHeader/Detail).
+    // configurator_download's configImages phase stores the reply and re-enters this function.
+    if request.state["supplements"].get("RetrievePcLayeredImagesForExport").is_none() {
+        request.state["phase"] = json!("configImages");
+        return Some(HostAction::SharedNativeRead {
+            service: "Erp.BO.ConfiguratorDefSvc".into(),
+            method: "RetrievePcLayeredImagesForExport".into(),
+            arguments: json!({"configID":id.keys["ConfigID"],"configImportExportLayeredImageTableset":{"ConfigImportExportLayeredImage":[],"ExtensionTables":[]}}),
+            export: false,
+        });
+    }
     let Some(images) = request.state["supplements"]["RetrievePcLayeredImagesForExport"]
         .pointer("/parameters/configImportExportLayeredImageTableset")
         .cloned()
     else {
         error(
             request,
-            "The native layered-image export tableset is unavailable.",
+            "The Epicor layered-image export tableset is unavailable.",
         );
         return None;
     };
     if !images["ConfigImportExportLayeredImage"].is_array() {
         error(
             request,
-            "The native layered-image export tableset is malformed.",
+            "The Epicor layered-image export tableset is malformed.",
         );
         return None;
     }
@@ -131,7 +143,7 @@ pub fn complete(request: &mut GuestRequest) {
         } else {
             error(
                 request,
-                "The native exporter did not preserve every required nonempty output file.",
+                "Epicor's export did not preserve every required nonempty output file.",
             );
         }
     }
@@ -146,7 +158,7 @@ pub fn attach_sources(definition: &mut Value) {
     if let (Some(company), Some(config)) = (root["Company"].as_str(), root["ConfigID"].as_str()) {
         if !company.is_empty() && !config.is_empty() {
             definition["herbertExportIdentity"] = json!(Identity {
-                category: "C19".into(),
+                category: "configurators".into(),
                 kind: "Configurator".into(),
                 scope: Scope::Company {
                     company: company.into()
@@ -240,7 +252,7 @@ fn policy_query(request: &GuestRequest) -> HostAction {
     })
     .collect();
     // Only this app can block its export. Scanning unrelated System metadata
-    // consumed over 200 pages in the owned lab qualification.
+    // consumed over 200 pages in testing.
     parameters.insert(
         "configView".into(),
         json!(format!(
@@ -348,14 +360,14 @@ pub fn policy_complete(request: &mut GuestRequest) -> Option<HostAction> {
         } else if matches {
             error(
                 request,
-                "The native app export was withheld because it includes System-marked children.",
+                "The Epicor app export was withheld because it includes System-marked children.",
             );
         } else if rows.len() == size {
             let after = rows.last().unwrap()["SysRowID"].clone();
             if after == request.state["configuratorPolicyAfter"] {
                 error(
                     request,
-                    "The System-child inventory cursor did not advance.",
+                    "The System-child inventory saved position did not advance.",
                 );
             } else {
                 request.state["configuratorPolicyAfter"] = after;
@@ -375,7 +387,7 @@ pub fn policy_complete(request: &mut GuestRequest) -> Option<HostAction> {
     } else {
         error(
             request,
-            "The native app ownership inventory did not return metadata rows; app export was withheld.",
+            "The Epicor app ownership inventory did not return metadata rows; app export was withheld.",
         );
     }
     request.state["configuratorAppPolicyChecked"] = json!(true);
@@ -550,7 +562,7 @@ pub fn files_complete(request: &mut GuestRequest) -> Option<HostAction> {
         if after == request.state["configuratorFileAfter"]
             || after.as_str().is_none_or(str::is_empty)
         {
-            error(request, "The current app file cursor did not advance.");
+            error(request, "The current app file saved position did not advance.");
             request.state["configuratorFilesComplete"] = json!(true);
             return None;
         }
@@ -582,10 +594,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C19".into(),
+            category: "configurators".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C19".into(),
+                category: "configurators".into(),
                 kind: "Configurator".into(),
                 scope: Scope::Company {
                     company: "C".into(),
@@ -601,6 +613,18 @@ mod tests {
             response: None,
             error: None,
         }
+    }
+    #[test]
+    fn layered_images_are_read_only_by_the_export_fallback() {
+        let mut r = req(false, "PC");
+        r.state["supplements"] = json!({});
+        let Some(HostAction::SharedNativeRead { method, arguments, .. }) = start(&mut r) else { panic!() };
+        assert_eq!(method, "RetrievePcLayeredImagesForExport");
+        assert_eq!(arguments["configID"], "Cfg");
+        assert_eq!(r.state["phase"], "configImages");
+        // Once the reply is stored the same call proceeds to the native export (no second image read).
+        r.state["supplements"] = req(false, "PC").state["supplements"].clone();
+        assert!(matches!(start(&mut r), Some(HostAction::NativeFileExport { .. })));
     }
     #[test]
     fn app_policy_and_fallback_reads_are_scoped_before_download() {

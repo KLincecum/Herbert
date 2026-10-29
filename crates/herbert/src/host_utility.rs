@@ -30,6 +30,10 @@ pub(crate) struct Transfer {
     input_downloads: BTreeMap<String, InputDownload>,
     #[serde(default)]
     input_batch_reads: Vec<usize>,
+    /// The run authority this staging was admitted under. Cleanup uses it after
+    /// revocation; records from earlier versions have none (own-journal cleanup).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authorization: Option<crate::server_changes::AuthorizationRef>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -49,16 +53,16 @@ fn decode_input_batch(
 ) -> Result<Vec<Vec<u8>>, Diagnostic> {
     let rows = response["files"]
         .as_array()
-        .ok_or_else(|| error("The server omitted the native batch files."))?;
+        .ok_or_else(|| error("The server omitted the Epicor batch files."))?;
     if rows.len() != pending.len() {
-        return Err(error("The server returned an incomplete native batch."));
+        return Err(error("The server returned an incomplete Epicor batch."));
     }
     rows.iter()
         .zip(pending)
         .map(|(row, (input, offset))| {
             if row["fileId"] != input.file.file_id {
                 return Err(error(
-                    "The server returned another file in the native batch.",
+                    "The server returned another file in the Epicor batch.",
                 ));
             }
             decode_chunk(
@@ -242,7 +246,7 @@ pub(super) fn resume_operations(
         journal
             .host_transfers
             .iter()
-            .filter(|t| t.plugin == plugin.category.id
+            .filter(|t| crate::legacy_category_ids::same(&t.plugin, &plugin.category.id)
                 && t.plugin_hash == plugin.hash
                 && t.identity.as_ref() == identity
                 && t.phase != "purged")
@@ -329,7 +333,7 @@ fn verify_archive(
             }
             total = total
                 .checked_add(n as u64)
-                .ok_or_else(|| error("ZIP member length exceeds u64."))?;
+                .ok_or_else(|| error("A file returned by the Epicor server is too large to be valid. The transfer was rejected; retry the download."))?;
             if total > expected.bytes {
                 return Err(error("A ZIP member exceeds its declared length."));
             }
@@ -337,7 +341,7 @@ fn verify_archive(
         }
         if total != expected.bytes || hex::encode(digest.finalize()) != expected.sha256 {
             return Err(error(
-                "A ZIP member differs from its declared SHA256 or length.",
+                "A file returned by the Epicor server was damaged in transfer (its size or checksum does not match). Retry the download.",
             ));
         }
     }
@@ -376,7 +380,13 @@ impl Host {
                 .or_default()
                 .clone();
             let _guard = gate.lock().await;
-            let result = self.cleanup_host_transfer(run, connection, transfer).await;
+            // Owned staging is closed under the authority it was created with,
+            // so revocation or a lost lease cannot strand it (UX §3).
+            let result = match transfer.authorization.clone() {
+                Some(reference) => self.with_owned_cleanup(run, connection, reference,
+                    self.cleanup_host_transfer(run, connection, transfer)).await,
+                None => super::server_leases::as_cleanup(self.cleanup_host_transfer(run, connection, transfer)).await,
+            };
             if let Err(e) = result {
                 run.activity
                     .note("Host helper", "Staging cleanup needs attention");
@@ -554,15 +564,19 @@ impl Host {
             self.keep_helper_alive(run, connection, &identity, true, cancel).await?;
         }
         loop {
-        let response = connection
+        // D2: no new host request after this run's lease is lost; owned cleanup
+        // (under its original reference) is not gated. A request in flight at the
+        // loss is uncertain and never replayed.
+        let lost = self.lease_gate(run).await?;
+        let response = super::server_leases::after_leased_call(&lost, connection
             .artifact_function_call(
                 library,
                 "Execute",
                 json!({"iRequest":request.to_string()}),
                 cancel,
             )
-            .await.map_err(|mut diagnostic| {
-                diagnostic.message = format!("Host helper {}: {}", request["action"].as_str().unwrap_or("request"), diagnostic.message);
+            .await).map_err(|mut diagnostic| {
+                diagnostic.context.insert("operation".into(), json!(request["action"].as_str().unwrap_or("request")));
                 diagnostic
             })?;
         let text = response
@@ -572,8 +586,12 @@ impl Host {
             .and_then(Value::as_str)
             .ok_or_else(|| error("The host helper omitted its JSON response."))?;
         let value: Value = serde_json::from_str(text).map_err(|_| error("The host helper returned malformed JSON."))?;
+        // Contention (sharing or lock violation) arrives as leaseBusy and is retried
+        // below. leaseAdmissionError is any other failure to open the server's lease
+        // file, so waiting for other downloads would not help.
         if let Some(details) = value.get("leaseAdmissionError") {
-            return Err(error(&format!("Server lease admission failed: {details}")));
+            return Err(error("Herbert's temporary server helper could not open its lease file on the Epicor server, so this content was not collected. Check that the Epicor application server can read and write its company data folder, then retry. The server's error types are in the technical details.")
+                .with_context("serverMessage", details.to_string()));
         }
         if value["leaseBusy"] != true { return Ok(value); }
         // Retry only explicit admission contention. An uncertain mutation is
@@ -609,7 +627,7 @@ impl Host {
             .iter()
             .find(|t| t.operation_id == operation);
         if let Some(saved) = saved {
-            if saved.plugin != plugin.category.id
+            if !crate::legacy_category_ids::same(&saved.plugin, &plugin.category.id)
                 || saved.plugin_hash != plugin.hash
                 || (saved.identity.is_some() && saved.identity.as_ref() != identity)
             {
@@ -652,6 +670,7 @@ impl Host {
                 individual_inputs: false,
                 input_downloads: BTreeMap::new(),
                 input_batch_reads: vec![],
+                authorization: journal.server_change_authority.as_ref().map(|authority| authority.reference()),
             };
             collection::update(run, move |s| {
                 s.journal.host_transfers.push(transfer);
@@ -670,7 +689,7 @@ impl Host {
             storage::safe_relative(name)?;
             if *offset > i64::MAX as u64 {
                 return Err(error(
-                    "The offset exceeds the native Int64 stream position.",
+                    "A server file transfer reached an impossible position. The transfer was stopped; retry the download.",
                 ));
             }
         }
@@ -704,7 +723,7 @@ impl Host {
                         || !super::identity_in_scope(&file.identity, &connection.company)
                 })
             {
-                return Err(error("The native batch belongs to another artifact scope."));
+                return Err(error("The Epicor batch belongs to another artifact scope."));
             }
             return self
                 .download_host_inputs(
@@ -846,7 +865,7 @@ impl Host {
         // Int32 is the actual Function buffer length contract; this is not a workload cap.
         if chunk_bytes == 0 || chunk_bytes > i32::MAX as u32 {
             return Err(error(
-                "Chunk length must fit a positive native Int32 buffer length.",
+                "A server file transfer used an invalid piece size. The transfer was stopped; retry the download.",
             ));
         }
         let state = self
@@ -897,7 +916,7 @@ impl Host {
                 s.verify(chunk)?;
                 offset = offset
                     .checked_add(chunk.bytes)
-                    .ok_or_else(|| error("Transfer length exceeds u64."))?;
+                    .ok_or_else(|| error("The Epicor server reported a file size that is not valid. The transfer was rejected; retry the download."))?;
             }
             Ok(offset)
         })
@@ -969,7 +988,7 @@ impl Host {
         )?;
         if chunk_bytes == 0 || chunk_bytes > i32::MAX as u32 {
             return Err(error(
-                "Chunk length must fit a positive native Int32 buffer length.",
+                "A server file transfer used an invalid piece size. The transfer was stopped; retry the download.",
             ));
         }
         let mut transfer = collection::snapshot(run)
@@ -1023,7 +1042,7 @@ impl Host {
                     file: None,
                 });
             if download.expected != input.file || download.identity != input.identity {
-                return Err(error("A native batch receipt changed during transfer."));
+                return Err(error("An Epicor batch receipt changed during transfer."));
             }
             let storage = run
                 .storage
@@ -1043,10 +1062,10 @@ impl Host {
                 let offset = download.chunks.iter().try_fold(0u64, |total, chunk| {
                     total
                         .checked_add(chunk.bytes)
-                        .ok_or_else(|| error("Transfer length exceeds u64."))
+                        .ok_or_else(|| error("The Epicor server reported a file size that is not valid. The transfer was rejected; retry the download."))
                 })?;
                 if offset > input.file.bytes {
-                    return Err(error("Retained chunks exceed the native file length."));
+                    return Err(error("Retained chunks exceed the Epicor file length."));
                 }
                 if download.file.is_none() && offset < input.file.bytes {
                     pending.push((input, offset));
@@ -1124,7 +1143,7 @@ impl Host {
         validate_files(std::slice::from_ref(expected))?;
         if chunk_bytes == 0 || chunk_bytes > i32::MAX as u32 {
             return Err(error(
-                "Chunk length must fit a positive native Int32 buffer length.",
+                "A server file transfer used an invalid piece size. The transfer was stopped; retry the download.",
             ));
         }
         let mut transfer = collection::snapshot(run)
@@ -1147,7 +1166,7 @@ impl Host {
                 file: None,
             });
         if download.expected != *expected || download.identity != *identity {
-            return Err(error("The native file receipt changed during transfer."));
+            return Err(error("The Epicor file receipt changed during transfer."));
         }
         let mut offset = 0u64;
         {
@@ -1159,7 +1178,7 @@ impl Host {
                 storage.verify(chunk)?;
                 offset = offset
                     .checked_add(chunk.bytes)
-                    .ok_or_else(|| error("Transfer length exceeds u64."))?;
+                    .ok_or_else(|| error("The Epicor server reported a file size that is not valid. The transfer was rejected; retry the download."))?;
             }
             if let Some(file) = &download.file {
                 storage.verify(file)?;
@@ -1167,7 +1186,7 @@ impl Host {
             }
         }
         if offset > expected.bytes {
-            return Err(error("Retained chunks exceed the native file length."));
+            return Err(error("Retained chunks exceed the Epicor file length."));
         }
         while offset < expected.bytes {
             let response = self.utility_call(run, connection, operation,
@@ -1225,7 +1244,7 @@ impl Host {
                 .host_transfers
                 .iter_mut()
                 .find(|t| t.operation_id == id)
-                .ok_or_else(|| error("The transfer admission is missing."))? = transfer;
+                .ok_or_else(|| error("The transfer start check is missing."))? = transfer;
             Ok(())
         })
         .await
@@ -1406,6 +1425,7 @@ mod tests {
             individual_inputs: false,
             input_downloads: BTreeMap::new(),
             input_batch_reads: vec![],
+            authorization: None,
         });
         let wire = serde_json::to_vec(&journal).unwrap();
         let restored: storage::RunJournal = serde_json::from_slice(&wire).unwrap();
@@ -1453,6 +1473,7 @@ mod tests {
             individual_inputs: true,
             input_downloads: BTreeMap::new(),
             input_batch_reads: vec![],
+            authorization: None,
         };
         let state = json!({"phase":"open","readyInputs":[expected]});
         assert!(verify_input_receipts(&storage, &transfer, &state).is_err());

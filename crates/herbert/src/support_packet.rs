@@ -76,7 +76,7 @@ impl Projection {
         let mut context=serde_json::Map::new();
         for key in ["category","service","method","operation","authMode","evidence","correlationId","responseContentType","table","httpStatus","stream","page",
             "rowIndex","rootCount","childCount","duplicateCount","sameContent","sameOwner","hasCompany",
-            "sameNativeKey","check","container","byteLength","zipReadable","zipEntries","structure"] {
+            "sameNativeKey","check","container","byteLength","zipReadable","zipEntries","structure","osError"] {
             if let Some(v)=d.get("context").and_then(|c|c.get(key)) {context.insert(key.into(),if key=="structure"{self.shape(v)}else if key=="correlationId"{v.as_str().and_then(|s|uuid::Uuid::parse_str(s).ok()).map(|id|json!(id.hyphenated().to_string())).unwrap_or(Value::Null)}else if key=="responseContentType"{match v.as_str(){Some("application/json"|"text/plain"|"text/html"|"application/problem+json"|"other")=>v.clone(),_=>Value::Null}}else{self.structure(v)});}
         }
         json!({"code":self.label(&d["code"]),"identity":self.identity(&d["identity"]),
@@ -85,7 +85,7 @@ impl Projection {
     }
     fn event(&mut self,event:&Value)->Value {
         let mut out=serde_json::Map::new();
-        for key in ["event","category","plugin","operation","state","code","failureCode"] {
+        for key in ["event","category","plugin","operation","state","code","failureCode","source","reason"] {
             if let Some(v)=event.get(key){out.insert(key.into(),self.label(v));}
         }
         for key in ["elapsedMs","unixMs","attempt","requestElapsedMs","responseBytes","retryDelayMs",
@@ -127,6 +127,11 @@ impl Projection {
             "run":self.alias("run",j["runId"].as_str().unwrap_or("")),"serverVersion":version,
             "authentication":self.label(&j["authMode"]),"phase":self.label(&j["phase"]),
             "collectionMethod":self.label(&j["collectionMethod"]),"temporaryAccess":j["temporaryAccessEnabled"].as_bool(),
+            // Only the fixed mode word; certificate names and fingerprints stay out.
+            "certificateVerification":match j["transportTrust"]["mode"].as_str() {
+                Some("relaxedUntrustedIssuer")=>json!("Certificate checks are relaxed for this profile"),
+                Some("verified")=>json!("verified"),
+                Some("unencrypted")=>json!("Not encrypted: plain http, no certificate"), _=>Value::Null },
             "categories":categories,"pluginHashes":hashes,"settings":settings,
             "statistics":self.statistics(&j["statistics"]),"artifacts":artifacts,"diagnostics":diagnostics,
             "omitted":["credentials","endpoint","company and user names","source code","business values","request arguments","response bodies","server error text","file names and paths","downloaded-file hashes","raw logs","alias mapping"]})
@@ -135,7 +140,9 @@ impl Projection {
 fn kind(v:&Value)->&'static str {match v {Value::Null=>"null",Value::Bool(_)=>"boolean",Value::Number(_)=>"number",Value::String(_)=>"string",Value::Array(_)=>"array",Value::Object(_)=>"object"}}
 fn problem()->Diagnostic {Diagnostic::new("SUPPORT_EXPORT_FAILED","The sanitized diagnostic packet could not be written. Choose a new ZIP filename in a writable folder.")}
 
-pub(crate) fn export(journal:Value,root:&Path,destination:&Path)->Result<Value,Diagnostic> {
+pub(crate) fn export(mut journal:Value,root:&Path,destination:&Path)->Result<Value,Diagnostic> {
+    // Release 1 journals and logs keep their stored codes; the packet shows current IDs.
+    crate::legacy_category_ids::normalize_view(&mut journal);
     let absolute=std::path::absolute(destination).map_err(|_|problem())?;
     let destination=absolute.as_path();
     if destination.exists(){return Err(Diagnostic::new("SUPPORT_EXPORT_EXISTS","Choose a new filename; existing files are preserved."));}
@@ -163,7 +170,8 @@ pub(crate) fn export(journal:Value,root:&Path,destination:&Path)->Result<Value,D
             // Snapshot the current length; do not wait for or reread an active log's tail.
             for line in BufReader::new(file.take(length)).lines() {
                 let Ok(line)=line else {invalid+=1;continue;};
-                let Ok(value)=serde_json::from_str::<Value>(&line) else {invalid+=1;continue;};
+                let Ok(mut value)=serde_json::from_str::<Value>(&line) else {invalid+=1;continue;};
+                crate::legacy_category_ids::normalize_view(&mut value);
                 let event=projection.event(&value);
                 serde_json::to_writer(&mut zip,&event).map_err(|_|problem())?;zip.write_all(b"\n").map_err(|_|problem())?;events+=1;
             }
@@ -195,16 +203,63 @@ mod tests {
     fn packet_excludes_confidential_canaries_and_preserves_useful_structure() {
         let temp=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();let directory=temp.path().join("Herbert Data/diagnostics");std::fs::create_dir_all(&directory).unwrap();
         let secret="CONFIDENTIAL_PRODUCT_AND_PASSWORD_CANARY";
-        let event=json!({"event":"requestFailed","plugin":"C02","route":["Ice.BO.UDMapSvc","GetRows"],"code":"SCHEMA_PAGE_UNVERIFIED","arguments":secret,"body":secret,"stage":secret,"responseBytes":100});
+        let event=json!({"event":"requestFailed","plugin":"ud-schema","route":["Ice.BO.UDMapSvc","GetRows"],"code":"SCHEMA_PAGE_UNVERIFIED","arguments":secret,"body":secret,"stage":secret,"responseBytes":100});
         std::fs::write(directory.join(format!("{id}-one.jsonl")),format!("{event}\n{{partial")).unwrap();
-        let journal=json!({"authMode":"basicApiKey","settings":{"retryAttempts":3,"connectionTimeoutMs":10000},"runId":id,"endpoint":secret,"company":secret,"caller":secret,"phase":"failed","serverVersion":"5.2.100.9","categories":["C02"],"statistics":{"requests":3},
+        let journal=json!({"authMode":"basicApiKey","settings":{"retryAttempts":3,"connectionTimeoutMs":10000},"runId":id,"endpoint":secret,"company":secret,"caller":secret,"phase":"failed","serverVersion":"5.2.100.9","categories":["ud-schema"],"statistics":{"requests":3},
             "diagnostics":[{"code":"SCHEMA_PAGE_UNVERIFIED","message":secret,"nativeDetails":secret,"context":{"correlationId":"7f6e4f3f-bd79-4b76-b9a8-f3866aedc226","responseContentType":"text/plain","table":"UDMapColumn","httpStatus":400,"raw":secret,"structure":{"secretField":secret}}}],
-            "artifacts":[{"identity":{"category":"C02","kind":"UDMapping","keys":{"MapTableID":secret}},"files":[{"path":secret,"sha256":secret,"bytes":12}]}]});
+            "artifacts":[{"identity":{"category":"ud-schema","kind":"UDMapping","keys":{"MapTableID":secret}},"files":[{"path":secret,"sha256":secret,"bytes":12}]}]});
         let zip_path=temp.path().join("support.zip");let result=export(journal,temp.path(),&zip_path).unwrap();assert_eq!(result["omittedInvalidEvents"],1);
         let mut zip=zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();assert_eq!(zip.len(),3);
         let mut all=String::new();for i in 0..zip.len(){zip.by_index(i).unwrap().read_to_string(&mut all).unwrap();}
         assert!(!all.contains(secret));assert!(!all.contains("secretField"));assert!(all.contains("SCHEMA_PAGE_UNVERIFIED"));assert!(all.contains("UDMapColumn"));assert!(all.contains("5.2.100.9"));assert!(all.contains("400"));assert!(all.contains("basicApiKey"));assert!(all.contains("retryAttempts"));assert!(all.contains("connectionTimeoutMs"));assert!(all.contains("7f6e4f3f-bd79-4b76-b9a8-f3866aedc226"));assert!(all.contains("text/plain"));
         assert!(export(json!({}),temp.path(),&zip_path).is_err());
+    }
+    fn packet_text(journal:Value)->String {
+        let temp=tempfile::tempdir().unwrap();std::fs::create_dir_all(temp.path().join("Herbert Data/diagnostics")).unwrap();
+        let zip_path=temp.path().join("support.zip");export(journal,temp.path(),&zip_path).unwrap();
+        let mut zip=zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+        let mut all=String::new();for i in 0..zip.len(){zip.by_index(i).unwrap().read_to_string(&mut all).unwrap();}all
+    }
+    #[test]
+    fn run_journal_and_status_record_relaxed_trust_and_support_packet_shows_it() {
+        let subject="CN=server.example.invalid";
+        let trust=crate::transport_trust::TransportTrust{mode:crate::transport_trust::TrustMode::RelaxedUntrustedIssuer,certificate_sha256:Some("ab".repeat(32)),subject:Some(subject.into()),issuer:Some(subject.into()),not_after:Some("2126-01-01T00:00:00Z".into())};
+        // The journal field survives a save/load round trip and is optional for older journals.
+        let mut journal=crate::storage::new_journal("trust".into());journal.transport_trust=Some(trust.clone());
+        let saved=serde_json::to_value(&journal).unwrap();assert_eq!(saved["transportTrust"]["mode"],"relaxedUntrustedIssuer");
+        let loaded:crate::storage::RunJournal=serde_json::from_value(saved.clone()).unwrap();assert_eq!(loaded.transport_trust,Some(trust));
+        let mut legacy=saved.clone();legacy.as_object_mut().unwrap().remove("transportTrust");
+        assert!(serde_json::from_value::<crate::storage::RunJournal>(legacy).unwrap().transport_trust.is_none());
+        // The support packet states the fixed sentence only; names and fingerprints stay out.
+        let mut view=saved;view["runId"]=json!(uuid::Uuid::new_v4().to_string());view["phase"]=json!("completed");
+        let all=packet_text(view);
+        assert!(all.contains("Certificate checks are relaxed for this profile"));
+        assert!(!all.contains(subject)&&!all.contains(&"ab".repeat(32)));
+    }
+    #[test]
+    fn packet_keeps_the_os_error_code_but_not_cause_or_server_text() {
+        let canary="CAUSE_AND_SERVER_TEXT_CANARY";
+        let journal=json!({"runId":uuid::Uuid::new_v4().to_string(),"phase":"failed",
+            "diagnostics":[{"code":"OUTPUT_UNAVAILABLE","message":canary,"context":{"osError":1224,"cause":canary,"serverMessage":canary}}]});
+        let all=packet_text(journal);
+        assert!(all.contains("osError")&&all.contains("1224"));
+        assert!(!all.contains(canary));
+    }
+    #[test]
+    fn support_packet_states_unencrypted_verified_and_relaxed_trust_distinctly() {
+        let packet=|mode:&str|{let journal=json!({"runId":uuid::Uuid::new_v4().to_string(),"phase":"completed","transportTrust":{"mode":mode}});packet_text(journal)};
+        let unencrypted=packet("unencrypted");
+        assert!(unencrypted.contains("Not encrypted: plain http, no certificate"));
+        assert!(!unencrypted.contains("\"certificateVerification\": \"verified\"")&&!unencrypted.contains("\"certificateVerification\":\"verified\""),"plain http is never reported as verified");
+        assert!(packet("verified").contains("verified"));
+        assert!(packet("relaxedUntrustedIssuer").contains("Certificate checks are relaxed for this profile"));
+    }
+    #[test]
+    fn support_packet_omits_preview_effective_settings() {
+        let canary="PRIVATE_FILTER_VALUE_CANARY";
+        let journal=json!({"runId":uuid::Uuid::new_v4().to_string(),"phase":"completed","pluginSettings":{"ud-codes":{"codeTypeIdPrefix":canary}},
+            "categories":["ud-codes"],"display":{"capabilities":[{"category":"ud-codes","effectiveSettings":{"codeTypeIdPrefix":canary}}]}});
+        assert!(!packet_text(journal).contains(canary), "frozen and previewed setting values never reach the packet");
     }
     #[test]
     fn response_shape_never_copies_row_values() {
@@ -244,7 +299,7 @@ mod performance_tests {
     #[test]
     fn large_support_export_is_on_demand_and_streams_projected_events() {
         let t=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();let d=t.path().join("Herbert Data/diagnostics");std::fs::create_dir_all(&d).unwrap();
-        let line=serde_json::to_string(&json!({"event":"requestFailed","category":"C17","responseBytes":4000,"arguments":"confidential-source".repeat(40)})).unwrap()+"\n";
+        let line=serde_json::to_string(&json!({"event":"requestFailed","category":"report-styles-and-layouts","responseBytes":4000,"arguments":"confidential-source".repeat(40)})).unwrap()+"\n";
         let mut file=std::fs::File::create(d.join(format!("{id}-test.jsonl"))).unwrap();for _ in 0..10000{file.write_all(line.as_bytes()).unwrap();}drop(file);
         let start=std::time::Instant::now();let result=export(json!({"runId":id}),t.path(),&t.path().join("support.zip")).unwrap();
         assert_eq!(result["events"],10000);
@@ -265,8 +320,8 @@ mod shared_evidence_tests {
             &json!({}),
         ).unwrap_err();
         let journal = json!({"runId":uuid::Uuid::new_v4().to_string(),
-            "pluginSettings":{"C01":{"prefix":secret}},
-            "pluginSelectionContracts":{"C01":[{"description":secret}]},
+            "pluginSettings":{"ud-codes":{"prefix":secret}},
+            "pluginSelectionContracts":{"ud-codes":[{"description":secret}]},
             "diagnostics":[{"code":"SELECTION_FAILED","message":secret,"retryable":false,
                 "context":{"filter":secret,"selection":{"prefix":secret},
                     "nativeClause":secret,"service":"Ice.BO.UserCodesSvc","method":"GetRows","page":2}},
@@ -294,7 +349,7 @@ mod shared_evidence_tests {
     fn many_diagnostics_share_one_structural_projection() {
         use herbert_contract::GuestReply;
         let mut reply=GuestReply::Inventory{identities:vec![],next_cursor:None,authoritative:false,diagnostics:(0..1000).map(|_|Diagnostic::new("SCHEMA_PAGE_UNVERIFIED","Owned regression")).collect()};
-        annotate(&mut reply,"C02","discover",None,Some(&json!({"returnObj":{"UDMapColumn":[{"SysRowID":"same","Seq":1}]}})));
+        annotate(&mut reply,"ud-schema","discover",None,Some(&json!({"returnObj":{"UDMapColumn":[{"SysRowID":"same","Seq":1}]}})));
         let GuestReply::Inventory{diagnostics,..}=reply else {panic!()};
         assert_eq!(diagnostics.iter().filter(|d|d.context.contains_key("structure")).count(),1);
         let evidence=&diagnostics[0].context["evidence"];assert!(diagnostics.iter().all(|d|d.context.get("evidence")==Some(evidence)));

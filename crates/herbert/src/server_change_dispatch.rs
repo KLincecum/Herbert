@@ -4,32 +4,47 @@ use crate::server_changes::{RunAuthority,Targets,Selection};
 tokio::task_local! { static OWNED_CLEANUP:crate::server_changes::AuthorizationRef; }
 pub(super) fn cleanup_reference()->Option<crate::server_changes::AuthorizationRef> {OWNED_CLEANUP.try_with(Clone::clone).ok()}
 fn denied(message:&str)->Diagnostic{Diagnostic::new("SERVER_CHANGE_AUTHORIZATION_REQUIRED",message)}
+/// Why a concrete server change is not authorized. `Unauthorized` means the run
+/// never received authority for this effect; an optional change can then be
+/// skipped. `Denied` covers authority that exists but is revoked, expired,
+/// drifted or used outside its run/target/caller, which must stop the action.
+pub(super) enum ServerChangeRefusal { Unauthorized(Diagnostic), Denied(Diagnostic) }
+impl From<ServerChangeRefusal> for Diagnostic {
+    fn from(refusal:ServerChangeRefusal)->Self {match refusal {ServerChangeRefusal::Unauthorized(error)|ServerChangeRefusal::Denied(error)=>error}}
+}
 impl Host {
     pub(super) async fn require_server_change(
         &self,run:&Arc<Run>,connection:&Arc<Connection>,category:&str,key:&str,
         binding:Option<&str>,expected:&Value,identity:Option<&Identity>,
     )->Result<RunAuthority,Diagnostic> {
-        let journal=collection::snapshot(run).await?;
-        if !run.network {return Err(denied("Local source reprocessing cannot initiate server changes."));}
+        self.check_server_change(run,connection,category,key,binding,expected,identity).await.map_err(Diagnostic::from)
+    }
+    pub(super) async fn check_server_change(
+        &self,run:&Arc<Run>,connection:&Arc<Connection>,category:&str,key:&str,
+        binding:Option<&str>,expected:&Value,identity:Option<&Identity>,
+    )->Result<RunAuthority,ServerChangeRefusal> {
+        use ServerChangeRefusal::{Denied,Unauthorized};
+        let journal=collection::snapshot(run).await.map_err(Denied)?;
+        if !run.network {return Err(Denied(denied("Local source reprocessing cannot initiate server changes.")));}
         if (key.starts_with("helper:")||key.starts_with("legacyHelper:")) && journal.collection_method!=CollectionMethod::ServerAssisted {
-            return Err(denied("Direct collection cannot install or invoke Herbert helpers, even when a grant permits helpers."));
+            return Err(Denied(denied("Direct collection cannot install or invoke Herbert helpers, even when a grant permits helpers.")));
         }
-        if key.starts_with("access:")&&!journal.temporary_access_enabled {return Err(denied("Temporary access is off. This run cannot add or extend group membership."));}
-        let authority=journal.server_change_authority.ok_or_else(||denied("This run has no explicit server-change authorization. Preserve its output and review a defined preview."))?;
+        if key.starts_with("access:")&&!journal.temporary_access_enabled {return Err(Denied(denied("Temporary access is off. This run cannot add or extend group membership.")));}
+        let authority=journal.server_change_authority.ok_or_else(||Unauthorized(denied("This run has no explicit server-change authorization. Preserve its output and review a defined preview.")))?;
         if authority.request_id!=journal.request_id || authority.material_scope.endpoint!=journal.endpoint || authority.material_scope.company!=journal.company || authority.material_scope.principal!=journal.caller
             || connection.endpoint.as_str()!=journal.endpoint || connection.company!=journal.company || connection.caller().await.as_deref()!=Some(journal.caller.as_str()) {
-            return Err(denied("The mutation does not belong to this logical run, target, company and authenticated caller."));
+            return Err(Denied(denied("The mutation does not belong to this logical run, target, company and authenticated Epicor user.")));
         }
-        let grant=authority.check(&self.state_root,&self.authorization_session.read().await)?;
-        let capability=authority.material_scope.capabilities.get(category).ok_or_else(||denied("The mutation category is outside this run’s authorized material scope."))?;
-        if binding.is_some_and(|binding|binding!=capability.binding) {return Err(denied("The relevant module or declaration changed. Review renewed authority before using it."));}
-        let effect=capability.effects.get(key).ok_or_else(||denied("This concrete mutation is outside the selected authorized effects."))?;
-        if !expected.as_object().is_some_and(|fields|fields.iter().all(|(key,value)|effect.get(key)==Some(value))) {return Err(denied("The concrete native effect or package no longer matches its authorized material facts."));}
+        let grant=authority.check(&self.state_root,&self.authorization_session.read().await).map_err(Denied)?;
+        let capability=authority.material_scope.capabilities.get(category).ok_or_else(||Unauthorized(denied("The mutation category is outside this run’s authorized material scope.")))?;
+        if binding.is_some_and(|binding|binding!=capability.binding) {return Err(Denied(denied("The relevant module or declaration changed. Review renewed authority before using it.")));}
+        let effect=capability.effects.get(key).ok_or_else(||Unauthorized(denied("This concrete mutation is outside the selected authorized effects.")))?;
+        if !expected.as_object().is_some_and(|fields|fields.iter().all(|(key,value)|effect.get(key)==Some(value))) {return Err(Denied(denied("The concrete Epicor effect or package no longer matches its authorized material facts.")));}
         if let Some(identity)=identity {
             let mut actual=authority.material_scope.clone();
             let selected=actual.capabilities.get_mut(category).expect("checked capability");
             selected.selection.insert("$nativeTargets".into(),Selection::NativeTargets{category:category.into(),targets:Targets::Exact{values:std::collections::BTreeSet::from([serde_json::to_string(identity).expect("native identity JSON")])}});
-            if !authority.material_scope.contains(&actual) || !grant.scope.contains(&actual) {return Err(denied("The concrete artifact is outside this run’s selected native targets."));}
+            if !authority.material_scope.contains(&actual) || !grant.scope.contains(&actual) {return Err(Denied(denied("The concrete artifact is outside this run’s selected Epicor targets.")));}
         }
         Ok(authority)
     }
@@ -38,7 +53,7 @@ impl Host {
         let authority=journal.server_change_authority.iter().chain(journal.server_change_authority_history.iter()).find(|authority|reference.matches(authority)).ok_or_else(||denied("The original run scope for this resource is unavailable. Preserve its ownership evidence and explicitly authorize recovery."))?;
         if authority.request_id!=journal.request_id || authority.material_scope.endpoint!=journal.endpoint || authority.material_scope.company!=journal.company || authority.material_scope.principal!=journal.caller
             || connection.endpoint.as_str()!=journal.endpoint || connection.company!=journal.company || connection.caller().await.as_deref()!=Some(journal.caller.as_str()) {
-            return Err(denied("Cleanup must use the original owned operation, target, company and authenticated caller."));
+            return Err(denied("Cleanup must use the original owned operation, target, company and authenticated Epicor user."));
         }
         authority.cleanup_grant(&self.state_root)?;
         // Exact native ownership and cleanup phase are verified by the existing

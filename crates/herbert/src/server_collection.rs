@@ -185,21 +185,21 @@ mod tests {
     #[tokio::test]
     async fn different_plugins_wait_and_canceled_waiters_do_not_remove_active_intent() {
         let root = tempfile::tempdir().unwrap();
-        let first = acquire(root.path(), "run-a", "C03", &CancellationToken::new())
+        let first = acquire(root.path(), "run-a", "extended-properties", &CancellationToken::new())
             .await
             .unwrap();
         let cancel = CancellationToken::new();
         let path = root.path().to_path_buf();
         let child_cancel = cancel.clone();
         let waiting =
-            tokio::spawn(async move { acquire(&path, "run-b", "C04", &child_cancel).await });
+            tokio::spawn(async move { acquire(&path, "run-b", "baqs-and-ubaqs", &child_cancel).await });
         tokio::task::yield_now().await;
         assert!(!waiting.is_finished());
         cancel.cancel();
         assert!(matches!(waiting.await.unwrap(), Err(e) if e.code == "CANCELED"));
         assert!(root.path().join("server-collection-active.json").exists());
         first.completed().unwrap();
-        acquire(root.path(), "run-b", "C04", &CancellationToken::new())
+        acquire(root.path(), "run-b", "baqs-and-ubaqs", &CancellationToken::new())
             .await
             .unwrap()
             .completed()
@@ -211,13 +211,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         assert!(check_unresolved(root.path()).is_ok());
         drop(
-            acquire(root.path(), "run-a", "C04", &CancellationToken::new())
+            acquire(root.path(), "run-a", "baqs-and-ubaqs", &CancellationToken::new())
                 .await
                 .unwrap(),
         );
         assert!(matches!(check_unresolved(root.path()), Err(e) if e.code == "SERVER_COLLECTION_UNRESOLVED" && e.message.contains("run-a")));
         assert!(
-            matches!(acquire(root.path(), "run-b", "C03", &CancellationToken::new()).await,
+            matches!(acquire(root.path(), "run-b", "extended-properties", &CancellationToken::new()).await,
             Err(e) if e.code == "SERVER_COLLECTION_UNRESOLVED")
         );
         let saved: serde_json::Value = serde_json::from_slice(
@@ -266,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn completed_collection_admits_waiting_plugin_and_active_owner_cannot_be_reconciled() {
         let root = tempfile::tempdir().unwrap();
-        let first = acquire(root.path(), "run-a", "C03", &CancellationToken::new())
+        let first = acquire(root.path(), "run-a", "extended-properties", &CancellationToken::new())
             .await
             .unwrap();
         assert!(check_unresolved(root.path()).is_ok());
@@ -287,7 +287,7 @@ mod tests {
         );
         let path = root.path().to_path_buf();
         let second = tokio::spawn(async move {
-            acquire(&path, "run-b", "C04", &CancellationToken::new())
+            acquire(&path, "run-b", "baqs-and-ubaqs", &CancellationToken::new())
                 .await
                 .unwrap()
                 .completed()

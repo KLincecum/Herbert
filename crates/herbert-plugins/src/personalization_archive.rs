@@ -159,7 +159,7 @@ pub fn build(row: &Value) -> Result<String, Diagnostic> {
             .any(|e| e.name == "Controls" || e.name == "Properties")
     {
         return Err(invalid(
-            "Personalization rows have no native DataSet namespace. The original Content is retained.",
+            "Personalization rows have no Epicor DataSet namespace. The original Content is retained.",
         ));
     }
     if root
@@ -224,7 +224,7 @@ pub fn build(row: &Value) -> Result<String, Diagnostic> {
                     .any(|(k, v)| k.ends_with(":nil") && matches!(v.as_str(), "true" | "1"))
             {
                 return Err(invalid(
-                    "A personalization row violates the native typed DataSet columns. The original Content is retained.",
+                    "A personalization row violates the Epicor typed DataSet columns. The original Content is retained.",
                 ));
             }
             cells.push(Content::Element(matches[0].clone()));
@@ -247,5 +247,5 @@ pub fn build(row: &Value) -> Result<String, Diagnostic> {
     let mut writer = Writer::new(Vec::new());
     root.write(&mut writer)?;
     String::from_utf8(writer.into_inner())
-        .map_err(|_| invalid("The personalization XML is not UTF-8."))
+        .map_err(|_| invalid("The personalization export from Epicor is not readable text, so no import file was built."))
 }

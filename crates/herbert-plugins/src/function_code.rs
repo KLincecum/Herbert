@@ -25,7 +25,7 @@ pub fn attach(definition: &mut Value, dataset: &Value) -> Vec<Diagnostic> {
         };
         match sources {
             Some(sources) => files.extend(sources.into_iter().map(|(name,text)|json!({"name":format!("Code/{name}"),"text":text}))),
-            None => errors.push(Diagnostic::new("FUNCTION_CODE_UNREADABLE",format!("Function {name} has an unreadable or unsupported body. Its native definition remains preserved."))),
+            None => errors.push(Diagnostic::new("FUNCTION_CODE_UNREADABLE",format!("Function {name} has an unreadable or unsupported body. Its Epicor definition remains preserved."))),
         }
     }
     if !files.is_empty() {definition["herbertSources"] = json!({"files":files});}

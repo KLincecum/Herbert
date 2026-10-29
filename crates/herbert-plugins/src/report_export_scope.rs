@@ -44,7 +44,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
             request,
             Diagnostic::new(
                 "REPORT_EXPORT_SCOPE_UNVERIFIED",
-                "The native export scope checkpoint is invalid.",
+                "Epicor's export scope saved progress is invalid.",
             ),
         );
     };
@@ -54,7 +54,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
                 request,
                 Diagnostic::new(
                     "REPORT_EXPORT_SCOPE_UNVERIFIED",
-                    "The native export ownership query omitted its rows.",
+                    "Epicor's export ownership query omitted its rows.",
                 ),
             );
         };
@@ -78,7 +78,7 @@ pub fn complete(request: &mut GuestRequest) -> Option<HostAction> {
                 request,
                 Diagnostic::new(
                     "REPORT_NATIVE_EXPORT_MIXED_SCOPE",
-                    "The native report export includes system-marked children. Only independently filtered custom definitions are retained; the unfiltered native export is unavailable.",
+                    "The Epicor report export includes system-marked children. Only independently filtered custom definitions are retained; the unfiltered Epicor's export is unavailable.",
                 ),
             );
         }
@@ -181,10 +181,10 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C16".into(),
+            category: "report-definitions".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C16".into(),
+                category: "report-definitions".into(),
                 kind: "ReportDataDefinition".into(),
                 scope: Scope::Global,
                 keys: BTreeMap::from([("RptDefID".into(), "R".into())]),

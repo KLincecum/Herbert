@@ -83,6 +83,38 @@ pub(super) async fn update(
     })
     .await
 }
+/// `update` for per-artifact records: save on the paced schedule only.
+async fn update_paced(
+    run: &Arc<Run>,
+    change: impl FnOnce(&mut Storage) -> Result<(), Diagnostic> + Send + 'static,
+) -> Result<(), Diagnostic> {
+    let storage = run.storage.clone();
+    blocking(move || {
+        let mut storage = storage
+            .lock()
+            .map_err(|_| Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable."))?;
+        change(&mut storage)?;
+        storage.checkpoint_paced()
+    })
+    .await
+}
+/// Collected artifacts of one category, counted under the lock. Progress
+/// needs only this number; cloning the whole journal for it grew with the run.
+pub(super) async fn category_count(run: &Arc<Run>, category: &str) -> Result<usize, Diagnostic> {
+    let storage = run.storage.clone();
+    let category = category.to_owned();
+    blocking(move || {
+        Ok(storage
+            .lock()
+            .map_err(|_| Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable."))?
+            .journal
+            .artifacts
+            .iter()
+            .filter(|a| a.identity.category == category)
+            .count())
+    })
+    .await
+}
 async fn control(run: &Arc<Run>) -> Result<(), Diagnostic> {
     loop {
         let wake = run.wake.notified();
@@ -154,7 +186,8 @@ pub(super) fn terminal_phase(journal: &storage::RunJournal) -> &'static str {
         "completed"
     }
 }
-async fn finish(run: &Arc<Run>, result: Result<(), Diagnostic>) {
+/// Returns true when the destination was released, so the saved journal is current.
+async fn finish(run: &Arc<Run>, result: Result<(), Diagnostic>) -> bool {
     let failed = result.is_err();
     // collect records the failure before teardown so live status can show it.
     let phase = if run.cancel.is_cancelled() {
@@ -177,7 +210,7 @@ async fn finish(run: &Arc<Run>, result: Result<(), Diagnostic>) {
     }).await;
     let _ = checkpoint(run, phase).await;
     let storage = run.storage.clone();
-    if let Err(error) = blocking(move || {
+    let released = match blocking(move || {
         storage
             .lock()
             .map_err(|_| Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable."))?
@@ -185,11 +218,16 @@ async fn finish(run: &Arc<Run>, result: Result<(), Diagnostic>) {
     })
     .await
     {
-        let _ = record_diagnostic(run, error).await;
-        let _ = checkpoint(run, "destinationReleaseUncertain").await;
-    }
+        Ok(()) => true,
+        Err(error) => {
+            let _ = record_diagnostic(run, error).await;
+            let _ = checkpoint(run, "destinationReleaseUncertain").await;
+            false
+        }
+    };
     run.active.store(false, Ordering::SeqCst);
     run.wake.notify_waiters();
+    released
 }
 
 /// Processing configuration shared by the collector and its stream reader.
@@ -215,7 +253,7 @@ impl Host {
         if cfg!(feature="managed-decompilation") {
             if let Err(error)=self.managed.resume(&self.plugin_root,&run).await {let _=record_diagnostic(&run,error).await;}
         } else if run.storage.lock().is_ok_and(|s|s.journal.managed_processing.is_some()) {
-            let _=record_diagnostic(&run,Diagnostic::new("MANAGED_HOST_UNAVAILABLE","This run contains newer managed-processing state. Use its matching qualified host to continue; the sidecar and original inputs were preserved.")).await;
+            let _=record_diagnostic(&run,Diagnostic::new("MANAGED_HOST_UNAVAILABLE","This download was started by a Herbert build that includes decompiling compiled code. Open it with that build to continue. All saved files were kept.")).await;
         }
         let result = self
             .collect_modules(&run, &connection, &categories, &identities, full, page_size)
@@ -261,7 +299,12 @@ impl Host {
         if let Err(diagnostic) = self.cleanup_access(&run, &connection).await {
             let _ = record_diagnostic(&run, diagnostic).await;
         }
-        finish(&run, result).await;
+        // Completed, failed and canceled runs all end here.
+        if let Ok(journal) = snapshot(&run).await {
+            self.forget_borrow_previews(&journal.run_id);
+        }
+        let released = finish(&run, result).await;
+        self.settle_run(&run, released).await;
     }
 
     /// Discover server activity independently of local run indexes and exports.
@@ -288,18 +331,25 @@ impl Host {
         let selected: BTreeSet<_> = categories.iter().cloned().collect();
         // A saved run is bound to its actual modules. This is recovery evidence,
         // not an expected-plugin roster for a new backup.
-        for (category, hash) in &snapshot(run).await?.plugin_hashes {
+        let saved = snapshot(run).await?;
+        for (category, hash) in &saved.plugin_hashes {
             if selected.contains(category)
                 && !installed.iter().any(|plugin| {
                     plugin.category.available
-                        && plugin.category.id == *category
+                        && crate::legacy_category_ids::same(&plugin.category.id, category)
                         && plugin.hash == *hash
                 })
             {
+                // Name the plugin, never a retired code from a Release 1 journal.
+                let name = saved
+                    .category_names
+                    .get(category)
+                    .map(String::as_str)
+                    .unwrap_or_else(|| crate::legacy_category_ids::current(category));
                 return Err(Diagnostic::new(
                     "RESUME_PLUGIN_MISMATCH",
                     format!(
-                        "The saved run used a different or unavailable module for {category}. Restore that module to resume, or start a new backup."
+                        "The saved run used a different or unavailable module for {name}. Restore that module to resume, or start a new backup."
                     ),
                 ));
             }
@@ -323,6 +373,10 @@ impl Host {
             {
                 artifact_plugins.push(processor.clone());
             }
+        }
+        // Listing may use saved descriptors; load each plugin this run uses now and log how.
+        for plugin in &artifact_plugins {
+            run.activity.record(plugin.prepare(&run.cancel).await?);
         }
         let preparation = run
             .activity
@@ -358,7 +412,7 @@ impl Host {
         present.sort_by_key(|plugin| {
             (
                 plugin.has_role("definitionProcessor"),
-                plugin.category.id.clone(),
+                crate::legacy_category_ids::catalog_order(&plugin.category.id),
             )
         });
 
@@ -506,6 +560,8 @@ impl Host {
         }
 
         let mut cursor = saved.cursors.get(&category).cloned();
+        // Built once and kept current, not rebuilt from every target per page.
+        let mut known = targets.iter().map(storage::identity_key).collect::<HashSet<_>>();
         let stop = run.cancel.child_token();
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let producer = Arc::new(self.page_memory.producer());
@@ -523,7 +579,7 @@ impl Host {
             if !seen.insert(cursor.clone()) {
                 self.discovery_failed(run, &category, Diagnostic::new(
                     "CURSOR_CYCLE",
-                    "A native cursor repeated. The run retains the identities from earlier pages.",
+                    "An Epicor saved position repeated. The run retains the identities from earlier pages.",
                 )).await?;
                 break;
             }
@@ -559,19 +615,21 @@ impl Host {
                     let loaded = blocking(move || entry.load()).await?;
                     let crate::page_buffer::Page { cursor: received_cursor, reply, files } = loaded.page;
                     if received_cursor != cursor {
-                        return Err(Diagnostic::new("PAGE_BUFFER_ORDER", "The buffered page does not match the next recovery cursor."));
+                        return Err(Diagnostic::new("PAGE_BUFFER_ORDER", "The buffered page does not match the next recovery saved position."));
                     }
                     run.activity.buffer_page(&category, bytes, spilled, false);
                     buffering.step(run.activity.buffer_label(&category));
                     let mut materialize = request;
                     materialize.operation = "materialize".into();
                     match reply {
+                        // Boxed like `drive`: the helper pipeline's future is large (lease gating included)
+                        // and must not be inlined into this already large discovery future.
                         GuestReply::PreparedPage { state, .. } => {
                             materialize.state = state;
-                            self.drive_with_sources(plugin, materialize, connection, run, &stop, None, files).await
+                            Box::pin(self.drive_with_sources(plugin, materialize, connection, run, &stop, None, files)).await
                         }
                         reply @ GuestReply::InventoryData { .. } => {
-                            self.drive_with_sources(plugin, materialize, connection, run, &stop, Some(reply), files).await
+                            Box::pin(self.drive_with_sources(plugin, materialize, connection, run, &stop, Some(reply), files)).await
                         }
                         reply => Ok((reply, files)),
                     }
@@ -592,10 +650,6 @@ impl Host {
                         record_page_diagnostic(run, &category, &identities, diagnostic).await?;
                     }
                     let mut received = Vec::new();
-                    let mut known = targets
-                        .iter()
-                        .map(storage::identity_key)
-                        .collect::<BTreeSet<_>>();
                     for identity in identities {
                         // Deferred cleanup must not cause our temporary helpers
                         // to enter the backup. Match exact keys and verify native
@@ -636,12 +690,14 @@ impl Host {
                         }
                     }
 
-                    let page = targets.clone();
+                    // Only this page's new identities; the journal keeps the
+                    // cumulative list, and the log saves just its new tail.
+                    let page = received.clone();
                     let stamp = category.clone();
                     let next = next_cursor.clone();
                     let outcome = if incomplete {
                         "discoveryIncomplete"
-                    } else if page.is_empty() && next.is_none() {
+                    } else if targets.is_empty() && next.is_none() {
                         "verifiedAbsent"
                     } else {
                         "discovered"
@@ -650,7 +706,7 @@ impl Host {
 
                     // Commit only consumed pages. Fetched pages never advance recovery.
                     update(run, move |storage| {
-                        storage.journal.discovered.insert(stamp.clone(), page);
+                        storage.journal.discovered.entry(stamp.clone()).or_default().extend(page);
                         storage
                             .journal
                             .category_outcomes
@@ -726,7 +782,7 @@ impl Host {
             loop {
                 if cancel.is_cancelled() { break; }
                 if !seen.insert(cursor.clone()) {
-                    return Err(Diagnostic::new("CURSOR_CYCLE", "A native cursor repeated. Earlier pages remain available."));
+                    return Err(Diagnostic::new("CURSOR_CYCLE", "An Epicor saved position repeated. Earlier pages remain available."));
                 }
                 if plugin.has_role("definitionProcessor") {
                     state = super::reference_processing::current_reference_context(run, &plugin.category.id).await?;
@@ -740,7 +796,7 @@ impl Host {
                     GuestReply::Inventory { next_cursor, .. } => (next_cursor.clone(), Value::Null),
                     GuestReply::InventoryData { inventory, .. } => match inventory.as_ref() {
                         GuestReply::Inventory { next_cursor, .. } => (next_cursor.clone(), Value::Null),
-                        _ => return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "The fetched page has no inventory cursor.")),
+                        _ => return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "The fetched page has no inventory saved position.")),
                     },
                     GuestReply::Failure { diagnostic } => return Err(diagnostic.clone()),
                     _ => return Err(Diagnostic::new("PLUGIN_OUTPUT_INVALID", "The plugin did not return a collection page.")),
@@ -779,7 +835,8 @@ impl Host {
         record_diagnostic(run, diagnostic).await
     }
 
-    /// Dispatch unfinished objects within the user's selected concurrency.
+    /// Dispatch unfinished objects one at a time (`concurrency` below is fixed
+    /// at 1; it does not read the user's settings).
     pub(super) async fn acquire_targets(
         &self,
         run: &Arc<Run>,
@@ -791,42 +848,41 @@ impl Host {
         full: bool,
     ) -> Result<(), Diagnostic> {
         checkpoint(run, "acquiring").await?;
-        let saved = snapshot(run).await?;
-        // A completed journal entry is not proof that its files survived a
-        // restart. Verify immutable inputs before using it to skip acquisition.
-        // Derived views can be edited by the user and follow conflict handling.
-        let target_keys: BTreeSet<_> = targets.iter().map(storage::identity_key).collect();
-        let references = saved
-            .artifacts
-            .iter()
-            .filter(|artifact| {
-                successful(artifact)
-                    && target_keys.contains(&storage::identity_key(&artifact.identity))
-            })
-            .flat_map(|artifact| artifact.files.iter())
-            .filter(|file| matches!(file.role.as_str(), "native" | "processingInput"))
-            .cloned()
-            .collect::<Vec<_>>();
+        // Read only what this selection needs. Cloning the whole journal and
+        // scanning every artifact for every target grew with the run each page.
         let storage = run.storage.clone();
-        blocking(move || {
+        let target_keys: BTreeSet<_> = targets.iter().map(storage::identity_key).collect();
+        let (completed, collection_method, admitted) = blocking(move || {
             let storage = storage
                 .lock()
                 .map_err(|_| Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable."))?;
-            for file in references {
-                storage.verify(&file)?;
+            let mut completed = HashSet::new();
+            for artifact in &storage.journal.artifacts {
+                let key = storage::identity_key(&artifact.identity);
+                if !successful(artifact) || !target_keys.contains(&key) { continue; }
+                // A completed journal entry is not proof that its files survived a
+                // restart. Verify immutable inputs before using it to skip acquisition.
+                // Derived views can be edited by the user and follow conflict handling.
+                for file in artifact.files.iter()
+                    .filter(|file| matches!(file.role.as_str(), "native" | "processingInput"))
+                {
+                    storage.verify(file)?;
+                }
+                completed.insert(key);
             }
-            Ok(())
+            let admitted = storage.journal.helper_transfers.iter()
+                .filter(|transfer| matches!(transfer.phase.as_str(), "admitted" | "open"))
+                .map(|transfer| storage::identity_key(&transfer.identity))
+                .collect::<HashSet<_>>();
+            Ok((completed, storage.journal.collection_method.clone(), admitted))
         })
         .await?;
         let mut seen = BTreeSet::new();
         let mut remaining = targets
             .into_iter()
-            .filter(|identity| seen.insert(storage::identity_key(identity)))
             .filter(|identity| {
-                !saved
-                    .artifacts
-                    .iter()
-                    .any(|artifact| artifact.identity == *identity && successful(artifact))
+                let key = storage::identity_key(identity);
+                seen.insert(key.clone()) && !completed.contains(&key)
             })
             .collect::<Vec<_>>();
 
@@ -834,7 +890,7 @@ impl Host {
         // applies later to file transfers and local artifact processing.
         if !remaining.is_empty()
             && plugin.has_role("prepareAcquisition")
-            && saved.collection_method == CollectionMethod::ServerAssisted
+            && collection_method == CollectionMethod::ServerAssisted
         {
             if remaining.iter().any(|id| {
                 id.category != plugin.category.id
@@ -892,12 +948,7 @@ impl Host {
         }
 
         // Recover an already admitted row before allocating a new staging slot.
-        remaining.sort_by_key(|identity| {
-            !saved.helper_transfers.iter().any(|transfer| {
-                transfer.identity == *identity
-                    && matches!(transfer.phase.as_str(), "admitted" | "open")
-            })
-        });
+        remaining.sort_by_key(|identity| !admitted.contains(&storage::identity_key(identity)));
         let mut remaining = std::collections::VecDeque::from(remaining);
         let mut pending = FuturesUnordered::new();
 
@@ -923,7 +974,8 @@ impl Host {
                 result?;
             }
         }
-        Ok(())
+        // Artifacts are recorded on the paced schedule; save the rest now.
+        checkpoint(run, "acquiring").await
     }
 
     pub(super) async fn collect_one(
@@ -957,7 +1009,7 @@ impl Host {
             .iter()
             .any(|r| r == "definitionProcessor")
         {
-            super::reference_processing::current_reference_context(&run, &plugin.category.id).await?
+            super::reference_processing::exact_reference_context(&run, &plugin.category.id, &identity).await?
         } else {
             Value::Null
         };
@@ -1024,7 +1076,7 @@ impl Host {
                     let storage=run.storage.clone();let writers=self.file_writers.clone();let cancel=run.cancel.clone();
                     return blocking(move||{
                         crate::collection_output::write_shared_page(storage.clone(),std::mem::take(&mut prepared),&writers,&cancel,|_|{})?;
-                        storage.lock().map_err(|_|Diagnostic::new("RUN_STATE_FAILED","Run state is unavailable."))?.checkpoint()
+                        storage.lock().map_err(|_|Diagnostic::new("RUN_STATE_FAILED","Run state is unavailable."))?.checkpoint_paced()
                     }).await;
                 }
                 let references = if produces_definition(&completeness) {
@@ -1082,7 +1134,7 @@ impl Host {
                             diagnostic.identity = Some(identity.clone());
                         }
                     }
-                    s.record_artifact(Artifact {
+                    s.record_artifact_paced(Artifact {
                         identity,
                         classification: if full {
                             "discoveredDefinition"
@@ -1122,7 +1174,7 @@ impl Host {
                     identity,
                     Diagnostic::new(
                         "PLUGIN_OUTPUT_INVALID",
-                        "Acquisition did not return the exact requested artifact definition.",
+                        "Download did not return the exact requested artifact definition.",
                     ),
                     Completeness::Partial,
                 )
@@ -1139,14 +1191,14 @@ impl Host {
         acquisition: Completeness,
     ) -> Result<(), Diagnostic> {
         diagnostic.identity = Some(identity.clone());
-        update(run, move |s| {
+        update_paced(run, move |s| {
             let files = s
                 .journal
                 .artifact_acquisitions
                 .get(&storage::identity_key(&identity))
                 .cloned()
                 .unwrap_or_default();
-            s.record_artifact(Artifact {
+            s.record_artifact_paced(Artifact {
                 identity,
                 classification: "requestedDefinition".into(),
                 acquisition,
@@ -1208,7 +1260,7 @@ impl Host {
                 }
                 _ => {complete = false; diagnostics.push(Diagnostic::new(
                     "PROCESSOR_OUTPUT_INVALID",
-                    "A definition processor must return references without requesting native operations.",
+                    "A definition processor must return references without requesting Epicor operations.",
                 ));},
             }
         }
@@ -1230,6 +1282,9 @@ impl Host {
                         && p.category.roles.iter().any(|r| r == "definitionProcessor")
                 })
                 .collect::<Vec<_>>();
+            for plugin in &processors {
+                run.activity.record(plugin.prepare(&run.cancel).await?);
+            }
             self.invalidate_reference_outputs(&run,&processors).await?;
             self.process_reference_inputs(&run, &processors, true).await?;
             let journal = snapshot(&run).await?;
@@ -1374,7 +1429,8 @@ impl Host {
             for diagnostic in self.managed.drain(&run).await{let _=record_diagnostic(&run,diagnostic).await;}
             let mut store=run.storage.lock().unwrap_or_else(|e|e.into_inner());if let Err(error)=managed_decompilation::attach_outputs(&mut store){store.journal.diagnostics.push(error);}
         }
-        finish(&run, result).await;
+        let released = finish(&run, result).await;
+        self.settle_run(&run, released).await;
     }
 }
 

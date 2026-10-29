@@ -110,15 +110,15 @@ pub fn zip(entries: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, Diagnostic> {
                     .compression_method(zip::CompressionMethod::Deflated)
                     .compression_level(Some(1)),
             )
-            .map_err(|e| invalid(format!("Cannot create package entry: {e}")))?;
+            .map_err(|e| invalid("Herbert could not add a file to the Kinetic application package. The downloaded source was kept.").with_cause(e))?;
         writer
             .write_all(bytes)
-            .map_err(|e| invalid(format!("Cannot write package entry: {e}")))?;
+            .map_err(|e| invalid("Herbert could not write a file into the Kinetic application package. The downloaded source was kept.").with_cause(e))?;
     }
     writer
         .finish()
         .map(|c| c.into_inner())
-        .map_err(|e| invalid(format!("Cannot finish package: {e}")))
+        .map_err(|e| invalid("Herbert could not finish the Kinetic application package. The downloaded source was kept.").with_cause(e))
 }
 fn layer(
     entries: &mut BTreeMap<String, Vec<u8>>,

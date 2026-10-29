@@ -8,7 +8,7 @@ const CHILDREN: &[&str] = &[
 ];
 pub fn methods() -> Vec<(String, String)> {
     // Keep exact-identity reads available to targeted acquisition callers.
-    crate::collectors::methods("C02")
+    crate::collectors::methods("ud-schema")
 }
 fn key(row: &Value) -> Result<(String, String), &'static str> {
     let text = |name| row[name].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
@@ -56,7 +56,7 @@ fn schema_records(body: &Value) -> Result<Vec<(Identity, Value)>, &'static str> 
             return None;
         }
         Some((Identity {
-            category:"C02".into(),kind:"UDTableSchema".into(),scope:Scope::Global,
+            category:"ud-schema".into(),kind:"UDTableSchema".into(),scope:Scope::Global,
             keys:BTreeMap::from([("SystemCode".into(),k.0),("DataTableID".into(),k.1)]),
         },definition))
     }).collect())
@@ -87,7 +87,7 @@ fn mapping_records(body: &Value, company: &str) -> Result<Vec<(Identity, Value)>
         definition["UDMapColumn"].as_array_mut().unwrap().push(row.clone());
     }
     Ok(definitions.into_iter().map(|(id,(owner,definition))| (Identity {
-        category:"C02".into(),kind:"UDMapping".into(),
+        category:"ud-schema".into(),kind:"UDMapping".into(),
         scope:if owner.is_empty(){Scope::Global}else{Scope::Company{company:owner}},
         keys:BTreeMap::from([("MapTableID".into(),id.to_string())]),
     },definition)).collect())
@@ -137,30 +137,33 @@ pub fn handle(request: GuestRequest) -> GuestReply {
     let fail=|message|crate::failure("SCHEMA_PAGE_UNVERIFIED",message);
     let cursor=match request.cursor.as_deref().map(serde_json::from_str::<Value>).transpose() {
         Ok(v)=>v.unwrap_or(json!({"stream":if include_schema {0}else{1},"page":1})),
-        Err(_)=>return fail("Invalid schema page cursor."),
+        Err(_)=>return fail("Invalid schema page saved position."),
     };
     let (Some(stream @ 0..=1),Some(page @ 1..=2147483647))=(cursor["stream"].as_u64(),cursor["page"].as_u64()) else {
-        return fail("Native schema pagination requires a positive Int32 page and a known stream.");
+        return fail("Herbert could not continue this download from its saved progress (page position). Start the download again.");
     };
     if stream == 0 && !include_schema || stream == 1 && !include_mappings {
-        return fail("The schema page cursor selects an excluded definition family.");
+        return fail("The schema page saved position selects an excluded definition family.");
     }
     let incomplete = |diagnostic: Diagnostic| GuestReply::Inventory {
         identities: vec![],
         next_cursor: if stream == 0 && include_mappings { Some(json!({"stream":1,"page":1}).to_string()) } else { None },
         authoritative: false, diagnostics: vec![diagnostic],
     };
-    let page_failure = |message: &str| incomplete(Diagnostic::new("SCHEMA_PAGE_UNVERIFIED",
-        &format!("Stream {stream}, page {page}: {message}")));
+    let page_failure = |message: &str| incomplete(Diagnostic::new("SCHEMA_PAGE_UNVERIFIED", message)
+        .with_context("stream", stream).with_context("page", page));
     if let Some(diagnostic) = request.error { return incomplete(diagnostic); }
-    let Some(size)=request.page_size.filter(|n|*n>0) else {return page_failure("Supply a positive schema page size.");};
+    let Some(size)=request.page_size.filter(|n|*n>0) else {return page_failure("The schema page size must be a whole number greater than zero.");};
     if request.response.is_none() {
         let mut args=json!({"pageSize":size,"absolutePage":page});
         let service=if stream==0 {
             // Include standard parents so custom children on them are not lost.
             // The response retention policy excludes their full definitions.
-            args["whereClauseZDataTable"]=json!("");
-            for name in CHILDREN {args[format!("whereClause{name}")]=json!("SystemFlag = false");}
+            // A literal DataTableID prefix narrows parents and their custom children with a broad server-side
+            // superset; the exact starts_with selection below stays local.
+            let like=crate::report_query::like_clause("DataTableID",prefix);
+            args["whereClauseZDataTable"]=json!(like.strip_prefix(" AND ").unwrap_or(""));
+            for name in CHILDREN {args[format!("whereClause{name}")]=json!(format!("SystemFlag = false{like}"));}
             "Ice.BO.ZDataTableSvc"
         } else {
             args["whereClauseUDMapTable"]=json!(format!("(Company = '{}' OR Company = '')",request.company.replace('\'',"''")));
@@ -171,14 +174,14 @@ pub fn handle(request: GuestRequest) -> GuestReply {
     }
     let response=request.response.as_ref().unwrap();
     let Some(more)=response.pointer("/parameters/morePages").and_then(Value::as_bool) else {
-        return page_failure("Native schema response omitted morePages.");
+        return page_failure("Epicor's schema response did not say whether more pages follow, so this page was not saved. Retry the download.");
     };
     let records=match if stream==0 {schema_records(crate::body(response))} else {mapping_records(crate::body(response),&request.company)} {
         Ok(records)=>records,Err(message)=>return page_failure(message),
     };
     let root=if stream==0{"ZDataTable"}else{"UDMapTable"};
     if more && crate::body(response)[root].as_array().is_none_or(Vec::is_empty) {
-        return page_failure("Native schema pagination did not advance.");
+        return page_failure("Epicor returned the same schema page again, so Herbert stopped instead of looping. Retry the download.");
     }
     let next_cursor=if more {Some(json!({"stream":stream,"page":page+1}).to_string())}
         else if stream==0 && include_mappings {Some(json!({"stream":1,"page":1}).to_string())}else{None};
@@ -216,7 +219,7 @@ mod tests {
         v
     }
     fn discovery(body: Value, settings: Value, more: bool) -> GuestRequest {
-        GuestRequest { abi: PLUGIN_ABI, operation: "discover".into(), category: "C02".into(),
+        GuestRequest { abi: PLUGIN_ABI, operation: "discover".into(), category: "ud-schema".into(),
             company: "C".into(), identity: None, cursor: None, page_size: Some(3),
             state: json!({"_pluginSettings":settings}),
             response: Some(json!({"returnObj":body,"parameters":{"morePages":more}})), error: None }
@@ -302,10 +305,10 @@ mod tests {
             let mut r = discovery(Value::Null, json!({}), false);
             let excluded_family = if id.kind == "UDMapping" { "schema" } else { "mappings" };
             r.operation = "acquire".into(); r.identity = Some(id); r.response = None;
-            let base = serde_json::to_value(crate::handle("C02", r.clone())).unwrap();
+            let base = serde_json::to_value(crate::handle("ud-schema", r.clone())).unwrap();
             assert_eq!(base["type"], "action");
             r.state = json!({"_pluginSettings":{"definitionFamily":excluded_family,"schemaTableIdPrefix":"missing"}});
-            let selected = serde_json::to_value(crate::handle("C02", r)).unwrap();
+            let selected = serde_json::to_value(crate::handle("ud-schema", r)).unwrap();
             assert_eq!(selected["type"], "action"); assert_eq!(selected["action"], base["action"]);
         }
     }
@@ -330,7 +333,7 @@ mod tests {
     }
     #[test]
     fn pages_then_mappings_need_no_discovery_or_per_table_reads() {
-        let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"C02".into(),
+        let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"ud-schema".into(),
             company:"C".into(),identity:None,cursor:None,page_size:Some(3),state:Value::Null,response:None,error:None};
         for (stream,number,more) in [(0,1,true),(0,2,false),(1,1,false)] {
             let GuestReply::Action{action:HostAction::NativeRead{service,method,arguments,..},..}=handle(r.clone()) else {panic!("Expected one native read");};
@@ -351,7 +354,7 @@ mod tests {
     }
     #[test]
     fn native_refusal_and_missing_paging_are_not_success() {
-        let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"C02".into(),
+        let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"ud-schema".into(),
             company:"C".into(),identity:None,cursor:None,page_size:Some(3),state:Value::Null,response:Some(json!({"returnObj":page()})),error:None};
         assert!(matches!(handle(r.clone()),GuestReply::Inventory{authoritative:false,next_cursor:Some(_),..}));
         r.error=Some(Diagnostic::new("DENIED","Native refusal"));
@@ -376,7 +379,7 @@ mod tests {
             let mut body=page();
             if failure=="missing-table" {body.as_object_mut().unwrap().remove("ZKey");}
             if failure=="stalled" {body["ZDataTable"]=json!([]);body["ZDataField"]=json!([]);}
-            let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"C02".into(),company:"C".into(),
+            let mut r=GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"ud-schema".into(),company:"C".into(),
                 identity:None,cursor:Some(json!({"stream":0,"page":2}).to_string()),page_size:Some(3),state:Value::Null,
                 response:Some(json!({"returnObj":body,"parameters":{"morePages":failure=="stalled"}})),error:None};
             if failure=="refused" {r.error=Some(Diagnostic::new("DENIED","Schema refused."));}
@@ -428,7 +431,7 @@ mod tests {
     #[test]
     fn wave1_schema_partial_status_is_limited_to_the_malformed_owner() {
         let mut body=page();body["ZDataField"][0].as_object_mut().unwrap().remove("FieldName");
-        let r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"C02".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state:Value::Null,response:Some(json!({"returnObj":body,"parameters":{"morePages":false}})),error:None};
+        let r=GuestRequest{abi:PLUGIN_ABI,operation:"discover".into(),category:"ud-schema".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state:Value::Null,response:Some(json!({"returnObj":body,"parameters":{"morePages":false}})),error:None};
         let GuestReply::InventoryData{records,inventory}=handle(r)else{panic!()};
         assert_eq!(records.len(),2);
         for (identity,data) in records {

@@ -55,7 +55,7 @@ pub fn build(row: &Value) -> Result<String, Diagnostic> {
     for key in KEYS {
         if !row.get(key).is_some_and(Value::is_string) {
             return Err(invalid(
-                "The Classic definition has an incomplete native identity.",
+                "The Classic definition has an incomplete Epicor ID.",
             ));
         }
     }

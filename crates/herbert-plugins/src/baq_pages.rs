@@ -39,7 +39,7 @@ pub fn methods() -> Vec<(String, String)> {
         (SERVICE.into(), "GetTableList".into()),
         ("Ice.Lib.SessionModSvc".into(), "GetBaseLevel".into()),
         ("Ice.Lib.BOReaderSvc".into(), "GetCodeDescList".into()),
-        ("Ice.BO.ExtensionSvc".into(), "GetByID".into()),
+        ("Ice.BO.ExtensionSvc".into(), "GetRows".into()),
         (crate::ubaq_rows::SERVICE.into(), "GetRowsEx".into()),
     ]
 }
@@ -67,16 +67,44 @@ fn shared(
     }
 }
 
-fn extension_info_action(mut state: Value, index: usize) -> Result<GuestReply, Diagnostic> {
-    let id = state["extensionIds"][index]
-        .as_str()
-        .ok_or_else(|| invalid("The extension checkpoint has no identity."))?
-        .to_owned();
-    state["extensionIndex"] = json!(index);
+// ExtensionTableset tables from native-child-contracts.json; the GetRows
+// signature itself is not yet verified against a server. Only Extension roots are
+// used; child where clauses stay blank, as GetByID returned whole children.
+const EXTENSION_TABLES: &[&str] = &[
+    "Extension",
+    "ExtensionSetMapping",
+    "ExtensionTable",
+    "ExtensionColumn",
+    "ExtensionRelation",
+    "ExtensionRelationColumn",
+    "ExtensionTableKey",
+];
+
+fn extension_ids(state: &Value) -> Result<Vec<String>, Diagnostic> {
+    state["extensionIds"]
+        .as_array()
+        .filter(|ids| !ids.is_empty())
+        .ok_or_else(|| invalid("The extension saved progress has no identity."))?
+        .iter()
+        .map(|id| id.as_str().map(str::to_owned).ok_or_else(|| invalid("The extension saved progress has no identity.")))
+        .collect()
+}
+
+// Bulk-first: one read for every extension this batch needs; rows are matched to IDs locally.
+fn extension_info_action(state: Value) -> Result<GuestReply, Diagnostic> {
+    let filter: Vec<_> = extension_ids(&state)?
+        .iter()
+        .map(|id| format!("ExtensionSetID = '{}'", id.replace('\'', "''")))
+        .collect();
+    let mut arguments = json!({"pageSize":0,"absolutePage":1});
+    for table in EXTENSION_TABLES {
+        arguments[format!("whereClause{table}")] = json!("");
+    }
+    arguments["whereClauseExtension"] = json!(filter.join(" OR "));
     Ok(shared(
         "Ice.BO.ExtensionSvc",
-        "GetByID",
-        json!({"extensionSetID":id}),
+        "GetRows",
+        arguments,
         state,
         "extensionInfo",
     ))
@@ -89,11 +117,36 @@ pub fn handle(request: GuestRequest) -> GuestReply {
     }
 }
 
-fn read_page(request: &GuestRequest, version: &str) -> Result<GuestReply, Diagnostic> {
+/// The prefix's leading run before any LIKE wildcard, bracket or non-ASCII character, for a
+/// server-side `LIKE 'stem%'` superset that needs no escape syntax. Non-ASCII stops the stem
+/// because the literal is not N-prefixed and could be converted lossily. None when nothing
+/// narrows the read.
+fn like_stem(prefix: &str) -> Option<&str> {
+    let stem = &prefix[..prefix.find(|c: char| matches!(c, '%' | '_' | '[' | ']') || !c.is_ascii()).unwrap_or(prefix.len())];
+    (!stem.is_empty()).then_some(stem)
+}
+
+/// Marks a page cursor written while the QueryID pushdown narrowed the root read.
+const NARROWED: &str = ":narrowed";
+/// The page after this one, in the cursor format of the read that produced it.
+fn next_page(state: &Value) -> Option<String> {
+    (state["more"] == true).then(|| format!("{}{}", state["page"].as_u64().unwrap() + 1, if state["narrowed"] == true { NARROWED } else { "" }))
+}
+fn read_page(request: &GuestRequest, version: &str, prefix: &str) -> Result<GuestReply, Diagnostic> {
+    let narrowed = like_stem(prefix).is_some();
     let page = match &request.cursor {
-        Some(cursor) => cursor
-            .parse::<u32>()
-            .map_err(|_| invalid("The BAQ page cursor is invalid."))?,
+        Some(cursor) => {
+            let (number, marked) = match cursor.strip_suffix(NARROWED) { Some(number) => (number, true), None => (cursor.as_str(), false) };
+            let number = number.parse::<u32>().map_err(|_| invalid("The BAQ page saved position is invalid."))?;
+            match (narrowed, marked) {
+                (true, true) | (false, false) => number,
+                // A position saved before the QueryID pushdown counts pages of the unfiltered
+                // list. Resuming it in the narrowed list could skip queries, so discovery
+                // restarts at page 1; already written queries are written again unchanged.
+                (true, false) => 1,
+                (false, true) => return Err(invalid("The BAQ page saved position is invalid.")),
+            }
+        }
         None => 1,
     };
     let size = request
@@ -101,17 +154,23 @@ fn read_page(request: &GuestRequest, version: &str) -> Result<GuestReply, Diagno
         .ok_or_else(|| invalid("Select a BAQ page size."))?;
     if page == 0 || page > i32::MAX as u32 || size == 0 || size > i32::MAX as u32 {
         return Err(invalid(
-            "The native page and page size must be positive Int32 values.",
+            "The page number and page size must each be a whole number from 1 to 2147483647.",
         ));
     }
     let mut arguments = json!({"pageSize":size,"absolutePage":page});
     for table in TABLES {
         arguments[format!("whereClause{table}")] = json!("");
     }
-    arguments["whereClauseDynamicQueryDesigner"] = json!(format!(
+    let mut filter = format!(
         "(Company = '{}' OR Company = '') AND SystemFlag = false",
         request.company.replace('\'', "''")
-    ));
+    );
+    // A broad QueryID superset; the literal case-sensitive prefix still selects locally.
+    // Child tables keep blank clauses: GetRows returns the children of the returned roots.
+    if let Some(stem) = like_stem(prefix) {
+        filter.push_str(&format!(" AND QueryID LIKE '{}%'", stem.replace('\'', "''")));
+    }
+    arguments["whereClauseDynamicQueryDesigner"] = json!(filter);
     Ok(GuestReply::Action {
         action: HostAction::NativeRead {
             service: SERVICE.into(),
@@ -119,7 +178,7 @@ fn read_page(request: &GuestRequest, version: &str) -> Result<GuestReply, Diagno
             arguments,
             export: false,
         },
-        state: json!({"phase":"rows","version":version,"page":page,
+        state: json!({"phase":"rows","version":version,"page":page,"narrowed":narrowed,
             "_progress":{"request":format!("Downloading BAQ definitions - batch {page} (up to {size} queries)"),
                 "response":"Definitions received; gathering the rest of this batch"}}),
     })
@@ -146,7 +205,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
         request.page_size = Some(
             size.as_u64()
                 .filter(|n| *n > 0 && *n <= i32::MAX as u64)
-                .ok_or_else(|| invalid("Queries per request must be a positive Int32 value."))?
+                .ok_or_else(|| invalid("Queries per request must be a whole number from 1 to 2147483647."))?
                 as u32,
         );
     }
@@ -164,7 +223,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
     };
     match request.state["phase"].as_str().unwrap_or("initial") {
         "nextPage" => read_page(&request, request.state["version"].as_str()
-            .ok_or_else(|| invalid("The page export version is missing."))?),
+            .ok_or_else(|| invalid("The page export version is missing."))?, prefix),
         "initial" => Ok(GuestReply::Action {
             action: HostAction::SharedNativeRead {
                 service: "Ice.Lib.SessionModSvc".into(),
@@ -191,7 +250,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                         .ok_or_else(|| invalid("The server base version is invalid."))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            read_page(&request, &parts.join("."))
+            read_page(&request, &parts.join("."), prefix)
         }
         "rows" => {
             let response = request
@@ -209,9 +268,15 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .ok_or_else(|| invalid("The definition page omitted morePages."))?;
             let roots = data["DynamicQueryDesigner"].as_array().unwrap();
             if more && roots.is_empty() {
-                return Err(invalid("Native query pagination did not advance."));
+                return Err(invalid("Epicor query pagination did not advance."));
             }
-            for root in roots {
+            // Only roots the user's literal, case-sensitive prefix keeps are validated.
+            // A root without a string QueryID may match, so it is kept and fails below.
+            // Native ownership can ignore QueryID case; the prefix is never rewritten.
+            let selected_roots: Vec<_> = roots.iter()
+                .filter(|root| root["QueryID"].as_str().is_none_or(|id| id.starts_with(prefix)))
+                .collect();
+            for root in &selected_roots {
                 let company = root["Company"]
                     .as_str()
                     .ok_or_else(|| invalid("A query has no company key."))?;
@@ -226,24 +291,30 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 if root["QueryID"].as_str().is_none_or(str::is_empty)
                     || root["SysRowID"].as_str().is_none_or(str::is_empty)
                 {
-                    return Err(invalid("A query has an incomplete native identity."));
+                    return Err(invalid("A query has an incomplete Epicor ID."));
                 }
             }
-            let mut root_ids = std::collections::BTreeSet::new();
+            // A selected root must not share its identity with any root on the page,
+            // or native ownership would merge another query's children into it.
+            let mut root_ids = BTreeMap::<(&str, String), usize>::new();
             for root in roots {
-                if !root_ids.insert((
-                    root["Company"].as_str().unwrap(),
-                    root["QueryID"].as_str().unwrap().to_lowercase(),
-                )) {
+                if let (Some(company), Some(query)) = (root["Company"].as_str(), root["QueryID"].as_str()) {
+                    *root_ids.entry((company, query.to_lowercase())).or_default() += 1;
+                }
+            }
+            for root in &selected_roots {
+                if root_ids[&(root["Company"].as_str().unwrap(), root["QueryID"].as_str().unwrap().to_lowercase())] > 1 {
                     return Err(invalid("The definition page repeats a query identity."));
                 }
             }
-            for rows in data.as_object().unwrap().values() {
+            // A child row no root on this page owns cannot be proven unselected, so it
+            // still fails. Unselected roots themselves are not validated.
+            for (table, rows) in data.as_object().unwrap() {
                 for row in rows
                     .as_array()
                     .ok_or_else(|| invalid("A definition table is not an array."))?
                 {
-                    if !roots
+                    if table != "DynamicQueryDesigner" && !roots
                         .iter()
                         .any(|root| crate::baq_archive::owned_by(row, root))
                     {
@@ -251,12 +322,6 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     }
                 }
             }
-            // Validate the whole raw page above, before selecting any root.
-            // Native ownership can ignore QueryID case; the user's literal
-            // root prefix is deliberately case-sensitive and never rewritten.
-            let selected_roots: Vec<_> = roots.iter()
-                .filter(|root| root["QueryID"].as_str().unwrap().starts_with(prefix))
-                .collect();
             let selected_data: serde_json::Map<String, Value> = data.as_object().unwrap().iter()
                 .map(|(table, rows)| (table.clone(), Value::Array(rows.as_array().unwrap().iter()
                     .filter(|row| selected_roots.iter().any(|root| crate::baq_archive::owned_by(row, root)))
@@ -317,34 +382,38 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .ok_or_else(|| invalid("The extension level descriptions are missing."))?;
             let mut state = request.state.clone();
             state["extensionLevels"] = json!(codes);
-            extension_info_action(state, 0)
+            extension_info_action(state)
         }
         "extensionInfo" => {
-            let index = request.state["extensionIndex"]
-                .as_u64()
-                .ok_or_else(|| invalid("The extension checkpoint is invalid."))?
-                as usize;
-            let id = request.state["extensionIds"][index]
-                .as_str()
-                .ok_or_else(|| invalid("The extension identity is missing."))?;
-            let row = request
+            let response = request
                 .response
                 .as_ref()
-                .and_then(|r| r["returnObj"]["Extension"].as_array())
-                .filter(|rows| rows.len() == 1)
-                .and_then(|rows| rows.first())
-                .ok_or_else(|| invalid("The extension lookup did not return one definition."))?;
-            if !row["ExtensionSetID"]
+                .ok_or_else(|| invalid("The extension lookup response is missing."))?;
+            if response["parameters"]["morePages"] == true {
+                return Err(invalid("The extension lookup reported more pages."));
+            }
+            let rows = response["returnObj"]["Extension"]
+                .as_array()
+                .ok_or_else(|| invalid("The extension lookup omitted its rows."))?;
+            let ids = extension_ids(&request.state)?;
+            let levels = request.state["extensionLevels"]
                 .as_str()
-                .is_some_and(|actual| actual.eq_ignore_ascii_case(id))
-            {
-                return Err(invalid("The extension lookup returned another identity."));
+                .ok_or_else(|| invalid("The extension level descriptions are missing."))?;
+            let mut found = BTreeMap::new();
+            for row in rows {
+                let id = row["ExtensionSetID"]
+                    .as_str()
+                    .and_then(|actual| ids.iter().find(|id| id.eq_ignore_ascii_case(actual)))
+                    .ok_or_else(|| invalid("The extension lookup returned an extension that was not requested."))?;
+                if found.insert(id, crate::baq_dependencies::info(row, levels)).is_some() {
+                    return Err(invalid(&format!("The extension lookup returned extension {id} more than once.")));
+                }
             }
             let mut state = request.state.clone();
-            state["extensionInfo"][id] =
-                crate::baq_dependencies::info(row, state["extensionLevels"].as_str().unwrap());
-            if index + 1 < state["extensionIds"].as_array().unwrap().len() {
-                return extension_info_action(state, index + 1);
+            for id in &ids {
+                let info = found.remove(id).ok_or_else(|| invalid(&format!(
+                    "The extension lookup did not return extension {id}. It may have been deleted, or this account may not be allowed to read it.")))?;
+                state["extensionInfo"][id] = info;
             }
             diagram_action(&state, request.page_size)
         }
@@ -367,7 +436,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let mut state = request.state.clone();
             state["diagrams"]
                 .as_array_mut()
-                .ok_or_else(|| invalid("The diagram checkpoint is invalid."))?
+                .ok_or_else(|| invalid("The diagram saved progress is invalid."))?
                 .extend(rows.iter().cloned());
             if request
                 .page_size
@@ -377,7 +446,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     .last()
                     .and_then(|row| row["SysRowID"].as_str())
                     .filter(|id| !id.is_empty())
-                    .ok_or_else(|| invalid("The diagram page has no continuation key."))?;
+                    .ok_or_else(|| invalid("The diagram page has no resume point key."))?;
                 if state["diagramAfter"] == after {
                     return Err(invalid("Diagram pagination did not advance."));
                 }
@@ -402,7 +471,7 @@ fn collect(mut request: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 Err(error) => finish_without_methods(state, error),
             }
         }
-        _ => Err(invalid("The local BAQ checkpoint is invalid.")),
+        _ => Err(invalid("The local BAQ saved progress is invalid.")),
     }
 }
 
@@ -555,9 +624,7 @@ fn finish_definitions(state: &Value) -> Result<GuestReply, Diagnostic> {
         return Ok(GuestReply::PreparedPage {
             state: state.clone(),
             next_state: json!({"phase":"nextPage","version":state["version"]}),
-            next_cursor: if state["more"] == true {
-                Some((state["page"].as_u64().unwrap() + 1).to_string())
-            } else { None },
+            next_cursor: next_page(state),
         });
     }
     let data = state["data"]
@@ -574,7 +641,7 @@ fn finish_definitions(state: &Value) -> Result<GuestReply, Diagnostic> {
         let company = root["Company"].as_str().unwrap();
         let query = root["QueryID"].as_str().unwrap();
         let identity = Identity {
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             kind: if root["Updatable"] == true { "UBAQ" } else { "BAQ" }.into(),
             scope: if company.is_empty() {
                 Scope::Global
@@ -614,7 +681,7 @@ fn finish_definitions(state: &Value) -> Result<GuestReply, Diagnostic> {
             let bpm = if root["Updatable"] == true {
                 if !state["bpmError"].is_null() {
                     return Err(serde_json::from_value(state["bpmError"].clone())
-                        .map_err(|_| invalid("The update-method failure checkpoint is invalid."))?);
+                        .map_err(|_| invalid("The update-method failure saved progress is invalid."))?);
                 }
                 Some(crate::ubaq_rows::select(&state["bpm"], company, query)?)
             } else { None };
@@ -665,11 +732,7 @@ fn finish_definitions(state: &Value) -> Result<GuestReply, Diagnostic> {
     Ok(GuestReply::InventoryData {
         inventory: Box::new(GuestReply::Inventory {
             identities,
-            next_cursor: if state["more"] == true {
-                Some((state["page"].as_u64().unwrap() + 1).to_string())
-            } else {
-                None
-            },
+            next_cursor: next_page(state),
             authoritative: diagnostics.is_empty(),
             diagnostics,
         }),
@@ -705,7 +768,7 @@ mod tests {
         let mut request = request("directOnly");
         request.operation = "materialize".into();
         request.state = state;
-        let GuestReply::InventoryData { records, inventory } = crate::handle("C04", request) else { panic!() };
+        let GuestReply::InventoryData { records, inventory } = crate::handle("baqs-and-ubaqs", request) else { panic!() };
         assert_eq!(records.len(), 2);
         assert!(matches!(*inventory, GuestReply::Inventory { authoritative:true, .. }));
     }
@@ -723,7 +786,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C04".into(),
+            category: "baqs-and-ubaqs".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -758,7 +821,9 @@ mod tests {
 
     fn prefix_page(prefix: Value, data: Value, more: bool) -> GuestRequest {
         let mut r = request("directOnly");
-        r.state = json!({"phase":"rows","version":"5.2.100.0","page":1,
+        // As read_page records it: whether the prefix narrowed the root read.
+        let narrowed = prefix.as_str().and_then(like_stem).is_some();
+        r.state = json!({"phase":"rows","version":"5.2.100.0","page":1,"narrowed":narrowed,
             "_pluginSettings":{"queriesPerPage":2,"queryIdPrefix":prefix}});
         r.response = Some(json!({"returnObj":data,"parameters":{"morePages":more}}));
         r
@@ -805,18 +870,35 @@ mod tests {
     }
 
     #[test]
-    fn prefix_rejects_invalid_settings_and_validates_unselected_raw_rows() {
+    fn prefix_rejects_invalid_settings_and_validates_only_selected_raw_rows() {
         for value in [Value::Null, json!(false), json!(1), json!([]), json!({})] {
             assert!(matches!(handle(prefix_page(value, data(), false)), GuestReply::Failure {diagnostic} if diagnostic.code=="INVALID_SETTING"));
         }
         let mut cases = Vec::new();
-        let mut value = data();value["DynamicQueryDesigner"][1]["Company"] = json!("Foreign");cases.push(value);
+        let mut value = data();value["DynamicQueryDesigner"][0]["Company"] = json!("Foreign");cases.push(value);
+        let mut value = data();value["DynamicQueryDesigner"][0]["Updatable"] = json!("no");cases.push(value);
+        let mut value = data();value["DynamicQueryDesigner"][1]["QueryID"] = Value::Null;cases.push(value);
         let mut value = data();value["QueryFieldDesigner"][1]["QueryID"] = json!("orphan");cases.push(value);
         let mut value = data();value.as_object_mut().unwrap().remove("QueryFieldDesigner");cases.push(value);
         let mut value = data();value["FutureTable"] = json!({});cases.push(value);
-        let mut value = data();let duplicate = value["DynamicQueryDesigner"][1].clone();value["DynamicQueryDesigner"].as_array_mut().unwrap().push(duplicate);cases.push(value);
+        let mut value = data();let duplicate = value["DynamicQueryDesigner"][0].clone();value["DynamicQueryDesigner"].as_array_mut().unwrap().push(duplicate);cases.push(value);
+        // An unselected case variant would merge its children into the selected query.
+        let mut value = data();value["DynamicQueryDesigner"][1]["QueryID"] = json!("FIRST");value["QueryFieldDesigner"][1]["QueryID"] = json!("FIRST");cases.push(value);
         for value in cases {
             assert!(matches!(handle(prefix_page(json!("First"), value, false)), GuestReply::Failure {diagnostic} if diagnostic.code=="BAQ_PAGE_INVALID"));
+        }
+        // Unselected roots are no longer validated and produce no failure or diagnostic.
+        let mut accepted = Vec::new();
+        let mut value = data();value["DynamicQueryDesigner"][1]["Company"] = json!("Foreign");value["QueryFieldDesigner"][1]["Company"] = json!("Foreign");accepted.push(value);
+        for (field, bad) in [("SystemFlag", json!(true)), ("Updatable", Value::Null), ("SysRowID", json!(""))] {
+            let mut value = data();value["DynamicQueryDesigner"][1][field] = bad;accepted.push(value);
+        }
+        let mut value = data();let duplicate = value["DynamicQueryDesigner"][1].clone();value["DynamicQueryDesigner"].as_array_mut().unwrap().push(duplicate);accepted.push(value);
+        for value in accepted {
+            let GuestReply::Action {action:HostAction::Query {query}, state} = handle(prefix_page(json!("First"), value.clone(), false)) else {panic!("{value}")};
+            assert_eq!(query.parameters["SelectedQueries"], json!(["one"]));
+            assert_eq!(state["data"]["DynamicQueryDesigner"], json!([data()["DynamicQueryDesigner"][0]]));
+            assert_eq!(state["data"]["QueryFieldDesigner"].as_array().unwrap().len(), 1);
         }
         let mut r = prefix_page(json!("First"), data(), false);r.operation = "acquire".into();
         assert!(matches!(handle(r), GuestReply::Failure {..}), "Prefix does not add unsupported exact acquisition");
@@ -837,7 +919,7 @@ mod tests {
                     r.operation = "materialize".into();r.state = state;r.response = None;
                     let GuestReply::InventoryData {records, inventory} = handle(r) else {panic!()};
                     assert!(records.is_empty());
-                    assert!(matches!(*inventory, GuestReply::Inventory {next_cursor:Some(ref cursor), authoritative:true, ..} if cursor=="2"));
+                    assert!(matches!(*inventory, GuestReply::Inventory {next_cursor:Some(ref cursor), authoritative:true, ..} if cursor=="2:narrowed"));
                     (next_state, next_cursor)
                 }
                 GuestReply::InventoryData {records, inventory} => {
@@ -848,12 +930,12 @@ mod tests {
                 }
                 _ => panic!("Empty selection must not request diagrams, extensions or compiled context"),
             };
-            assert_eq!(next_cursor.as_deref(), Some("2"));
+            assert_eq!(next_cursor.as_deref(), Some("2:narrowed"));
             let mut r = request("directOnly");r.cursor = next_cursor;r.state = next_state;
             r.state["_pluginSettings"] = json!({"queriesPerPage":2,"queryIdPrefix":"Second"});
             let GuestReply::Action {action:HostAction::NativeRead {arguments, ..}, mut state} = handle(r.clone()) else {panic!()};
             assert_eq!(arguments["absolutePage"], 2);
-            assert_eq!(arguments["whereClauseDynamicQueryDesigner"], "(Company = 'C' OR Company = '') AND SystemFlag = false");
+            assert_eq!(arguments["whereClauseDynamicQueryDesigner"], "(Company = 'C' OR Company = '') AND SystemFlag = false AND QueryID LIKE 'Second%'");
             state["_pluginSettings"] = r.state["_pluginSettings"].clone();r.state = state;
             r.response = Some(json!({"returnObj":data(),"parameters":{"morePages":false}}));
             let GuestReply::Action {action:HostAction::Query {query}, state} = handle(r) else {panic!()};
@@ -861,6 +943,57 @@ mod tests {
             assert_eq!(state["data"]["DynamicQueryDesigner"][0]["QueryID"], "Second");
             assert_eq!(state["data"]["QueryFieldDesigner"].as_array().unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    fn a_page_position_saved_before_the_pushdown_restarts_narrowed_discovery() {
+        let read = |cursor: &str, prefix: &str| {
+            let mut r = request("directOnly");r.cursor = Some(cursor.into());
+            r.state = json!({"phase":"nextPage","version":"5.2.100.0","_pluginSettings":{"queriesPerPage":2,"queryIdPrefix":prefix}});
+            handle(r)
+        };
+        let page = |reply: GuestReply| {
+            let GuestReply::Action {action:HostAction::NativeRead {arguments, ..}, state} = reply else {panic!("{reply:?}")};
+            (arguments["absolutePage"].as_u64().unwrap(), state["narrowed"].clone())
+        };
+        // An old-build position counts pages of the unfiltered list: restart, never skip.
+        assert_eq!(page(read("3", "Second")), (1, json!(true)));
+        assert_eq!(page(read("3:narrowed", "Second")), (3, json!(true)));
+        // Without a stem nothing was narrowed, so old positions stay valid.
+        for prefix in ["", "%x", "Ω"] {assert_eq!(page(read("3", prefix)), (3, json!(false)), "{prefix:?}");}
+        assert!(matches!(read("3:narrowed", ""), GuestReply::Failure {..}));
+        assert!(matches!(read("x", "Second"), GuestReply::Failure {..}));
+        assert!(matches!(read("x:narrowed", "Second"), GuestReply::Failure {..}));
+        // The next position carries the marker of the read that produced it.
+        let state = json!({"more":true,"page":4,"narrowed":true});
+        assert_eq!(next_page(&state).as_deref(), Some("5:narrowed"));
+        assert_eq!(next_page(&json!({"more":true,"page":4})).as_deref(), Some("5"));
+        assert_eq!(next_page(&json!({"more":false,"page":4,"narrowed":true})), None);
+    }
+    #[test]
+    fn prefix_pushes_a_like_stem_superset_onto_the_root_read_only() {
+        let base = "(Company = 'C' OR Company = '') AND SystemFlag = false";
+        let read = |phase: &str, prefix: &str| {
+            let mut r = request("directOnly");
+            r.state = json!({"phase":phase,"version":"5.2.100.0","_pluginSettings":{"queriesPerPage":2,"queryIdPrefix":prefix}});
+            r.response = Some(json!({"returnObj":{"_Major":5,"_Minor":2,"_Build":100,"_Revision":0}}));
+            let GuestReply::Action {action:HostAction::NativeRead {arguments, ..}, ..} = handle(r) else {panic!("{phase} {prefix:?}")};
+            for table in TABLES.iter().filter(|table| **table != "DynamicQueryDesigner") {
+                assert_eq!(arguments[format!("whereClause{table}")], "", "Child clauses stay blank");
+            }
+            arguments["whereClauseDynamicQueryDesigner"].as_str().unwrap().to_owned()
+        };
+        for phase in ["nextPage", "version"] {
+            assert_eq!(read(phase, "Ab'c"), format!("{base} AND QueryID LIKE 'Ab''c%'"));
+            assert_eq!(read(phase, "Q_1"), format!("{base} AND QueryID LIKE 'Q%'"));
+            // Non-ASCII ends the stem; a stem of only a space still narrows.
+            assert_eq!(read(phase, " Ω["), format!("{base} AND QueryID LIKE ' %'"));
+            for prefix in ["", "%x", "_", "[a", "]", "Ωé"] {assert_eq!(read(phase, prefix), base, "{prefix:?}");}
+        }
+        // A missing frozen setting adds nothing.
+        let mut r = request("directOnly");r.state = json!({"phase":"nextPage","version":"5.2.100.0"});
+        let GuestReply::Action {action:HostAction::NativeRead {arguments, ..}, ..} = handle(r) else {panic!()};
+        assert_eq!(arguments["whereClauseDynamicQueryDesigner"], base);
     }
 
     fn package_members(record: &Value) -> BTreeMap<String, Vec<u8>> {
@@ -978,7 +1111,7 @@ mod tests {
             let GuestReply::Action {
                 action: HostAction::SharedNativeRead { method, .. },
                 state,
-            } = crate::handle("C04", request.clone())
+            } = crate::handle("baqs-and-ubaqs", request.clone())
             else {
                 panic!()
             };
@@ -997,7 +1130,7 @@ mod tests {
                         ..
                     },
                 state,
-            } = crate::handle("C04", request.clone())
+            } = crate::handle("baqs-and-ubaqs", request.clone())
             else {
                 panic!()
             };
@@ -1017,7 +1150,7 @@ mod tests {
             let GuestReply::Action {
                 action: HostAction::Query { query },
                 state,
-            } = crate::handle("C04", request.clone())
+            } = crate::handle("baqs-and-ubaqs", request.clone())
             else {
                 panic!()
             };
@@ -1034,13 +1167,13 @@ mod tests {
             let GuestReply::Action {
                 action: HostAction::Query { query },
                 state,
-            } = crate::handle("C04", request.clone())
+            } = crate::handle("baqs-and-ubaqs", request.clone())
             else {
                 panic!()
             };
             assert_eq!(query.parameters["AfterDiagram"], "diagram-two");
             respond(&mut request, state, json!({"rows":[]}));
-            let GuestReply::InventoryData { records, inventory } = crate::handle("C04", request)
+            let GuestReply::InventoryData { records, inventory } = crate::handle("baqs-and-ubaqs", request)
             else {
                 panic!()
             };
@@ -1202,6 +1335,37 @@ mod tests {
             assert_eq!(diagnostics[0].code,"BAQ_DEPENDENCY_UNRESOLVED");
             assert_eq!(diagnostics[0].identity.as_ref().unwrap().keys["QueryID"],"First");
         }
+    }
+
+    #[test]
+    fn extension_metadata_is_one_batched_read_and_a_missing_extension_is_named() {
+        let mut source = data();
+        source["QueryTableDesigner"] = json!([
+            {"Company":"C","QueryID":"First","TableType":"XT","DBSchemaName":"Ice","DBTableName":"First_XT"},
+            {"Company":"C","QueryID":"Second","TableType":"PT","DBSchemaName":"Ice","DBTableName":"Second_XT"}]);
+        let mut r = request("directOnly");
+        respond(&mut r, json!({"phase":"extensionTables","data":source,"diagrams":[],"version":"5.2.100.0","page":1,"more":false,"extensionMap":{},"extensionInfo":{}}),
+            json!({"returnObj":{"FullTableList":[
+                {"TableType":"XT","FullTableName":"Ice.First_XT","Description":"First\u{1}SetA"},
+                {"TableType":"PT","FullTableName":"Ice.Second_XT","Description":"Second\u{1}O'Set"}]}}));
+        let GuestReply::Action {action:HostAction::SharedNativeRead {method, ..}, state} = handle(r.clone()) else {panic!()};
+        assert_eq!(method, "GetCodeDescList");
+        respond(&mut r, state, json!({"returnObj":"1`Customization~2`Vertical"}));
+        let GuestReply::Action {action:HostAction::SharedNativeRead {service, method, arguments, ..}, state} = handle(r.clone()) else {panic!()};
+        assert_eq!((service.as_str(), method.as_str()), ("Ice.BO.ExtensionSvc", "GetRows"));
+        assert!(methods().contains(&(service, method)));
+        assert_eq!(arguments["whereClauseExtension"], "ExtensionSetID = 'O''Set' OR ExtensionSetID = 'SetA'");
+        let rows = [json!({"ExtensionSetID":"seta","Level":1,"Product":"P","Provider":"V","Version":"1"}),
+            json!({"ExtensionSetID":"O'Set","Level":2,"Product":"Q","Provider":null,"Version":"2"})];
+        let mut complete = r.clone();
+        respond(&mut complete, state.clone(), json!({"returnObj":{"Extension":rows},"parameters":{"morePages":false}}));
+        let GuestReply::Action {action:HostAction::Query {..}, state:done} = handle(complete) else {panic!("All metadata arrives in one read")};
+        assert_eq!(done["extensionInfo"]["SetA"], crate::baq_dependencies::info(&rows[0], "1`Customization~2`Vertical"));
+        assert_eq!(done["extensionInfo"]["O'Set"]["Level"], "Vertical");
+        respond(&mut r, state, json!({"returnObj":{"Extension":[rows[0]]},"parameters":{"morePages":false}}));
+        let GuestReply::Failure {diagnostic} = handle(r) else {panic!()};
+        assert_eq!(diagnostic.code, "BAQ_PAGE_INVALID");
+        assert!(diagnostic.message.contains("did not return extension O'Set"), "{}", diagnostic.message);
     }
 
 }

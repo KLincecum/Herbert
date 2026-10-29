@@ -156,7 +156,7 @@ pub(crate) fn write_shared_page(
                         Content::Native(source) => (|| {
                             snapshot.verify(&source)?;
                             let mut input = std::fs::File::open(snapshot.confined(&source.path)?)
-                                .map_err(|_| Diagnostic::new("RAW_UNAVAILABLE", "The native export file is unavailable."))?;
+                                .map_err(|_| Diagnostic::new("RAW_UNAVAILABLE", "Epicor's export file is unavailable."))?;
                             snapshot.write_derived_stream(&identity, &file.name, &mut input)
                         })(),
                     }
@@ -319,13 +319,13 @@ fn outputs(
     if let Some(declared) = record.definition.pointer("/herbertSources/nativeFiles") {
         for entry in declared
             .as_array()
-            .ok_or_else(|| Diagnostic::new("OUTPUT_INVALID", "Native files must be a list."))?
+            .ok_or_else(|| Diagnostic::new("OUTPUT_INVALID", "Epicor files must be a list."))?
         {
             let file: FileRef = serde_json::from_value(entry["file"].clone()).map_err(|_| {
-                Diagnostic::new("OUTPUT_INVALID", "The native file reference is invalid.")
+                Diagnostic::new("OUTPUT_INVALID", "The Epicor file reference is invalid.")
             })?;
             let name = entry["name"].as_str().ok_or_else(|| {
-                Diagnostic::new("OUTPUT_INVALID", "The native filename is missing.")
+                Diagnostic::new("OUTPUT_INVALID", "The Epicor filename is missing.")
             })?;
             crate::storage::safe_relative(name)?;
             declared_native.insert((file.path.clone(),file.sha256.clone()));

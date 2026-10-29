@@ -153,7 +153,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             };
             let size = request.page_size.unwrap_or(4000);
             if size == 0 || size > i32::MAX as u32 {
-                return failure("Tenant company page size must fit a positive native Int32.");
+                return failure("Page size must be a whole number from 1 to 2147483647.");
             }
             if rows.len() > size as usize {
                 return failure("The tenant company response exceeded its requested page size.");
@@ -164,10 +164,10 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 .unwrap_or_default();
             let Some(mut seen) = companies.iter().map(|value| value.as_str()
                 .filter(|id| !id.is_empty()).map(str::to_owned)).collect::<Option<BTreeSet<_>>>() else {
-                return failure("The tenant company checkpoint has an invalid identity.");
+                return failure("The tenant company saved progress has an invalid identity.");
             };
             if seen.len() != companies.len() {
-                return failure("The tenant company checkpoint repeats an identity.");
+                return failure("The tenant company saved progress repeats an identity.");
             }
             for row in rows {
                 let Some(id) = row["Company"].as_str().filter(|id| !id.is_empty()) else {
@@ -250,7 +250,7 @@ fn company_action(request: GuestRequest) -> GuestReply {
 fn query(request: &GuestRequest, companies: bool) -> Result<Value, String> {
     let size = request.page_size.unwrap_or(4000);
     if size == 0 || size > i32::MAX as u32 {
-        return Err("Menu page size must fit a positive native Int32.".into());
+        return Err("Page size must be a whole number from 1 to 2147483647.".into());
     }
     let table = if companies { "SysCompany" } else { "Menu" };
     let row = |extra: Value| {
@@ -345,7 +345,7 @@ fn query(request: &GuestRequest, companies: bool) -> Result<Value, String> {
             add("SysRowID", ">", literal(after), "And", "", "");
         }
         if let Some(id) = &request.identity {
-            if id.category != "C15" || id.kind != "PersistedMenu" || id.keys.len() != 2 {
+            if id.category != "menus-and-launch-definitions" || id.kind != "PersistedMenu" || id.keys.len() != 2 {
                 return Err("Select an exact menu identity.".into());
             }
             for field in ["Company", "MenuID"] {
@@ -368,7 +368,7 @@ fn query(request: &GuestRequest, companies: bool) -> Result<Value, String> {
 
 fn identity(company: &str, kind: &str, keys: BTreeMap<String, String>) -> Identity {
     Identity {
-        category: "C15".into(),
+        category: "menus-and-launch-definitions".into(),
         kind: kind.into(),
         scope: if company.is_empty() {
             Scope::Global
@@ -407,6 +407,9 @@ fn menu_identity(row: &Value, selected: &str) -> Result<Identity, String> {
 fn dependency_closure(graph: &[Value], company: &str, prefix: &str) -> (Vec<Value>,Vec<Value>,Vec<Value>) {
     let roots: BTreeSet<_>=graph.iter().enumerate().filter(|(_,row)|row["MenuID"].as_str().unwrap().starts_with(prefix)).map(|(index,_)|index).collect();
     let mut included=roots.clone();let mut dependencies=BTreeSet::new();
+    // Rows by MenuID in graph order, built once instead of scanning the graph per ancestor step.
+    let mut by_id:BTreeMap<&str,Vec<usize>>=BTreeMap::new();
+    for (index,row) in graph.iter().enumerate() {if let Some(id)=row["MenuID"].as_str() {by_id.entry(id).or_default().push(index);}}
     for root in &roots {
         let mut node=*root;let mut path=BTreeSet::new();
         loop {
@@ -416,7 +419,7 @@ fn dependency_closure(graph: &[Value], company: &str, prefix: &str) -> (Vec<Valu
             // selected root. Body retrieval is decided separately below.
             if node!=*root {dependencies.insert(node);}
             let parent=graph[node]["ParentMenuID"].as_str().unwrap();if parent.is_empty() {break;}
-            let mut candidates:Vec<_>=graph.iter().enumerate().filter(|(_,row)|row["MenuID"]==parent).map(|(index,_)|index).collect();
+            let mut candidates=by_id.get(parent).cloned().unwrap_or_default();
             let current=candidates.iter().any(|index|graph[*index]["Company"]==company);
             candidates.retain(|index|!current || graph[*index]["Company"]!="");
             included.extend(candidates.iter().copied());
@@ -471,12 +474,12 @@ fn receive_dependencies(mut request: GuestRequest) -> GuestReply {
     }
     let result=&request.response.as_ref().unwrap_or(&Value::Null)["returnObj"];
     let Some(rows)=result["Results"].as_array().filter(|_|!result["Errors"].as_array().is_some_and(|errors|!errors.is_empty())) else {
-        request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","The required ancestor read did not return a valid native page.")));return finish_dependencies(request);
+        request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","The required ancestor read did not return a valid Epicor page.")));return finish_dependencies(request);
     };
     let size=request.page_size.unwrap_or(4000) as usize;
-    if rows.len()>size {request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","The ancestor page exceeded its native requested page size.")));return finish_dependencies(request);}
+    if rows.len()>size {request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","The ancestor page exceeded its Epicor requested page size.")));return finish_dependencies(request);}
     for row in rows {
-        let identity=match menu_identity(row,&request.company) {Ok(id)=>id,Err(_)=>{request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","An ancestor body has an incomplete native identity.")));continue;}};
+        let identity=match menu_identity(row,&request.company) {Ok(id)=>id,Err(_)=>{request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","An ancestor body has an incomplete Epicor ID.")));continue;}};
         let witness=request.state["requiredDependencies"].as_array().unwrap().iter().find(|witness|row_key(witness)==row_key(row));
         let issue=if !scoped_row(row,&request) {Some(("MENU_ANCESTOR_UNAUTHORIZED","An ancestor body is outside the authorized company/tenant scope."))}
             else if witness.is_none() {Some(("MENU_ANCESTOR_UNEXPECTED","The ancestor read returned an unrequested physical menu."))}
@@ -490,7 +493,7 @@ fn receive_dependencies(mut request: GuestRequest) -> GuestReply {
     if rows.len()==size {
         let after=rows.last().and_then(|row|row["SysRowID"].as_str()).filter(|value|guid(value));
         if after.is_none() || request.state["dependencyAfter"].as_str()==after {
-            request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","The ancestor page did not advance a valid native cursor.")));return finish_dependencies(request);
+            request.state["dependencyErrors"].as_array_mut().unwrap().push(json!(Diagnostic::new("MENU_ANCESTOR_READ_INVALID","The ancestor page did not advance a valid Epicor saved position.")));return finish_dependencies(request);
         }
         request.state["dependencyAfter"]=json!(after);return dependency_action(request);
     }
@@ -532,7 +535,7 @@ fn receive(mut request: GuestRequest) -> GuestReply {
             return failure("A menu omitted its parent, system flag or visibility.");
         }
         if !row["SysRowID"].as_str().is_some_and(guid) || !valid_revision(&row["SysRevID"]) {
-            return failure("A menu omitted its exact native row ID or lossless revision witness.");
+            return failure("A menu omitted its exact Epicor row ID or lossless revision check.");
         }
         let owner = row["Company"].as_str().unwrap();
         let visible = owner == request.company
@@ -547,7 +550,12 @@ fn receive(mut request: GuestRequest) -> GuestReply {
                 "The query returned a menu outside the selected company and tenant scope.",
             );
         }
-        let errors=source_errors(row,&request.company);let validated=errors.is_empty();page_errors.extend(errors);
+        // Every row must reach the ancestor graph (a selected menu's parents need not
+        // match the prefix), so the prefix is not sent to the server. Only selected
+        // rows are validated here; required ancestors are validated when their
+        // bodies are read. Unselected rows produce no diagnostics.
+        let selected=request.operation=="acquire" || prefix(&request).map_or(true,|value|row["MenuID"].as_str().unwrap().starts_with(&value));
+        let validated=if selected {let errors=source_errors(row,&request.company);let valid=errors.is_empty();page_errors.extend(errors);valid}else{false};
         graph.push(json!({"Company":owner,"MenuID":row["MenuID"],"ParentMenuID":row["ParentMenuID"],"SystemFlag":row["SystemFlag"],"CompanyVisibility":row["CompanyVisibility"],"SysRowID":row["SysRowID"],"SysRevID":row["SysRevID"],"bodyValidated":validated}));
     }
     let next = if rows.len() == request.page_size.unwrap_or(4000) as usize {
@@ -771,7 +779,7 @@ fn append(definition: &mut Value, name: &str) -> Result<(), Diagnostic> {
                 _ => {
                     return Err(Diagnostic::new(
                         "MENU_XML_INVALID",
-                        &format!("Menu.{field} does not match its native {kind} type."),
+                        &format!("Menu.{field} does not match its Epicor {kind} type."),
                     ));
                 }
             };
@@ -893,7 +901,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C15".into(),
+            category: "menus-and-launch-definitions".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -935,6 +943,20 @@ mod tests {
         (output,diagnostics,calls)
     }
     fn restore_index(records: &[(Identity,Value)]) -> &Value {&records.iter().find(|(id,_)|id.kind=="MenuRestoreIndex").unwrap().1}
+    #[test]
+    fn unselected_rows_are_neither_validated_nor_diagnosed_and_the_query_keeps_every_row() {
+        // "Other" has an unknown visibility; it is outside the prefix, so it is silent.
+        let rows=vec![fixture("C","SelectedA","",false,0,1),fixture("C","Other","",false,7,2)];
+        let (records,errors,_)=selected_run(rows.clone(),rows.clone(),"Selected",2);
+        assert!(errors.is_empty(),"{errors:?}");
+        assert_eq!(records.iter().filter(|(id,_)|id.kind=="PersistedMenu").count(),1);
+        let (_,errors,_)=selected_run(rows.clone(),rows,"",2);
+        assert!(errors.iter().any(|error|error.code=="MENU_VISIBILITY_UNKNOWN"));
+        // The ancestor graph needs rows that do not match, so no server prefix filter.
+        let mut r=request();r.state["_pluginSettings"]=json!({"menuIdPrefix":"Selected"});
+        let text=query(&r,false).unwrap().to_string();
+        assert!(!text.contains("Selected") && !text.to_uppercase().contains("LIKE"));
+    }
     #[test]
     fn prefix_keeps_required_earlier_later_multilevel_ancestor_xml_and_deduplicates_roles() {
         let rows=vec![fixture("C","Parent","System",false,0,1),fixture("","System","",true,10,2),fixture("C","SelectedA","Parent",false,0,3),fixture("C","SelectedB","Grand",false,0,4),fixture("Peer","Grand","Parent",false,10,5),fixture("C","Other","",false,0,6)];
@@ -982,9 +1004,10 @@ mod tests {
         }
     }
     #[test]
-    fn menu_selection_validates_all_rows_before_filtering_and_freezes_scope_states() {
+    fn menu_selection_skips_unselected_rows_and_freezes_scope_states() {
+        // Unselected rows are not validated and produce no diagnostics.
         let mut bad=fixture("C","Other","",false,0,1);bad["MenuDesc"]=json!("PRIVATE_EXCLUDED_PAYLOAD\u{1}");let good=fixture("C","Selected","",false,0,2);
-        let (records,errors,_)=selected_run(vec![bad,good.clone()],vec![],"Selected",1);assert!(records.iter().any(|(id,_)|id.keys.get("MenuID").map(String::as_str)==Some("Selected")));assert!(!errors.is_empty());assert!(!serde_json::to_string(&records).unwrap().contains("PRIVATE_EXCLUDED_PAYLOAD"));
+        let (records,errors,_)=selected_run(vec![bad,good.clone()],vec![],"Selected",1);assert!(records.iter().any(|(id,_)|id.keys.get("MenuID").map(String::as_str)==Some("Selected")));assert!(errors.is_empty(),"{errors:?}");assert!(!serde_json::to_string(&records).unwrap().contains("PRIVATE_EXCLUDED_PAYLOAD"));
         let mut initial=request();initial.state=json!({"_pluginSettings":{"menuIdPrefix":"Selected"}});initial.response=None;let GuestReply::Action {state,..}=handle(initial.clone())else{panic!()};assert_eq!(state["_pluginSettings"]["menuIdPrefix"],"Selected");initial.state=state;initial.response=Some(json!({"parameters":{"companyID":"C","tenantID":""}}));let GuestReply::Action {state,..}=handle(initial)else{panic!()};assert_eq!(state["_pluginSettings"]["menuIdPrefix"],"Selected");
         for value in [Value::Null,json!(false),json!(2),json!([])] {let mut invalid=request();invalid.state["_pluginSettings"]=json!({"menuIdPrefix":value});assert!(matches!(handle(invalid),GuestReply::Failure {diagnostic} if diagnostic.code=="INVALID_SETTING"));}
     }

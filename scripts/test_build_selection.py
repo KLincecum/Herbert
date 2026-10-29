@@ -18,35 +18,35 @@ import os
 class StandardPackageTests(unittest.TestCase):
     def test_only_rewritten_collectors_ship(self):
         expected = {
-            "C01",
-            "C02",
-            "C03",
-            "C04",
-            "C06",
-            "C08",
-            "C09",
-            "C10",
-            "C11",
-            "C12",
-            "C13",
-            "C14",
-            "C15",
-            "C16",
-            "C17",
-            "C18",
-            "C19",
-            "C20",
-            "C21",
-            "C22",
-            "C24",
-            "C25",
-            "C26",
-            "C27",
+            "ud-codes",
+            "ud-schema",
+            "extended-properties",
+            "baqs-and-ubaqs",
+            "bpm-directives",
+            "functions",
+            "classic-customizations",
+            "classic-personalizations",
+            "classic-dashboards",
+            "kinetic-applications-and-layers",
+            "kinetic-personalizations",
+            "searches-and-navigation",
+            "menus-and-launch-definitions",
+            "report-definitions",
+            "report-styles-and-layouts",
+            "report-behavior",
+            "configurators",
+            "business-rules-and-mappings",
+            "custom-resources",
+            "programs-and-extensions",
+            "solutions-and-packages",
+            "automation-and-integrations",
+            "access-and-assignments",
+            "configuration-references",
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             names = [category.lower() + ".rs" for category in expected] + [
-                "c05.rs",
+                "ubaqs.rs",
                 "c99.rs",
             ]
             for name in names:
@@ -55,16 +55,62 @@ class StandardPackageTests(unittest.TestCase):
                 {category for _, category in build.standard_plugins(root)}, expected
             )
             self.assertEqual(len(list(root.glob("*.rs"))), len(names))
-            (root / "c04.rs").unlink()
-            with self.assertRaisesRegex(RuntimeError, "c04"):
+            (root / "baqs-and-ubaqs.rs").unlink()
+            with self.assertRaisesRegex(RuntimeError, "baqs-and-ubaqs"):
                 build.standard_plugins(root)
 
     def test_standard_compiled_features_are_always_selected(self):
-        self.assertEqual(build.standard_plugin_features("C04"), ["--features", "ubaq-compiled"])
-        self.assertEqual(build.standard_plugin_features("C06"), ["--features", "ordinary-bpm-compiled"])
-        self.assertEqual(build.standard_plugin_features("C08"), ["--features", "function-compiled"])
-        for category in set(build.RELEASE_CATEGORIES) - {"C04", "C06", "C08"}:
-            self.assertEqual(build.standard_plugin_features(category), [])
+        self.assertEqual(build.standard_plugin_features("baqs-and-ubaqs"), ["--features", "plugin-baqs-and-ubaqs,ubaq-compiled"])
+        self.assertEqual(build.standard_plugin_features("bpm-directives"), ["--features", "plugin-bpm-directives,ordinary-bpm-compiled"])
+        self.assertEqual(build.standard_plugin_features("functions"), ["--features", "plugin-functions,function-compiled"])
+        for category in set(build.RELEASE_CATEGORIES) - {"baqs-and-ubaqs", "bpm-directives", "functions"}:
+            self.assertEqual(build.standard_plugin_features(category), ["--features", f"plugin-{category}"])
+
+    def test_every_release_plugin_has_its_own_cargo_feature(self):
+        # A missing feature would fail the build; a shared one would make plugins rebuild each other.
+        manifest = (build.ROOT / "crates/herbert-plugins/Cargo.toml").read_text(encoding="utf-8")
+        declared = set(re.findall(r"^(plugin-[a-z0-9-]+) = \[\]$", manifest, re.MULTILINE))
+        self.assertEqual(declared, {f"plugin-{category}" for category in build.RELEASE_CATEGORIES})
+
+    def test_precompile_cache_reuses_unchanged_guests_and_keeps_only_used_entries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            cache = root / "cache"
+            compiled = []
+
+            def host(command, cwd, **_):
+                if command[2:] == ["--engine"]:
+                    return build.subprocess.CompletedProcess(command, 0, "engine-1\n", "")
+                compiled.append(pathlib.Path(command[2]).name)
+                pathlib.Path(command[3]).write_bytes(b"native " + pathlib.Path(command[2]).read_bytes())
+                return build.subprocess.CompletedProcess(command, 0, "", "")
+
+            def package(name, guests):
+                output = root / name
+                files = []
+                for folder, body in guests.items():
+                    relative = f"plugins/{folder}/{folder}.wasm"
+                    (output / relative).parent.mkdir(parents=True)
+                    (output / relative).write_bytes(body)
+                    files.append(build.file_record(output / relative, output))
+                with patch.object(build.subprocess, "run", side_effect=host), patch("sys.stdout", new_callable=io.StringIO) as printed:
+                    build.precompile_guests(pathlib.Path("herbert.exe"), output, files, cache)
+                return output, printed.getvalue()
+
+            first, report = package("first", {"A": b"a1", "B": b"b1"})
+            self.assertEqual(sorted(compiled), ["A.wasm", "B.wasm"])
+            self.assertIn("0 reused, 2 compiled", report)
+            compiled.clear()
+            second, report = package("second", {"A": b"a1", "B": b"b2"})  # only B changed
+            self.assertEqual(compiled, ["B.wasm"])
+            self.assertIn("1 reused, 1 compiled", report)
+            self.assertEqual((second / "plugins/A/A.cwasm").read_bytes(), (first / "plugins/A/A.cwasm").read_bytes())
+            self.assertEqual((second / "plugins/B/B.cwasm").read_bytes(), b"native b2")
+            # Only this build's two entries remain; the old B entry is gone.
+            self.assertEqual(len([p for p in cache.rglob("*") if p.is_file()]), 2)
+            compiled.clear()
+            package("third", {"A": b"a1", "B": b"b2"})
+            self.assertEqual(compiled, [], "a no-change build precompiles nothing")
 
     def test_missing_companion_stops_before_compilation(self):
         with patch("sys.argv", ["build.py"]), patch("sys.stderr", new_callable=io.StringIO), patch.object(build, "cargo_artifacts") as compile_call:
@@ -134,9 +180,9 @@ class StandardPackageTests(unittest.TestCase):
             self.assertEqual(len(compiler_calls), len(build.RELEASE_CATEGORIES) + 1)
             for binary, feature in {
                 "herbert": "function-compiled",
-                "c04": "ubaq-compiled",
-                "c06": "ordinary-bpm-compiled",
-                "c08": "function-compiled",
+                "baqs-and-ubaqs": "plugin-baqs-and-ubaqs,ubaq-compiled",
+                "bpm-directives": "plugin-bpm-directives,ordinary-bpm-compiled",
+                "functions": "plugin-functions,function-compiled",
             }.items():
                 args = by_binary[binary]
                 self.assertIn("--features", args)
@@ -152,8 +198,14 @@ class StandardPackageTests(unittest.TestCase):
             })
             records = {f["path"]: f for f in manifest["files"]}
             required = {
+                "AGENTS.md",
+                "mcp.claude-desktop.example.json",
+                "README.md",
+                "CHANGELOG.md",
                 "docs/app/technical-guide.json",
                 "docs/app/user-guide.json",
+                "docs/Herbert-Guide.md",
+                "docs/MCP-GUIDE.md",
                 "assets/branding/creator-avatar.png",
                 "assets/branding/herbert.ico",
                 "herbert.exe", "RUN-DIAGNOSTICS.md", "skills/herbert/SKILL.md",
@@ -179,12 +231,52 @@ class StandardPackageTests(unittest.TestCase):
             required.update("third-party/managed-decompiler/" + n for n in ("dependencies.json", "ENGINE.json"))
             self.assertTrue(required <= set(records), sorted(required - set(records)))
             self.assertEqual(len(records), len(manifest["files"]))
+            self.assertEqual(
+                {path for path in records if path.startswith("docs/")},
+                {"docs/app/technical-guide.json", "docs/app/user-guide.json", "docs/Herbert-Guide.md", "docs/MCP-GUIDE.md"},
+            )
+            self.assertNotIn(build_workspace.MARKER, records)
             for relative, record in records.items():
                 self.assertEqual(build.file_record(output / relative, output), record)
             self.assertEqual(
                 (output / "RUN-DIAGNOSTICS.md").read_bytes(),
                 (build.ROOT / "docs/RUN-DIAGNOSTICS.md").read_bytes(),
             )
+
+    def test_precompiled_guests_are_recorded_and_bound_to_their_wasm(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            files = []
+            for relative in ("plugins/BPM directives/BPM directives.wasm", "plugins/Functions/Functions.wasm", "plugins/Functions/artifacts/x.wasm"):
+                (output / relative).parent.mkdir(parents=True, exist_ok=True)
+                (output / relative).write_bytes(b"guest " + relative.encode())
+                files.append(build.file_record(output / relative, output))
+            calls = []
+
+            def host(command, cwd, **_):
+                calls.append((command[1:], cwd))
+                self.assertFalse(pathlib.Path(cwd).is_relative_to(output))
+                if command[2:] == ["--engine"]:
+                    return build.subprocess.CompletedProcess(command, 0, "engine-1\n", "")
+                pathlib.Path(command[3]).write_bytes(b"native " + pathlib.Path(command[2]).read_bytes())
+                return build.subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.object(build.subprocess, "run", side_effect=host):
+                bindings = build.precompile_guests(pathlib.Path("herbert.exe"), output, files)
+            self.assertEqual(bindings, {
+                "plugins/BPM directives/BPM directives.wasm": {"cwasm": "plugins/BPM directives/BPM directives.cwasm", "engine": "engine-1"},
+                "plugins/Functions/Functions.wasm": {"cwasm": "plugins/Functions/Functions.cwasm", "engine": "engine-1"},
+            })
+            self.assertEqual([c[0][0] for c in calls], ["precompile"] * 3)
+            records = {f["path"]: f for f in files}
+            for binding in bindings.values():
+                self.assertEqual(records[binding["cwasm"]], build.file_record(output / binding["cwasm"], output))
+
+    def test_cross_target_package_has_no_precompiled_guests(self):
+        # The standard composition test builds with --target; its manifest must omit the binding.
+        with patch.object(build, "precompile_guests") as precompile:
+            self.assert_standard_package(False)
+        precompile.assert_not_called()
 
     def test_managed_companion_requires_exact_rid_identity_and_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -234,13 +326,14 @@ class StandardPackageTests(unittest.TestCase):
         self.assertEqual(
             {destination.as_posix() for _, destination in selected},
             {
-                "docs/app/technical-guide.json",
-                "docs/app/user-guide.json",
                 "AGENTS.md",
                 "mcp.claude-desktop.example.json",
-                "README.md",
-                "skills/herbert/SKILL.md",
+                "docs/app/technical-guide.json",
+                "docs/app/user-guide.json",
                 "RUN-DIAGNOSTICS.md",
+                "skills/herbert/SKILL.md",
+                "README.md",
+                "CHANGELOG.md",
                 "docs/Herbert-Guide.md",
                 "docs/MCP-GUIDE.md",
             },

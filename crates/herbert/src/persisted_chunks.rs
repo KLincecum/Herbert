@@ -33,12 +33,12 @@ pub fn verify_text_length(row: &Value, field: &str, length_field: &str) -> Resul
                 Ok(())
             } else {
                 Err(error(
-                    "A persisted text field differs from its native DATALENGTH.",
+                    "A saved text field differs from its Epicor DATALENGTH.",
                 ))
             }
         }
         _ => Err(error(
-            "A persisted text field or native byte-length projection is absent.",
+            "A saved text field or Epicor byte-length projection is absent.",
         )),
     }
 }
@@ -74,14 +74,14 @@ fn reconstruct_impl(
         let sequence = row
             .get("SeqNum")
             .and_then(integer)
-            .ok_or_else(|| error("A persisted chunk lacks its numeric SeqNum."))?;
+            .ok_or_else(|| error("A saved chunk lacks its numeric SeqNum."))?;
         verify_text_length(row, "Chunk", length_field)?;
         let text = row
             .get("Chunk")
             .and_then(Value::as_str)
-            .ok_or_else(|| error("A persisted chunk payload is not text."))?;
+            .ok_or_else(|| error("A saved chunk payload is not text."))?;
         if ordered.insert(sequence, text).is_some() {
-            return Err(error("The persisted chunk stream repeats a SeqNum."));
+            return Err(error("The saved chunk stream repeats a SeqNum."));
         }
     }
     let joined: String = ordered.values().copied().collect();
@@ -99,17 +99,17 @@ fn reconstruct_impl(
         .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
         .collect();
     let compressed = base64::engine::general_purpose::STANDARD.decode(compact)
-        .map_err(|_| error("The persisted chunk stream is not valid base64; its original rows remain preserved."))?;
+        .map_err(|_| error("The saved chunk stream is not valid base64; its original rows remain preserved."))?;
     if !compressed.starts_with(b"BZh") {
         return Err(error(
-            "The persisted chunk encoding is unrecognized; its original bytes remain preserved.",
+            "The saved chunk encoding is unrecognized; its original bytes remain preserved.",
         ));
     }
     let mut decoded = Vec::new();
     bzip2::read::MultiBzDecoder::new(compressed.as_slice())
         .read_to_end(&mut decoded)
         .map_err(|_| {
-            error("The persisted bzip2 stream failed decoding or integrity verification.")
+            error("The saved bzip2 stream failed decoding or integrity verification.")
         })?;
     Ok(Some(Reconstruction {
         bytes: decoded,

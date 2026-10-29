@@ -3,7 +3,7 @@ use herbert_contract::{Diagnostic, NativeResponsePolicy, NativeRetentionRule, Na
 use serde_json::{Map, Value};
 
 fn invalid() -> Diagnostic {
-    Diagnostic::new("INVALID_RETENTION_RESPONSE", "The native response does not match the plugin's retention rule. The original response was not saved.")
+    Diagnostic::new("INVALID_RETENTION_RESPONSE", "The Epicor response does not match the plugin's retention rule. The original response was not saved.")
 }
 
 fn matches(predicate: &NativeRowPredicate, row: &Map<String, Value>) -> bool {

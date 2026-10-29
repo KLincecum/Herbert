@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn child_requests_scale_with_pages_not_parent_count() {
-        let spec = specs().into_iter().find(|s| s.category == "C09").unwrap();
+        let spec = specs().into_iter().find(|s| s.category == "classic-customizations").unwrap();
         let root = |key: &str, id: &str| json!({"Company":"C","ProductID":"EP","TypeCode":"Customization","Key1":key,"Key2":"Form","Key3":"","CGCCode":"","SysRowID":id,"SystemFlag":false});
         let roots = vec![root("A", "root1"), root("B", "root2")];
         let inventory = GuestReply::Inventory {
@@ -184,7 +184,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C09".into(),
+            category: "classic-customizations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -245,6 +245,82 @@ mod tests {
             "preserve bytes"
         );
     }
+    fn legacy_discovery_fixture(mode: &str, family: &str) -> (GuestReply, BTreeMap<String, usize>) {
+        let root = |like_id: &str, id: &str| json!({"LikeID":like_id,"ContextTypeCode":"OwnedType","Description":"DO NOT EMIT STOCK BODY","SystemFlag":true,"SysRowID":id});
+        let roots = vec![root("Owned.Stock","11111111-1111-1111-1111-111111111111"),root("Owned.PureStock","22222222-2222-2222-2222-222222222222")];
+        let mut request = GuestRequest { abi: PLUGIN_ABI, operation:"discover".into(), category:"searches-and-navigation".into(), company:"C".into(), identity:None,
+            cursor:Some(json!({"searchVersion":1,"stream":3,"cursor":null}).to_string()),page_size:Some(2),
+            state:json!({"_hostPreparePage":true,"_pluginSettings":{"definitionFamily":family,"searchIdPrefix":"Missing"}}),
+            response:Some(json!({"rows":roots})),error:None };
+        let mut reply=crate::search_pages::handle(request.clone());let mut calls=BTreeMap::new();
+        while let GuestReply::Action {action,state}=reply {
+            let query=match action {HostAction::Query {query}|HostAction::SharedQuery {query}=>query,_=>panic!("Expected a native page-bound child query")};
+            let table=query.tables.iter().find(|table|table.alias=="DefinitionSource").unwrap().table.clone();
+            assert_eq!(query.page_size,Some(2));assert_eq!(query.joins.len(),2);
+            assert!(query.joins.iter().all(|join|join.left_field==join.right_field&&["LikeID","ContextTypeCode"].contains(&join.left_field.as_str())));
+            assert!(!query.criteria.iter().any(|criterion|criterion.table=="BatchParent"&&criterion.field=="SystemFlag"));
+            let count=calls.entry(table.clone()).or_insert(0);*count+=1;
+            request.state=state;request.state["_hostPreparePage"]=json!(true);request.error=None;
+            let rows=if table=="ContextMenuItem"&&*count==1&&mode=="custom" {
+                vec![json!({"LikeID":"Owned.Stock","ContextTypeCode":"OwnedType","ContextMenuID":"OwnedChild","ContextMenuText":"Ω authored & child","ProcessType":"BaseForm","SystemFlag":false,"SysRowID":"44444444-4444-4444-4444-444444444444"}),
+                     json!({"LikeID":"Owned.Stock","ContextTypeCode":"OwnedType","ContextMenuID":"StockChild","SystemFlag":true,"SysRowID":"55555555-5555-5555-5555-555555555555"})]
+            }else{vec![]};
+            request.response=Some(json!({"rows":rows}));
+            if table=="ContextMenuItem"&&*count==1&&mode=="failure" {request.response=None;request.error=Some(Diagnostic::new("OWNED_CHILD_READ_FAILED","Original child read failure"));}
+            reply=crate::search_pages::handle(request.clone());
+        }
+        assert_eq!(calls.keys().cloned().collect::<BTreeSet<_>>(),crate::search_archive::CONTEXT_CHILDREN.iter().map(|table|table.to_string()).collect());
+        let GuestReply::PreparedPage {state,next_cursor,..}=reply else{panic!("The full discovery and child batches must produce a prepared page")};
+        assert!(next_cursor.is_some(),"Full raw root page continuation must survive selection");
+        let mut materialize=request;materialize.operation="materialize".into();materialize.response=None;materialize.error=None;materialize.state=state;
+        (crate::search_pages::handle(materialize),calls)
+    }
+
+    #[test]
+    fn legacy_stock_parent_discovery_batches_finish_materialize_keep_only_custom_child_and_parent_keys() {
+        let (reply,calls)=legacy_discovery_fixture("custom","legacyContextMenu");
+        assert_eq!(calls["ContextMenuItem"],2,"A full child page must use its original continuation");
+        let GuestReply::InventoryData {records,inventory}=reply else{panic!()};assert_eq!(records.len(),1);
+        let (identity,definition)=&records[0];assert_eq!(identity.keys["LikeID"],"Owned.Stock");
+        assert_eq!(definition["ContextMenu"][0],json!({"LikeID":"Owned.Stock","ContextTypeCode":"OwnedType","BitFlag":0,"RowMod":""}));
+        assert_eq!(definition["ContextMenuItem"].as_array().unwrap().len(),1);assert_eq!(definition["ContextMenuItem"][0]["ContextMenuText"],"Ω authored & child");
+        assert!(definition["herbertParentContext"].is_string());assert!(definition["herbertSources"]["files"][0]["text"].as_str().unwrap().contains("Ω authored &amp; child"));
+        assert!(!serde_json::to_string(definition).unwrap().contains("DO NOT EMIT STOCK BODY"));assert!(!serde_json::to_string(definition).unwrap().contains("StockChild"));
+        let GuestReply::Inventory {identities,authoritative,diagnostics,next_cursor}=*inventory else{panic!()};assert_eq!(identities.len(),1);assert!(authoritative&&diagnostics.is_empty()&&next_cursor.is_some());
+    }
+
+    #[test]
+    fn legacy_pure_stock_graph_is_inspected_before_verified_empty_output() {
+        let (reply,calls)=legacy_discovery_fixture("pure","all");assert_eq!(calls.len(),crate::search_archive::CONTEXT_CHILDREN.len());
+        let GuestReply::InventoryData {records,inventory}=reply else{panic!()};assert!(records.is_empty());
+        let GuestReply::Inventory {identities,authoritative,diagnostics,next_cursor}=*inventory else{panic!()};assert!(identities.is_empty()&&authoritative&&diagnostics.is_empty()&&next_cursor.is_some());
+    }
+
+    #[test]
+    fn legacy_stock_parent_child_failure_is_identity_bound_when_selected_and_silent_when_not() {
+        // Selected: the child failure stays identity-bound and coverage incomplete.
+        let (reply,_)=legacy_discovery_fixture("failure","legacyContextMenu");
+        let GuestReply::InventoryData {inventory,..}=reply else{panic!()};
+        let GuestReply::Inventory {authoritative,diagnostics,next_cursor,..}=*inventory else{panic!()};assert!(!authoritative&&next_cursor.is_some());
+        assert_eq!(diagnostics.len(),2);assert!(diagnostics.iter().all(|error|error.code=="OWNED_CHILD_READ_FAILED"&&error.identity.as_ref().is_some_and(|identity|identity.kind=="PersistedContextMenu")));
+        // Unselected family: The prefix rule keeps excluded rows silent.
+        let (reply,_)=legacy_discovery_fixture("failure","quickSearch");
+        let GuestReply::InventoryData {records,inventory}=reply else{panic!()};assert!(records.is_empty());
+        let GuestReply::Inventory {identities,authoritative,diagnostics,next_cursor}=*inventory else{panic!()};
+        assert!(identities.is_empty()&&authoritative&&diagnostics.is_empty()&&next_cursor.is_some(),"{diagnostics:?}");
+    }
+
+    #[test]
+    fn legacy_root_exception_requires_exact_searches_and_navigation_native_full_graph_and_preserves_other_stock_exclusions() {
+        let stock=json!({"SystemFlag":true});let mut spec=specs().into_iter().find(|spec|spec.category=="searches-and-navigation"&&spec.table=="ContextMenu").unwrap();
+        assert!(!inventory_root_allowed(&spec,&stock),"A plain ContextMenu family without its child graph stays excluded");
+        spec.filters.clear();spec.children=crate::search_archive::CONTEXT_CHILDREN.iter().map(|table|Child {table:(*table).into(),links:["LikeID","ContextTypeCode"].into_iter().map(|key|(key.into(),key.into())).collect(),filters:BTreeMap::new()}).collect();
+        assert!(inventory_root_allowed(&spec,&stock));let complete=spec.clone();
+        spec.children.pop();assert!(!inventory_root_allowed(&spec,&stock));spec=complete.clone();spec.children[0].links.insert("LikeID".into(),"OtherKey".into());assert!(!inventory_root_allowed(&spec,&stock));
+        spec=complete.clone();spec.category="classic-customizations".into();assert!(!inventory_root_allowed(&spec,&stock));spec=complete.clone();spec.table="QuickSearch".into();assert!(!inventory_root_allowed(&spec,&stock));
+        spec=complete;spec.schema="Other".into();assert!(!inventory_root_allowed(&spec,&stock));assert!(inventory_root_allowed(&spec,&json!({"SystemFlag":false})),"Existing custom-root behavior stays unchanged");
+    }
+
 }
 
 pub(super) fn resume(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
@@ -252,7 +328,7 @@ pub(super) fn resume(spec: &TableFamily, mut request: GuestRequest) -> GuestRepl
     let Some(child) = spec.children.get(index) else {
         return fail(
             "INVALID_PLUGIN_STATE",
-            "The child batch checkpoint is invalid.",
+            "The child batch saved progress is invalid.",
         );
     };
     let mut more = false;
@@ -311,7 +387,7 @@ fn finish(spec: &TableFamily, request: GuestRequest) -> GuestReply {
     let roots = request.state["roots"].as_array().unwrap();
     let mut records: Vec<_> = roots
         .iter()
-        .filter(|row| !crate::system_artifacts::marked(row))
+        .filter(|row| inventory_root_allowed(spec, row))
         .filter_map(|row| {
             identity(spec, row, &request.company).ok().map(|id| {
                 (

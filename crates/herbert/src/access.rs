@@ -130,14 +130,14 @@ impl LockedRegistry {
         acquired.map_err(|_| {
             access_error(
                 "ACCESS_BUSY",
-                "Another Herbert process is reconciling temporary access for this caller.",
+                "Another Herbert process is reconciling temporary access for this Epicor user.",
             )
         })?;
         let registry = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<AccessRegistry>(&bytes).map_err(|_| {
                 access_error(
                     "ACCESS_STATE_INVALID",
-                    "Preserve the invalid registry; native membership writes are refused.",
+                    "Preserve the invalid registry; Epicor membership writes are refused.",
                 )
             })?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => AccessRegistry {
@@ -160,7 +160,7 @@ impl LockedRegistry {
         {
             return Err(access_error(
                 "ACCESS_SCOPE_MISMATCH",
-                "The registry does not match the fixed endpoint and caller.",
+                "The registry does not match the fixed endpoint and Epicor user.",
             ));
         }
         Ok(Self {
@@ -202,7 +202,7 @@ impl LockedRegistry {
         if lease.endpoint != self.registry.endpoint || lease.caller != self.registry.caller {
             return Err(access_error(
                 "ACCESS_SCOPE_MISMATCH",
-                "A lease belongs to a different endpoint or caller.",
+                "A lease belongs to a different endpoint or Epicor user.",
             ));
         }
         lease.holder = run_id.into();
@@ -319,7 +319,7 @@ impl LockedRegistry {
         if member.phase != MembershipPhase::GrantPending {
             return Err(access_error(
                 "ACCESS_PHASE_CONFLICT",
-                "Only a pending grant can receive native commit confirmation.",
+                "Only a pending grant can receive Epicor commit confirmation.",
             ));
         }
         member.phase = MembershipPhase::Active;
@@ -343,7 +343,7 @@ impl LockedRegistry {
         if member.phase != MembershipPhase::Active {
             return Err(access_error(
                 "ACCESS_RECONCILIATION_REQUIRED",
-                "Resolve the interrupted intent before issuing another native write.",
+                "Resolve the interrupted intent before issuing another change in Epicor.",
             ));
         }
         if !member.holders.remove(run_id) {
@@ -391,7 +391,7 @@ impl LockedRegistry {
         if member.phase != MembershipPhase::CleanupPending {
             return Err(access_error(
                 "ACCESS_PHASE_CONFLICT",
-                "Only a pending cleanup can receive native readback confirmation.",
+                "Only a pending cleanup can receive Epicor readback confirmation.",
             ));
         }
         member.phase = MembershipPhase::Released;
@@ -421,12 +421,14 @@ pub struct AccessLease {
     pub existed_before: bool,
     pub membership_added: bool,
     pub diagnostics: Vec<Diagnostic>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub(crate) authorization: Option<crate::server_changes::AuthorizationRef>,
 }
 pub fn append_owned_group(current: &str, group: &str) -> Result<(String, bool), Diagnostic> {
     if group.is_empty() || group.contains('~') {
         return Err(Diagnostic::new(
             "INVALID_NATIVE_GROUP",
-            "The group must be one exact identity representable by the native tilde-delimited GroupList contract.",
+            "The group must be one exact identity representable by the Epicor tilde-delimited GroupList contract.",
         ));
     }
     if current.split('~').any(|item| item == group) {
@@ -468,7 +470,7 @@ mod tests {
             caller: "User".into(),
             holder: String::new(),
             artifact: Identity {
-                category: "C08".into(),
+                category: "functions".into(),
                 kind: "EfxLibrary".into(),
                 scope: herbert_contract::Scope::Global,
                 keys: BTreeMap::from([("LibraryID".into(), "L".into())]),
@@ -479,6 +481,7 @@ mod tests {
             existed_before: false,
             membership_added: false,
             diagnostics: vec![],
+            authorization: None,
         }
     }
     #[test]

@@ -43,6 +43,17 @@ mod ubaq_rows;
 mod baq_dependencies;
 mod xml_dataset;
 use catalog::CATALOG;
+/// Plugins that a fresh install or profile leaves unselected. Every other
+/// plugin starts selected. A saved choice in the plugin's state always wins over this default.
+const OFF_BY_DEFAULT: [&str; 7] = [
+    "classic-customizations",
+    "classic-dashboards",
+    "classic-personalizations",
+    "configurators",
+    "kinetic-personalizations",
+    "programs-and-extensions",
+    "solutions-and-packages",
+];
 include!(concat!(env!("OUT_DIR"), "/selected_kinds.rs"));
 #[inline(always)]
 pub(crate) fn category_enabled(category: &str) -> bool {
@@ -112,20 +123,20 @@ fn handle_request(category: &str, mut request: GuestRequest) -> GuestReply {
     {
         return failure(
             "PLUGIN_INCOMPATIBLE",
-            "The guest ABI or category does not match this plugin.",
+            "This plugin file was built for a different Herbert version or a different category. Reinstall it from this Herbert release.",
         );
     }
     #[cfg(feature="function-compiled")]
-    if category=="C08" && request.state["_pluginSettings"].is_object(){crate::function_compiled::normalize(&mut request.state["_pluginSettings"]);}
+    if category=="functions" && request.state["_pluginSettings"].is_object(){crate::function_compiled::normalize(&mut request.state["_pluginSettings"]);}
     #[cfg(feature="ordinary-bpm-compiled")]
-    if category=="C06"&&request.state["_pluginSettings"].is_object(){crate::bpm_compiled::normalize(&mut request.state["_pluginSettings"]);}
+    if category=="bpm-directives"&&request.state["_pluginSettings"].is_object(){crate::bpm_compiled::normalize(&mut request.state["_pluginSettings"]);}
     #[cfg(feature="ubaq-compiled")]
-    if category=="C04" && request.state["_pluginSettings"].is_object(){crate::ubaq_compiled::normalize(&mut request.state["_pluginSettings"]);}
+    if category=="baqs-and-ubaqs" && request.state["_pluginSettings"].is_object(){crate::ubaq_compiled::normalize(&mut request.state["_pluginSettings"]);}
     // The host resolves descriptor defaults and explicit plugin overrides.
     // Keep bare guest calls compatible when no plugin settings were supplied.
     if let Some(size) = request.state.pointer("/_pluginSettings/itemsPerPage").and_then(Value::as_u64) {
         if size == 0 || size > i32::MAX as u64 {
-            return failure("INVALID_SETTING", "Page size must fit a positive native Int32.");
+            return failure("INVALID_SETTING", "Page size must be a whole number from 1 to 2147483647.");
         }
         request.page_size = Some(size as u32);
     }
@@ -142,11 +153,11 @@ fn handle_request(category: &str, mut request: GuestRequest) -> GuestReply {
             Err(diagnostic) => return GuestReply::Failure { diagnostic },
         };
         #[cfg(feature="function-compiled")]
-        let values={let mut values=values;if category=="C08"{crate::function_compiled::normalize(&mut values);}values};
+        let values={let mut values=values;if category=="functions"{crate::function_compiled::normalize(&mut values);}values};
         #[cfg(feature="ordinary-bpm-compiled")]
-        let values={let mut values=values;if category=="C06"{crate::bpm_compiled::normalize(&mut values);}values};
+        let values={let mut values=values;if category=="bpm-directives"{crate::bpm_compiled::normalize(&mut values);}values};
         #[cfg(feature="ubaq-compiled")]
-        let values={let mut values=values;if category=="C04"{crate::ubaq_compiled::normalize(&mut values);}values};
+        let values={let mut values=values;if category=="baqs-and-ubaqs"{crate::ubaq_compiled::normalize(&mut values);}values};
         let mut portable = request.state["_pluginState"].clone();
         if !portable.is_object() {
             portable = json!({});
@@ -177,54 +188,54 @@ fn handle_request(category: &str, mut request: GuestRequest) -> GuestReply {
             Err(diagnostic) => return GuestReply::Failure { diagnostic },
         };
         let Some((_, name, description)) = CATALOG.iter().find(|c| c.0 == category) else {
-            return failure("UNKNOWN_CATEGORY", "Unknown plugin category.");
+            return failure("UNKNOWN_CATEGORY", "This plugin file does not contain the category it was installed as. Reinstall the plugin.");
         };
-        let available = ["C01", "C08"].contains(&category) || collectors::supported(category);
+        let available = ["ud-codes", "functions"].contains(&category) || collectors::supported(category);
         let methods = match category {
-            "C01" => vec![("Ice.BO.UserCodesSvc".into(), "GetRows".into())],
-            "C02" => schema_pages::methods(),
-            "C04" => baq_pages::methods(),
-            "C06" => method_pages::methods(),
-            "C08" => function_pages::methods(),
-            "C09" | "C10" => classic_pages::methods(),
-            "C11" => dashboard_pages::methods(),
-            "C12" => kinetic_pages::methods(),
-            "C13" => personal_pages::methods(),
-            "C14" => search_pages::methods(),
-            "C15" => menu_pages::methods(),
-            "C16" => report_definition_pages::methods(),
-            "C17" | "C18" => report_style_pages::methods(),
-            "C20" => business_pages::methods(),
-            "C21" => resource_pages::methods(),
-            "C22" => programs_pages::methods(),
-            "C24" => solution_pages::methods(),
-            "C25" => automation_pages::methods(),
-            "C26" => access_pages::methods(),
+            "ud-codes" => vec![("Ice.BO.UserCodesSvc".into(), "GetRows".into())],
+            "ud-schema" => schema_pages::methods(),
+            "baqs-and-ubaqs" => baq_pages::methods(),
+            "bpm-directives" => method_pages::methods(),
+            "functions" => function_pages::methods(),
+            "classic-customizations" | "classic-personalizations" => classic_pages::methods(),
+            "classic-dashboards" => dashboard_pages::methods(),
+            "kinetic-applications-and-layers" => kinetic_pages::methods(),
+            "kinetic-personalizations" => personal_pages::methods(),
+            "searches-and-navigation" => search_pages::methods(),
+            "menus-and-launch-definitions" => menu_pages::methods(),
+            "report-definitions" => report_definition_pages::methods(),
+            "report-styles-and-layouts" | "report-behavior" => report_style_pages::methods(),
+            "business-rules-and-mappings" => business_pages::methods(),
+            "custom-resources" => resource_pages::methods(),
+            "programs-and-extensions" => programs_pages::methods(),
+            "solutions-and-packages" => solution_pages::methods(),
+            "automation-and-integrations" => automation_pages::methods(),
+            "access-and-assignments" => access_pages::methods(),
             _ => collectors::methods(category),
         };
         return GuestReply::Descriptor {
             response_policies: match category {
-                "C12" => response_policy::kinetic_page_policies(&methods),
-                "C15" => menu_pages::response_policies(&methods),
-                "C17" | "C18" => report_style_pages::response_policies(&methods),
-                "C20" => response_policy::business_graph_policies(&methods),
-                "C21" => resource_pages::policies(),
-                "C22" => programs_pages::policies(),
-                "C24" => solution_pages::policies(),
-                "C25" => automation_pages::policies(),
-                "C26" => access_pages::policies(),
+                "kinetic-applications-and-layers" => response_policy::kinetic_page_policies(&methods),
+                "menus-and-launch-definitions" => menu_pages::response_policies(&methods),
+                "report-styles-and-layouts" | "report-behavior" => report_style_pages::response_policies(&methods),
+                "business-rules-and-mappings" => response_policy::business_graph_policies(&methods),
+                "custom-resources" => resource_pages::policies(),
+                "programs-and-extensions" => programs_pages::policies(),
+                "solutions-and-packages" => solution_pages::policies(),
+                "automation-and-integrations" => automation_pages::policies(),
+                "access-and-assignments" => access_pages::policies(),
                 _ => response_policy::for_methods(&methods),
             },
-            binary_exports: if cfg!(feature="ubaq-compiled") && category=="C04" {
+            binary_exports: if cfg!(feature="ubaq-compiled") && category=="baqs-and-ubaqs" {
                 #[cfg(feature="ubaq-compiled")] {let mut exports:Vec<BinaryExport>=serde_json::from_str(include_str!("binary-exports.json")).unwrap();exports.extend(ubaq_compiled::binary_exports());exports}
                 #[cfg(not(feature="ubaq-compiled"))] {vec![]}
-            } else if cfg!(feature="ordinary-bpm-compiled")&&category=="C06" {
+            } else if cfg!(feature="ordinary-bpm-compiled")&&category=="bpm-directives" {
                 #[cfg(feature="ordinary-bpm-compiled")] {let mut exports:Vec<BinaryExport>=serde_json::from_str(include_str!("binary-exports.json")).unwrap();exports.extend(bpm_compiled::binary_exports());exports}
                 #[cfg(not(feature="ordinary-bpm-compiled"))] {vec![]}
-            } else if cfg!(feature="function-compiled") && category=="C08" {
+            } else if cfg!(feature="function-compiled") && category=="functions" {
                 #[cfg(feature="function-compiled")] {let mut exports:Vec<BinaryExport>=serde_json::from_str(include_str!("binary-exports.json")).unwrap();exports.extend(function_compiled::binary_exports());exports}
                 #[cfg(not(feature="function-compiled"))] {vec![]}
-            } else if category=="C22" { serde_json::from_value(json!([{ "service":"Ice.BO.ExtensionSvc", "method":"GetExtensionSetAssembly", "pointer":"/returnObj/Assembly", "extension":"dll" },{ "service":"Ice.BO.ExtensionSvc", "method":"GetExtensionSetAssembly", "pointer":"/returnObj/Symbols", "extension":"pdb" },{ "service":"Ice.Lib.EcfToolsSvc", "method":"GetAssemblyBytes", "pointer":"/returnObj", "extension":"dll" }])).unwrap() } else if matches!(category,"C21"|"C26"|"C27") {vec![]} else {serde_json::from_str(include_str!("binary-exports.json"))
+            } else if category=="programs-and-extensions" { serde_json::from_value(json!([{ "service":"Ice.BO.ExtensionSvc", "method":"GetExtensionSetAssembly", "pointer":"/returnObj/Assembly", "extension":"dll" },{ "service":"Ice.BO.ExtensionSvc", "method":"GetExtensionSetAssembly", "pointer":"/returnObj/Symbols", "extension":"pdb" },{ "service":"Ice.Lib.EcfToolsSvc", "method":"GetAssemblyBytes", "pointer":"/returnObj", "extension":"dll" }])).unwrap() } else if matches!(category,"custom-resources"|"access-and-assignments"|"configuration-references") {vec![]} else {serde_json::from_str(include_str!("binary-exports.json"))
                 .expect("Plugin binary declarations must be valid")},
             abi: PLUGIN_ABI,
             category: Category {
@@ -237,22 +248,21 @@ fn handle_request(category: &str, mut request: GuestRequest) -> GuestReply {
                     .state
                     .pointer("/_pluginState/selected")
                     .and_then(Value::as_bool)
-                    // Personalizations remain available, but are opt-in (Kevin, 2026-10-25).
-                    .unwrap_or(!matches!(category, "C10" | "C13")),
+                    .unwrap_or(!OFF_BY_DEFAULT.contains(&category)),
                 qualification: if available {
                     "Collection results report completeness and native diagnostics."
                 } else {
                     "This module does not provide an available collection route."
                 }
                 .into(),
-                roles: if matches!(category, "C25" | "C26") || matches!(category, "C01" | "C02" | "C03" | "C04" | "C06" | "C08" | "C09" | "C10" | "C11" | "C12" | "C13" | "C14" | "C15" | "C16" | "C17" | "C18" | "C19" | "C20" | "C21" | "C22" | "C24") {
+                roles: if matches!(category, "automation-and-integrations" | "access-and-assignments") || matches!(category, "ud-codes" | "ud-schema" | "extended-properties" | "baqs-and-ubaqs" | "bpm-directives" | "functions" | "classic-customizations" | "classic-personalizations" | "classic-dashboards" | "kinetic-applications-and-layers" | "kinetic-personalizations" | "searches-and-navigation" | "menus-and-launch-definitions" | "report-definitions" | "report-styles-and-layouts" | "report-behavior" | "configurators" | "business-rules-and-mappings" | "custom-resources" | "programs-and-extensions" | "solutions-and-packages") {
                     vec!["collector".into(), "pagedDefinitions".into(), "prefetchPages".into()]
-                } else if category == "C27" {
+                } else if category == "configuration-references" {
                     vec!["collector".into(), "definitionProcessor".into(), "pagedDefinitions".into(), "prefetchPages".into()]
                 } else {
                     vec!["collector".into()]
                 },
-                helpers: if category == "C17" {
+                helpers: if category == "report-styles-and-layouts" {
                     vec![report_store::contract()]
                 } else {
                     vec![]
@@ -262,12 +272,12 @@ fn handle_request(category: &str, mut request: GuestRequest) -> GuestReply {
                 help: plugin_help::sections(category),
             },
             methods,
-            entities: if category == "C22" {
+            entities: if category == "programs-and-extensions" {
                 vec![
                     ("Ice.BO.ExtensionSvc".into(), "ExtensionTables".into()),
                     ("Ice.BO.ExtensionSvc".into(), "ExtensionTableKeys".into()),
                 ]
-            } else if category == "C26" {
+            } else if category == "access-and-assignments" {
                 access_pages::entities()
             } else {
                 authored_schema::entities(category)
@@ -275,29 +285,29 @@ fn handle_request(category: &str, mut request: GuestRequest) -> GuestReply {
         };
     }
     match category {
-        "C04" => baq_pages::handle(request),
-        "C06" => method_pages::handle(request),
-        "C09" | "C10" => classic_pages::handle(request),
-        "C11" => dashboard_pages::handle(request),
+        "baqs-and-ubaqs" => baq_pages::handle(request),
+        "bpm-directives" => method_pages::handle(request),
+        "classic-customizations" | "classic-personalizations" => classic_pages::handle(request),
+        "classic-dashboards" => dashboard_pages::handle(request),
         // Retain local processing of an already downloaded persisted record.
         // New discovery uses the grouped bulk route below.
-        "C12" if request.operation == "acquire" && request.state["_inventory"].is_object() => collectors::handle(request),
-        "C12" => kinetic_pages::handle(request),
-        "C13" => personal_pages::handle(request),
-        "C14" => search_pages::handle(request),
-        "C15" => menu_pages::handle(request),
-        "C16" => report_definition_pages::handle(request),
-        "C17" | "C18" => report_style_pages::handle(request),
-        "C19" => configurator_output::handle(request),
-        "C20" => business_pages::handle(request),
-        "C21" => resource_pages::handle(request),
-        "C22" => programs_pages::handle(request),
-        "C24" => solution_pages::handle(request),
-        "C25" => automation_pages::handle(request),
-        "C26" => access_pages::handle(request),
-        "C01" => user_codes(request),
-        "C02" => schema_pages::handle(request),
-        "C08" => functions(request),
+        "kinetic-applications-and-layers" if request.operation == "acquire" && request.state["_inventory"].is_object() => collectors::handle(request),
+        "kinetic-applications-and-layers" => kinetic_pages::handle(request),
+        "kinetic-personalizations" => personal_pages::handle(request),
+        "searches-and-navigation" => search_pages::handle(request),
+        "menus-and-launch-definitions" => menu_pages::handle(request),
+        "report-definitions" => report_definition_pages::handle(request),
+        "report-styles-and-layouts" | "report-behavior" => report_style_pages::handle(request),
+        "configurators" => configurator_output::handle(request),
+        "business-rules-and-mappings" => business_pages::handle(request),
+        "custom-resources" => resource_pages::handle(request),
+        "programs-and-extensions" => programs_pages::handle(request),
+        "solutions-and-packages" => solution_pages::handle(request),
+        "automation-and-integrations" => automation_pages::handle(request),
+        "access-and-assignments" => access_pages::handle(request),
+        "ud-codes" => user_codes(request),
+        "ud-schema" => schema_pages::handle(request),
+        "functions" => functions(request),
         _ if collectors::supported(category) => collectors::handle(request),
         _ => failure(
             "CATEGORY_UNIMPLEMENTED",
@@ -344,18 +354,18 @@ fn required_identity(request: &GuestRequest, key: &str) -> Result<String, GuestR
     let Some(id) = &request.identity else {
         return Err(failure(
             "IDENTITY_REQUIRED",
-            "Select an exact native identity.",
+            "Select an exact Epicor ID.",
         ));
     };
     if id.category != request.category || id.keys.len() != 1 {
         return Err(failure(
             "INVALID_IDENTITY",
-            "The identity does not match this category's native key.",
+            "The identity does not match this category's Epicor key.",
         ));
     }
     match &id.scope {
         Scope::Company { company } if company == &request.company => {}
-        Scope::Global if request.category == "C08" => {}
+        Scope::Global if request.category == "functions" => {}
         _ => {
             return Err(failure(
                 "SCOPE_MISMATCH",
@@ -367,7 +377,7 @@ fn required_identity(request: &GuestRequest, key: &str) -> Result<String, GuestR
         .get(key)
         .filter(|v| !v.is_empty())
         .cloned()
-        .ok_or_else(|| failure("INVALID_IDENTITY", "The exact native key is required."))
+        .ok_or_else(|| failure("INVALID_IDENTITY", "The exact Epicor key is required."))
 }
 fn user_codes(request: GuestRequest) -> GuestReply {
     if let Some(e) = request.error {
@@ -384,19 +394,20 @@ fn user_codes(request: GuestRequest) -> GuestReply {
             Some(_) => return failure("INVALID_SETTING", "Code type ID starts with must be a string."),
         };
         let Ok(page) = request.cursor.as_deref().unwrap_or("1").parse::<u64>() else {
-            return failure("INVALID_CURSOR", "The inventory cursor is invalid.");
+            return failure("INVALID_CURSOR", "The inventory saved position is invalid.");
         };
         let Some(size) = request.page_size else {
             return failure(
                 "PAGE_SIZE_REQUIRED",
-                "Supply a page size until native measurements establish the release default.",
+                "Supply a page size until Epicor measurements establish the release default.",
             );
         };
         if request.response.is_none() {
             return native(
                 "Ice.BO.UserCodesSvc",
                 "GetRows",
-                json!({"whereClauseUDCodeType":"SystemFlag = false","whereClauseUDCodes":"SystemFlag = false","pageSize":size,"absolutePage":page}),
+                // Broad server-side superset of the literal prefix; the exact check below stays local.
+                json!({"whereClauseUDCodeType":format!("SystemFlag = false{}",report_query::like_clause("CodeTypeID",prefix)),"whereClauseUDCodes":format!("SystemFlag = false{}",report_query::like_clause("CodeTypeID",prefix)),"pageSize":size,"absolutePage":page}),
                 false,
                 json!({"page":page}),
             );
@@ -439,11 +450,11 @@ fn user_codes(request: GuestRequest) -> GuestReply {
             if !seen.insert(key) {
                 return failure(
                     "DUPLICATE_NATIVE_IDENTITY",
-                    "Discovery returned a duplicate native type identity.",
+                    "Discovery returned a duplicate Epicor type identity.",
                 );
             }
             ids.push(identity(
-                "C01",
+                "ud-codes",
                 "UDCodeType",
                 &request.company,
                 "CodeTypeID",
@@ -458,7 +469,7 @@ fn user_codes(request: GuestRequest) -> GuestReply {
         else {
             return failure(
                 "PAGING_UNVERIFIED",
-                "Native discovery omitted morePages; inventory completeness is unknown.",
+                "Epicor discovery omitted morePages; inventory completeness is unknown.",
             );
         };
         let Some(entries) = rows(response, "UDCodes") else {
@@ -564,13 +575,13 @@ fn validate_user_code(definition: &Value, key: &str, requested_company: &str) ->
     let Some(types) = rows(definition, "UDCodeType") else {
         return Err(failure(
             "INVALID_NATIVE_RESPONSE",
-            "The native definition lacks its type table.",
+            "The Epicor definition lacks its type table.",
         ));
     };
     let Some(entries) = rows(definition, "UDCodes") else {
         return Err(failure(
             "CHILDREN_UNVERIFIED",
-            "The native definition lacks its code-entry table.",
+            "The Epicor definition lacks its code-entry table.",
         ));
     };
     if types.is_empty() {
@@ -583,7 +594,7 @@ fn validate_user_code(definition: &Value, key: &str, requested_company: &str) ->
     {
         return Err(failure(
             "IDENTITY_MISMATCH",
-            "Native returned type does not match the requested identity.",
+            "Epicor returned type does not match the requested identity.",
         ));
     }
     if system_artifacts::marked(&types[0]) {
@@ -592,13 +603,13 @@ fn validate_user_code(definition: &Value, key: &str, requested_company: &str) ->
     let Some(company) = types[0].get("Company").and_then(Value::as_str) else {
         return Err(failure(
             "SCOPE_MISMATCH",
-            "The native type omitted its company scope.",
+            "The Epicor type omitted its company scope.",
         ));
     };
     if !company.is_empty() && company != requested_company {
         return Err(failure(
             "SCOPE_MISMATCH",
-            "The native type belongs to another company.",
+            "The Epicor type belongs to another company.",
         ));
     }
 
@@ -617,13 +628,13 @@ fn validate_user_code(definition: &Value, key: &str, requested_company: &str) ->
         else {
             return Err(failure(
                 "CHILDREN_UNVERIFIED",
-                "A code entry lacks its native CodeID.",
+                "A code entry lacks its Epicor CodeID.",
             ));
         };
         if !seen.insert(code) {
             return Err(failure(
                 "DUPLICATE_NATIVE_IDENTITY",
-                "The native definition repeats a code-entry identity.",
+                "The Epicor definition repeats a code-entry identity.",
             ));
         }
         if row.get("Company").and_then(Value::as_str) != Some(company) {
@@ -671,7 +682,7 @@ fn query_library(request: &GuestRequest) -> GuestReply {
         let Some(after) = after else {
             return failure(
                 "INVALID_CURSOR",
-                "The Function discovery continuation is invalid.",
+                "The Function discovery resume point is invalid.",
             );
         };
         parameters.insert("after".into(), json!(after));
@@ -803,14 +814,14 @@ mod removed_operation_tests {
         // Exercise every collector branch directly so missing router identities
         // cannot hide an old inspect alias at the leaf.
         let branches: &[(&str, fn(GuestRequest) -> GuestReply)] = &[
-            ("C01", user_codes),
-            ("C08", functions),
-            ("C02", families::handle),
-            ("C02", tables::handle),
-            ("C12", kinetic::handle),
-            ("C22", external_references::handle),
-            ("C21", file_store_resources::handle),
-            ("C24", retained_solutions::handle),
+            ("ud-codes", user_codes),
+            ("functions", functions),
+            ("ud-schema", families::handle),
+            ("ud-schema", tables::handle),
+            ("kinetic-applications-and-layers", kinetic::handle),
+            ("programs-and-extensions", external_references::handle),
+            ("custom-resources", file_store_resources::handle),
+            ("solutions-and-packages", retained_solutions::handle),
         ];
         for (category, branch) in branches {
             for operation in ["inspect", "status"] {
@@ -835,7 +846,7 @@ mod sensitive_filter_settings_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: operation.into(),
-            category: "C25".into(),
+            category: "automation-and-integrations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -847,13 +858,30 @@ mod sensitive_filter_settings_tests {
     }
 
     #[test]
+    fn default_selection_is_seventeen_on_and_seven_off() {
+        let (mut on, mut off) = (vec![], vec![]);
+        for id in CATALOG.iter().map(|entry| entry.0) {
+            let mut r=request("descriptor",json!({}));r.category=id.into();
+            let GuestReply::Descriptor{category,..}=handle(id,r) else {panic!("{id}")};
+            if category.selected { on.push(id) } else { off.push(id) }
+        }
+        on.sort(); off.sort();
+        assert_eq!(off, ["classic-customizations","classic-dashboards","classic-personalizations","configurators",
+            "kinetic-personalizations","programs-and-extensions","solutions-and-packages"]);
+        assert_eq!(on, ["access-and-assignments","automation-and-integrations","baqs-and-ubaqs","bpm-directives",
+            "business-rules-and-mappings","configuration-references","custom-resources","extended-properties","functions",
+            "kinetic-applications-and-layers","menus-and-launch-definitions","report-behavior","report-definitions",
+            "report-styles-and-layouts","searches-and-navigation","ud-codes","ud-schema"]);
+    }
+
+    #[test]
     fn release_defaults_are_opt_in_and_preserve_saved_choices() {
-        for id in ["C10", "C13", "C04", "C06", "C08"] {
+        for id in ["classic-personalizations", "kinetic-personalizations", "baqs-and-ubaqs", "bpm-directives", "functions"] {
             for saved in [None, Some(true), Some(false)] {
                 let mut r=request("descriptor",json!({}));r.category=id.into();
                 if let Some(selected)=saved { r.state=json!({"_pluginState":{"selected":selected}}); }
                 let GuestReply::Descriptor{category,..}=handle(id,r) else {panic!()};
-                assert_eq!(category.selected,saved.unwrap_or(!matches!(id,"C10"|"C13")));
+                assert_eq!(category.selected,saved.unwrap_or(!OFF_BY_DEFAULT.contains(&id)));
                 for setting in category.settings.iter().filter(|s|matches!(s.key(),"downloadCompiledAssemblies"|"decompileCompiledAssemblies")) {
                     assert_eq!(setting.default_value(),false,"{id}");
                 }
@@ -864,15 +892,17 @@ mod sensitive_filter_settings_tests {
     #[test]
     fn filtering_defaults_off_and_portable_configuration_round_trips() {
         let GuestReply::Descriptor { category, .. } =
-            handle("C25", request("descriptor", json!({})))
+            handle("automation-and-integrations", request("descriptor", json!({})))
         else {
             panic!()
         };
-        assert_eq!(category.settings.len(), 1);
-        assert_eq!(category.settings[0].key(), "filterSensitiveFields");
-        assert_eq!(category.settings[0].default_value(), false);
+        // The selection-filter design added automationFamily beside the filter.
+        let filter = category.settings.iter().find(|s| s.key() == "filterSensitiveFields").expect("sensitive filter setting");
+        assert_eq!(filter.default_value(), false);
+        assert!(category.settings.iter().any(|s| s.key() == "automationFamily"), "automation family selection");
+        assert_eq!(category.settings.iter().filter(|s| s.key() == "filterSensitiveFields").count(), 1);
         let GuestReply::State { plugin_state, .. } = handle(
-            "C25",
+            "automation-and-integrations",
             request(
                 "configure",
                 json!({"values":{"filterSensitiveFields":true},"_pluginState":{"selected":true,"other":"retained"}}),
@@ -883,14 +913,14 @@ mod sensitive_filter_settings_tests {
         assert_eq!(plugin_state["config"]["filterSensitiveFields"], true);
         assert_eq!(plugin_state["other"], "retained");
         let GuestReply::Descriptor { category, .. } = handle(
-            "C25",
+            "automation-and-integrations",
             request("descriptor", json!({"_pluginState":plugin_state})),
         ) else {
             panic!()
         };
-        assert_eq!(category.settings[0].default_value(), true);
+        assert_eq!(category.settings.iter().find(|s| s.key() == "filterSensitiveFields").unwrap().default_value(), true);
         let GuestReply::State { plugin_state, .. } = handle(
-            "C25",
+            "automation-and-integrations",
             request(
                 "configure",
                 json!({"selected":false,"values":{},"_pluginState":plugin_state}),
@@ -901,7 +931,7 @@ mod sensitive_filter_settings_tests {
         assert_eq!(plugin_state["config"]["filterSensitiveFields"], true);
         assert_eq!(plugin_state["selected"], false);
         let GuestReply::State { plugin_state, .. } = handle(
-            "C25",
+            "automation-and-integrations",
             request(
                 "configure",
                 json!({"values":{"filterSensitiveFields":false},"_pluginState":plugin_state}),
@@ -915,7 +945,7 @@ mod sensitive_filter_settings_tests {
     fn filtering_setting_requires_boolean() {
         assert!(matches!(
             handle(
-                "C25",
+                "automation-and-integrations",
                 request(
                     "configure",
                     json!({"values":{"filterSensitiveFields":"true"}})

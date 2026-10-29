@@ -76,8 +76,8 @@ mod tests {
     #[test]
     fn completed_statistics_are_frozen_and_parallel_totals_are_not_wall_time() {
         let mut m = Metrics::default();
-        m.plugin("C13", "running"); m.response(1200, 2048); m.response(800, 1024);
-        m.page(3000, 40); m.plugin("C13", "completed"); m.finish();
+        m.plugin("kinetic-personalizations", "running"); m.response(1200, 2048); m.response(800, 1024);
+        m.page(3000, 40); m.plugin("kinetic-personalizations", "completed"); m.finish();
         let before = m.snapshot();
         assert_eq!(before["requests"], 2); assert_eq!(before["requestMs"], 2000);
         assert_eq!(before["receivedBytes"], 3072); assert_eq!(before["pageWriteMs"], 3000);

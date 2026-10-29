@@ -1,0 +1,256 @@
+---
+name: herbert
+description: Operate Herbert through MCP to collect Epicor definitions and artifacts, retrieve exact items, inspect results, and recover runs. Reconcile owned cleanup or decompile local assemblies. Use for Herbert workflows and troubleshooting, not general Epicor editing or deployment.
+---
+
+# Herbert
+
+Herbert is a local Windows application that collects Epicor definitions and related files.
+Installed plugins determine its available categories, settings and output.
+Use the existing Herbert MCP connection when available.
+
+## Discover the host and tools
+
+Call `tools/list` through the MCP client.
+Read the current input and output schemas before constructing requests.
+MCP names replace application dots with underscores and retain letter case.
+For example, `run.retryFailed` becomes `run_retryFailed`.
+
+Call `about` for the installed version and `capabilities` for categories, target identities, settings, help and diagnostics.
+Call `settings_inspect` and `collection_preferences_get` for effective choices.
+Use `help_read` for embedded guidance when local documents are unavailable.
+The `schema` tool returns the application catalog with dotted operation names.
+
+If the client has no Herbert MCP server, locate the complete Herbert package.
+Configure the client to run its absolute executable path with `mcp` as the first argument.
+Keep one persistent host for the connection workflow.
+Use explicit absolute `--state-dir`, `--plugin-dir` and `--coordination-dir` paths when selecting existing state.
+Otherwise, state and plugins default to folders beside the executable.
+Coordination defaults to a folder under state.
+
+A direct stdio client uses protocol `2025-11-25`.
+Send `initialize`, then `notifications/initialized`, then `tools/list`.
+Send one JSON-RPC message per physical line and keep logs off standard output.
+A normal MCP client handles that handshake.
+Read the MCP guide (`help_read` document `mcp-guide`) for client configuration and framing.
+
+## Use Herbert from Codex
+
+Codex starts Herbert from the `[mcp_servers.herbert]` table in `~/.codex/config.toml`. Run `herbert mcp-config --client codex` from the Herbert package to print it with real paths.
+Type `/mcp` to check that Herbert's tools are listed. If tools are missing, check the configured executable path and run `codex mcp list`.
+Herbert connects to the Epicor server over the network and writes to its state folder and the chosen destination. It runs as its own process, so do not assume the Codex sandbox limits it.
+A Codex tool approval is not authority to change an Epicor server. Herbert's `serverChanges_preview` and `serverChanges_authorize` steps still apply. Ask the user before authorizing previewed server changes.
+Long downloads return a run ID at once. Poll `run_status` instead of waiting on one tool call.
+
+## Select scope and connect
+
+Use the supplied endpoint, company, caller, categories and destination.
+Resolve missing scope from existing profile metadata or ask the user.
+Do not infer authority to change a server from a profile name or a successful login.
+The Epicor caller must be an enabled Security Manager. Native operation permissions still apply.
+
+Use `profiles_list` to inspect saved profiles without secrets.
+For saved credentials, select `profileId` and `credentialSource:{"type":"secureStore"}`.
+For a user-authored file, use this credential source:
+
+```json
+{"type":"userFile","path":"C:/Private/environments.json","environmentId":"example"}
+```
+
+Select the exact environment ID. Herbert does not change that file.
+The schema names this key `environmentId`. The older `environment_id` spelling is still accepted.
+Herbert also accepts inline credentials through stdin. Follow the actual schema.
+Keep secrets out of shell arguments, logs, source control and collected output.
+Use `credentials_status` to check saved credential presence.
+Use `credentials_save` only when the user wants the endpoint-bound credential stored.
+
+Call `connection_test` with the selected connection inputs to test login and logout.
+Call `connection_connect` to open the connection for collection.
+For example, these are tool arguments for an existing authorized profile:
+
+```json
+{"profileId":"example","company":"EXAMPLE","credentialSource":{"type":"secureStore"}}
+```
+
+Check the returned endpoint, company, caller, auth mode, admission and `transportTrust`.
+Use `companies_list` only through the active authorized connection.
+
+If the company is unknown, call `connection_test` without `company`.
+It returns `availableCompanies` (`[{id,name}]`), `companySource` (`userAccess`, `companyList` or `unavailable`), `selectedCompany` and `companyListDiagnostic`, then signs out.
+Let the user choose a company unless the task already names one.
+`connection_connect` and downloads without a company return `COMPANY_REQUIRED`.
+`profiles_upsert` without a company returns the warning `COMPANY_NOT_SET` in `warnings[]`.
+
+Set `allowUntrustedCertificate` only when the user explicitly asks. Never infer it from `CERTIFICATE_UNTRUSTED`.
+It relaxes only the unknown-issuer check. The server name and certificate dates are still checked.
+Nothing is pinned, and any presented certificate can act as the anchor, so use it only for servers the user controls.
+`transportTrust.mode` is `verified`, `relaxedUntrustedIssuer` or `unencrypted` (plain `http://`).
+Read "Allow self-signed certificate" in the MCP guide (`help_read` document `mcp-guide`) for the fields and failure codes.
+
+If admission fails and `error.context.connectionRetained` is true, preserve both the primary error and cleanup diagnostic.
+Call `connection_disconnect` in that same host.
+Another process cannot clean up its in-memory session.
+Inspect a repeated cleanup failure before retrying.
+Failed admission does not authorize collection.
+
+## Choose collection behavior
+
+Read installed category help before selecting settings.
+Use `plugin_configure` for persistent declared options beside a module.
+Use `pluginSettings` for supported run overrides.
+Do not invent keys or copy another category's settings.
+
+Omitted run values inherit saved plugin values. Explicit blank filter overrides clear that filter for one run without saving. Saving a blank with `plugin_configure` clears the saved value. GUI category toggles, Select all available, Clear selection and Save plugin options save the current option draft too. Never infer that a filter is inactive by comparing with descriptor defaults: saved values become those defaults.
+
+The UD codes plugin's declared `codeTypeIdPrefix` is a literal, case-sensitive prefix, preserving spaces and all entered characters without wildcard expansion or normalization. Use `"pluginSettings":{"ud-codes":{"codeTypeIdPrefix":"EXAMPLE"}}` for selected discovery, or an explicit `""` to clear it for that run. Matching contract: `ud-codes-code-type-id-prefix-v1`. The collector reads native pages in bulk with a broad server match, then emits complete selected types and entries locally. Exact `UDCodeType` retrieval ignores this discovery filter.
+
+Most ID-prefix filters are sent to the server as a broad superset (`LIKE '<stem>%'`, or an OData `startswith` filter for Access and assignments, where the stem is the prefix up to its first `%`, `_`, `[` or `]`); the exact literal, case-sensitive check stays local and rows outside the selection are not validated and produce no diagnostics. Menus and launch definitions, Searches and navigation, Business rules and mappings, the Report styles and layouts `packagePathPrefix` and the Programs and extensions externals list read every eligible row and select locally; Kinetic applications and layers selects locally from a light identity-only inventory and fetches content only for selected applications. Sources with no server filter (Quick, Predictive and context-menu searches, and current stored report packages) are read whole, and rows outside the selection still produce no diagnostics. Unselected families are not requested. Automation and integrations asks Epicor only for the rows its native service admits for the caller (each table read is restricted to those row identities), so rows outside the caller's visibility are never downloaded.
+
+The BAQs and UBAQs plugin declares `queryIdPrefix` (**Query ID starts with**, `baqs-and-ubaqs-query-id-prefix-v1`); the Functions plugin declares `libraryIdPrefix` (**Library ID starts with**, `functions-library-id-prefix-v1`). They use the same literal case-sensitive rule, preserving all characters, and the same blank/omission/save behavior. Use their declared keys under `pluginSettings["baqs-and-ubaqs"]` or `pluginSettings.functions`. Keep whole queries/libraries and required dependencies; empty selected pages retain native continuation. Optional compiled settings apply only to selected owners and remain separate from root selection.
+
+The BAQs and UBAQs plugin does not support `retrieve_start` acquisition: use its prefix with paged `backup_start`. For Functions, exact global `EfxLibrary` retrieval by `LibraryID` ignores the discovery prefix. Its complete Function/signature/reference/company-mapping graph remains intact; referenced libraries are not automatically collected.
+
+For a read-only check, explicitly set `collectionMethod:"directOnly"` and `temporaryAccess:false`, select one plugin, and use a small existing selection. Do not inherit server-changing defaults for that check.
+
+Direct only uses existing services without installing collection helpers.
+Server Assisted permits temporary helpers where required or useful.
+Temporary access can add owned permissions under native policy.
+Omitted run fields mean `collectionMethod:"directOnly"` and `temporaryAccess:false`.
+Set `collectionMethod` and `temporaryAccess` explicitly to match the authorized task.
+A collection request does not authorize unrelated native changes.
+This skill grants no authority to change an Epicor server.
+
+Before any start, call `serverChanges_preview` with `fullBackup` (true for `backup_start`, false for `retrieve_start`) and `run` set to the start arguments.
+If `authorizationRequired` is false, start without an authorization.
+Otherwise reuse an entry in `matchingAuthorizations`, or obtain explicit authority for the previewed effects.
+Do not authorize while `unresolved` is not empty.
+Then call `serverChanges_authorize` with `previewId`, `materialDigest` and `lifetime` (`{"kind":"oneRun"}`, `{"kind":"session"}` or `{"kind":"workflow","workflowId":"<name>"}`).
+Pass the returned `authorization.id` as `authorizationId` in the same start arguments.
+Some native exports create temporary server files and need authorization even under Direct only.
+See "server-change preview and authorization" in the MCP guide (`help_read` document `mcp-guide`).
+
+Use declared page sizes and effective host settings.
+They are operating choices, not total-item limits.
+If changing host behavior, read `settings_inspect` first and preserve unrelated fields in the complete `settings_update` object.
+Read back effective settings. See the "settings guidance" in the MCP guide (`help_read` document `mcp-guide`) for persistence and timing.
+
+## Collect and inspect
+
+Use `backup_start` for discovery within selected categories and effective plugin options.
+Choose category IDs from `capabilities`. Explicit unavailable categories cause rejection.
+This example uses an available UD schema category and an example destination:
+
+```json
+{
+  "requestId": "schema-001",
+  "destination": "C:/Backups/Herbert",
+  "outputMode": "separate",
+  "categories": ["ud-schema"],
+  "collectionMethod": "directOnly",
+  "temporaryAccess": false
+}
+```
+
+Use `separate` for a new run folder beneath the destination.
+Use `refresh` to refresh the chosen destination with conflict preservation.
+Inspect the resolved destination returned by the host.
+
+Keep one stable `requestId` for one logical start request.
+The same request and scope return the existing run.
+Herbert rejects changed scope with the same ID.
+After a lost response, inspect `run_list` and the saved journal before starting with a new ID.
+
+Use `structuredContent` as the authoritative result.
+The common envelope has `schemaVersion`, `ok`, `result` and `error`.
+On failure, branch on the stable `error.code`. `error.message` says what happened and what to do next. `error.context` holds technical details such as paths, IDs and server text. `error.retryable` says whether the same request can succeed later.
+MCP also sets `isError:true`, and `content[1]` gives the message with a `Next step:` line for text-only clients.
+A retired category code is refused with `LEGACY_CATEGORY_ID`. Resend with the ID in `error.context.replacementCategory`.
+
+An accepted start returns `runId`. It does not establish completion.
+Poll `run_status` with:
+
+```json
+{"id":"<returned-runId>","summary":true}
+```
+
+Continue until `executionActive` is false, even when the phase already says completed, failed or canceled.
+Then call `run_status` without `summary` and inspect the full journal.
+Check artifacts, discovery, partial or failed items, diagnostics and cleanup.
+Read `serverChanges` (`leaseLost`, `resources`, `foreignPending`) separately from completeness. Cleanup removes resources the run owns, and also removes recognized helpers left by earlier Herbert versions when no running Herbert holds them. Report what `foreignPending` kept (`active`, `recognized` or `unrecognized`).
+An empty file list alone does not prove that the requested content is absent.
+Report actual outcomes against the requested scope. `scope:fullBackup` is the persisted discovery mode, not proof of full-environment coverage. Inspect `pluginSettings`, `pluginSelectionContracts`, `pluginHashes` and actual identities. Completed overall discovery with no selected roots yields a successful empty-selection message in `discoveryMessages`; distinguish that from invalid settings, missing exact identities and denied/failed reads. Empty intermediate pages can still continue. Preserve existing files outside a selected refresh scope.
+
+Keep the complete backup, including `Herbert Data`, raw bytes and journals.
+Preserve changed local files and incoming versions in `Conflicts` until you resolve their differences.
+Use `diagnostics_export` with a new ZIP path for a sanitized support packet when needed.
+After network work and cleanup stop, call `connection_disconnect` in the owning host.
+
+## Retrieve an exact item
+
+Use `retrieve_start` with a stable request ID, destination, output mode and `identities` only where the installed plugin supports acquisition. The BAQs and UBAQs plugin requires filtered paged discovery instead.
+Read each category, kind, scope and native key from installed capabilities and reliable source evidence.
+Do not guess identity from a filename.
+For a known UD schema table, the identity shape is:
+
+```json
+{"category":"ud-schema","kind":"UDTableSchema","scope":{"type":"global"},"keys":{"SystemCode":"Ice","DataTableID":"Example_UD"}}
+```
+
+Replace the example keys with verified values and put this object in the `identities` array.
+Use the same explicit collection options and monitoring workflow as a backup.
+Some exact routes still acquire bulk context.
+Read the user guide (`help_read` document `user-guide`) for the collections and their output.
+
+## Handle interruption and partial results
+
+| Tool | Correct use |
+| --- | --- |
+| `run_pause` | Stop new dispatch. Active work can finish. |
+| `run_resume` | Continue a paused active run. |
+| `run_cancel` | Request cancellation, then poll until execution stops. |
+| `run_recover` | Resume an interrupted network run. |
+| `run_retryFailed` | Acquire failed or incomplete content again. |
+| `run_reprocess` | Process saved local material without an Epicor connection. |
+
+These controls take the saved run `id`.
+For network recovery, use the owning state and coordination directories and reconnect with the original endpoint, company and caller.
+Resolve reported ownership or cleanup problems, then poll the recovered run.
+Keep successful output and continue independent work when one collection is unavailable. Retry/recovery retains frozen settings and module-hash checks. A legacy journal missing a filter stops with `FROZEN_SELECTION_REQUIRED`; restore its original compatible module or start a new explicitly selected run. Never insert today's saved filter into that journal. Exact IDs and filter metadata are private evidence: share sanitized diagnostics, not raw journals.
+
+Do not replay an uncertain native action merely because a response was lost.
+If `SERVER_COLLECTION_UNRESOLVED` appears, call `serverCollection_inspect`.
+Independently establish that the exact server operation finished or stopped.
+Then call `serverCollection_reconcile` with its `invocationId`, `confirmedServerStopped:true` and observed `evidence`.
+This records an assertion locally. It does not stop server work.
+A client timeout, cancellation or exit is not stop evidence.
+
+Use `helpers_reconcile` with the exact helper operation `id` from helper evidence.
+That ID differs from the run ID and invocation ID.
+The operation can remove owned native resources and requires its original caller and an inactive operation.
+Respect ownership and source checks. Preserve unrelated helpers, files and memberships.
+Read "server collection recovery" in the MCP guide (`help_read` document `mcp-guide`) for this exceptional workflow.
+
+## Route local decompilation
+
+The standard package includes compiled BPM, Function and UBAQ support and the managed decompiler companion.
+Capture and project creation remain user settings that default off.
+Check installed capabilities before use.
+Local assembly decompilation does not need an Epicor connection.
+Use `decompiler_start` with absolute `assembly` and `output` paths. The output folder must be new.
+Supplying `symbols` requires `symbolMode:"externalPortable"`.
+The default symbol mode is `none`.
+
+The accepted result has `jobId`, not a collection run ID.
+Use that ID with `decompiler_status`, `decompiler_cancel` or `decompiler_recover`.
+Inspect final job state, diagnostics and output evidence.
+Recovery uses verified snapshots and exclusive output ownership.
+Preserve job records and output bookkeeping.
+
+## Interpret collected output
+
+Native packages, original resources, readable source and definition history have different uses.
+Do not call every JSON file or reconstructed project directly restorable.
+Use applicable supported native import paths only within the user's destination authority.
+Where Epicor offers no importer for a collected graph, preserve accurate definitions and history.
+Do not require an invented recovery writer for ordinary collection.
+Consult the relevant shipped category guide for recovery details.

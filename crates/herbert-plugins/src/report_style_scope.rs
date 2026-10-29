@@ -87,7 +87,7 @@ fn identity(row: &Value, category: &str, company: &str) -> Result<Identity, Gues
     else {
         return Err(fail(
             "REPORT_STYLE_IDENTITY_INVALID",
-            "StyleNum must satisfy the native Int32 contract.",
+            "The report style number in this selection is not a valid whole number. Choose the report style again.",
         ));
     };
     Ok(Identity {
@@ -112,7 +112,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
         .transpose()
     {
         Ok(v) => v.unwrap_or(json!({})),
-        Err(_) => return fail("INVALID_CURSOR", "The report-style cursor is invalid."),
+        Err(_) => return fail("INVALID_CURSOR", "The report-style saved position is invalid."),
     };
     let global = cursor["styleGlobal"].as_bool().unwrap_or(false);
     let next_branch = if global {
@@ -187,7 +187,7 @@ pub fn discover(request: GuestRequest, family: usize, next_family: Option<String
         else {
             return fail(
                 "REPORT_STYLE_CURSOR_INVALID",
-                "The style inventory omitted its continuation key.",
+                "The style inventory omitted its resume point key.",
             );
         };
         if cursor["after"] == after {
@@ -234,13 +234,13 @@ pub fn acquire(mut request: GuestRequest) -> Acquisition {
     let Some(style) = id.keys.get("StyleNum").and_then(|v| v.parse::<i32>().ok()) else {
         return Acquisition::Reply(fail(
             "REPORT_STYLE_IDENTITY_INVALID",
-            "StyleNum must satisfy the native Int32 contract.",
+            "The report style number in this selection is not a valid whole number. Choose the report style again.",
         ));
     };
     let Some(report) = id.keys.get("ReportID").filter(|v| !v.is_empty()) else {
         return Acquisition::Reply(fail(
             "REPORT_STYLE_IDENTITY_INVALID",
-            "ReportID is required.",
+            "Choose a report style to download (the report ID is missing).",
         ));
     };
     let Some(size) = request.page_size.filter(|v| *v > 0) else {
@@ -277,7 +277,7 @@ pub fn acquire(mut request: GuestRequest) -> Acquisition {
         let Some(table) = TABLES.get(index) else {
             return Acquisition::Reply(fail(
                 "REPORT_STYLE_STATE_INVALID",
-                "The report checkpoint is invalid.",
+                "The report saved progress is invalid.",
             ));
         };
         if request.state["definition"][*table].is_null() {
@@ -431,7 +431,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -444,7 +444,7 @@ mod tests {
     fn selected(n: i32) -> GuestRequest {
         let mut r = req();
         r.operation = "acquire".into();
-        r.identity = Some(identity(&style(n), "C17", "C").unwrap());
+        r.identity = Some(identity(&style(n), "report-styles-and-layouts", "C").unwrap());
         r.state = json!({"_inventory":{"style":style(n)}});
         r
     }

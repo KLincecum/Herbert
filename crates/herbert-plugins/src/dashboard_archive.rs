@@ -24,7 +24,7 @@ fn dataset(xml: &str) -> Result<Element, Diagnostic> {
         || root.attr("xmlns") != Some("http://tempuri.org/DashboardDataSet.xsd")
     {
         return Err(invalid(
-            "The stored dashboard is not a native DashboardDataSet.",
+            "The stored dashboard is not an Epicor DashboardDataSet.",
         ));
     }
     Ok(root)
@@ -81,7 +81,7 @@ pub fn build(xml: &str, packages: &BTreeMap<String, String>) -> Result<String, D
     let mut writer = quick_xml::Writer::new(Vec::new());
     diff.write(&mut writer)?;
     String::from_utf8(writer.into_inner())
-        .map_err(|_| invalid("The dashboard export is not UTF-8."))
+        .map_err(|_| invalid("The dashboard export from Epicor is not readable text, so no dashboard file was built."))
 }
 
 #[cfg(test)]

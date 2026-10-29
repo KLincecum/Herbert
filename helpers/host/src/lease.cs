@@ -1,5 +1,5 @@
 // Shared helper activity. Caller identity does not decide cleanup eligibility.
-// Five minutes and thirty seconds are Kevin's selected operating defaults.
+// Five minutes and thirty seconds are the selected operating defaults.
 var request = Newtonsoft.Json.Linq.JObject.Parse(iRequest);
 var action = request.Value<string>("action");
 var root = new Ice.Customization.Sandbox.FilePath(
@@ -24,7 +24,7 @@ catch (System.Exception error)
     {
         types.Add(new Newtonsoft.Json.Linq.JObject { ["type"] = current.GetType().FullName, ["hresult"] = current.HResult });
         sharing |= current is System.IO.IOException &&
-            // Native Linux qualification returns EAGAIN (11); Windows returns
+            // Linux returns EAGAIN (11); Windows returns
             // sharing/lock violation (32/33). Other IO failures are not retried.
             (current.HResult == 11 || (current.HResult & 0xffff) == 32 || (current.HResult & 0xffff) == 33);
         current = current.InnerException;

@@ -50,7 +50,7 @@ impl Budget {
         if ceiling == 0 {
             return Err(Diagnostic::new(
                 "INVALID_CONCURRENCY",
-                "Simultaneous plugins must be a positive value that fits the u8 settings field.",
+                "Simultaneous plugins must be a whole number from 1 to 255.",
             ));
         }
         Ok(Self::with_ceiling(ceiling))
@@ -80,7 +80,7 @@ impl Budget {
         if ceiling == 0 {
             return Err(Diagnostic::new(
                 "INVALID_CONCURRENCY",
-                "Simultaneous plugins must be a positive value that fits the u8 settings field.",
+                "Simultaneous plugins must be a whole number from 1 to 255.",
             ));
         }
         self.state
@@ -118,7 +118,7 @@ impl Budget {
         if ceiling == 0 {
             return Err(Diagnostic::new(
                 "INVALID_CONCURRENCY",
-                "Simultaneous plugins must be a positive value that fits the u8 settings field.",
+                "Simultaneous plugins must be a whole number from 1 to 255.",
             ));
         }
         let mut state = self.state.lock().map_err(|_| {

@@ -4,7 +4,7 @@ fn request() -> GuestRequest {
     GuestRequest {
         abi: PLUGIN_ABI,
         operation: "discover".into(),
-        category: "C01".into(),
+        category: "ud-codes".into(),
         company: "C".into(),
         identity: None,
         cursor: None,
@@ -177,7 +177,7 @@ fn literal_prefix_selects_complete_roots_without_normalizing_native_values() {
     ] {
         let mut r = prefixed(json!(prefix));
         r.response = Some(source.clone());
-        let GuestReply::InventoryData { records, inventory } = crate::handle("C01", r) else { panic!("{prefix:?}") };
+        let GuestReply::InventoryData { records, inventory } = crate::handle("ud-codes", r) else { panic!("{prefix:?}") };
         let GuestReply::Inventory { identities, authoritative, next_cursor, diagnostics } = *inventory else { panic!() };
         assert!(authoritative);
         assert!(next_cursor.is_none());
@@ -199,20 +199,20 @@ fn prefix_validates_unselected_graphs_and_keeps_empty_page_native_continuation()
     let mut page = batch();
     // Valid A children must not become orphans merely because B is selected.
     r.response = Some(page.clone());
-    let GuestReply::InventoryData { records, .. } = crate::handle("C01", r.clone()) else { panic!() };
+    let GuestReply::InventoryData { records, .. } = crate::handle("ud-codes", r.clone()) else { panic!() };
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0.keys["CodeTypeID"], "B");
     for field in ["Company", "CodeID", "CodeTypeID"] {
         let mut invalid = page.clone();
         invalid["returnObj"]["UDCodes"][0].as_object_mut().unwrap().remove(field);
         r.response = Some(invalid);
-        assert!(matches!(crate::handle("C01", r.clone()), GuestReply::Failure { .. }), "unselected A {field}");
+        assert!(matches!(crate::handle("ud-codes", r.clone()), GuestReply::Failure { .. }), "unselected A {field}");
     }
     page["returnObj"]["UDCodeType"].as_array_mut().unwrap().pop();
     page["returnObj"]["UDCodes"].as_array_mut().unwrap().pop();
     page["parameters"]["morePages"] = json!(true);
     r.response = Some(page);
-    let GuestReply::InventoryData { records, inventory } = crate::handle("C01", r.clone()) else { panic!() };
+    let GuestReply::InventoryData { records, inventory } = crate::handle("ud-codes", r.clone()) else { panic!() };
     assert!(records.is_empty());
     let GuestReply::Inventory { identities, next_cursor, authoritative, .. } = *inventory else { panic!() };
     assert!(identities.is_empty());
@@ -220,11 +220,12 @@ fn prefix_validates_unselected_graphs_and_keeps_empty_page_native_continuation()
     assert_eq!(next_cursor.as_deref(), Some("2"));
     r.cursor = next_cursor;
     r.response = None;
-    let GuestReply::Action { action: HostAction::NativeRead { arguments, .. }, .. } = crate::handle("C01", r.clone()) else { panic!() };
+    let GuestReply::Action { action: HostAction::NativeRead { arguments, .. }, .. } = crate::handle("ud-codes", r.clone()) else { panic!() };
     assert_eq!(arguments["absolutePage"], 2);
-    assert_eq!(arguments["whereClauseUDCodeType"], "SystemFlag = false");
+    // The literal prefix is also sent as a broad server-side superset; the exact selection stays local.
+    assert_eq!(arguments["whereClauseUDCodeType"], "SystemFlag = false AND CodeTypeID LIKE 'B%'");
     r.response = Some(batch());
-    let GuestReply::InventoryData { records, inventory } = crate::handle("C01", r) else { panic!() };
+    let GuestReply::InventoryData { records, inventory } = crate::handle("ud-codes", r) else { panic!() };
     assert_eq!(records[0].0.keys["CodeTypeID"], "B");
     assert!(matches!(*inventory, GuestReply::Inventory { next_cursor: None, .. }));
 }
@@ -233,14 +234,14 @@ fn prefix_validates_unselected_graphs_and_keeps_empty_page_native_continuation()
 fn prefix_settings_reject_non_strings_and_missing_frozen_selection_stays_unfiltered() {
     for invalid in [Value::Null, json!(false), json!(12), json!([]), json!({})] {
         let r = prefixed(invalid);
-        assert!(matches!(crate::handle("C01", r), GuestReply::Failure { diagnostic } if diagnostic.code == "INVALID_SETTING"));
+        assert!(matches!(crate::handle("ud-codes", r), GuestReply::Failure { diagnostic } if diagnostic.code == "INVALID_SETTING"));
     }
     for state in [Value::Null, json!({"_pluginSettings":{}}),
         json!({"_pluginSettings":{"itemsPerPage":200},"_pluginState":{"config":{"codeTypeIdPrefix":"B"}}})] {
         let mut r = request();
         r.state = state;
         r.response = Some(batch());
-        let GuestReply::InventoryData { records, .. } = crate::handle("C01", r) else { panic!() };
+        let GuestReply::InventoryData { records, .. } = crate::handle("ud-codes", r) else { panic!() };
         assert_eq!(records.len(), 2, "Missing frozen selection cannot use current saved filter");
     }
 }
@@ -250,7 +251,7 @@ fn prefix_saved_default_blank_override_and_exact_acquisition_are_independent() {
     let mut r = request();
     r.operation = "descriptor".into();
     r.state = json!({"_pluginState":{"config":{"codeTypeIdPrefix":" B "}}});
-    let GuestReply::Descriptor { category, .. } = crate::handle("C01", r) else { panic!() };
+    let GuestReply::Descriptor { category, .. } = crate::handle("ud-codes", r) else { panic!() };
     let saved = resolve_plugin_settings(&category.settings, &Value::Null).unwrap();
     assert_eq!(saved["codeTypeIdPrefix"], " B ");
     let cleared = resolve_plugin_settings(&category.settings, &json!({"codeTypeIdPrefix":""})).unwrap();
@@ -259,20 +260,20 @@ fn prefix_saved_default_blank_override_and_exact_acquisition_are_independent() {
     let mut r = request();
     r.operation = "configure".into();
     r.state = json!({"_pluginState":{"config":saved},"values":{"codeTypeIdPrefix":""},"selected":false});
-    let GuestReply::State { plugin_state, .. } = crate::handle("C01", r) else { panic!() };
+    let GuestReply::State { plugin_state, .. } = crate::handle("ud-codes", r) else { panic!() };
     assert_eq!(plugin_state["config"]["codeTypeIdPrefix"], "", "Saving blank clears the saved filter");
     assert_eq!(plugin_state["selected"], false);
 
     let mut r = prefixed(json!("B"));
     r.operation = "acquire".into();
-    r.identity = Some(identity("C01", "UDCodeType", "C", "CodeTypeID", "A"));
-    let GuestReply::Action { action: HostAction::NativeRead { arguments, .. }, .. } = crate::handle("C01", r.clone()) else { panic!() };
+    r.identity = Some(identity("ud-codes", "UDCodeType", "C", "CodeTypeID", "A"));
+    let GuestReply::Action { action: HostAction::NativeRead { arguments, .. }, .. } = crate::handle("ud-codes", r.clone()) else { panic!() };
     assert_eq!(arguments["whereClauseUDCodeType"], "CodeTypeID = 'A' AND SystemFlag = false");
     let mut source = batch();
     source["returnObj"]["UDCodeType"].as_array_mut().unwrap().pop();
     source["returnObj"]["UDCodes"].as_array_mut().unwrap().pop();
     r.response = Some(source.clone());
-    let GuestReply::Definition { identity, definition, .. } = crate::handle("C01", r) else { panic!() };
+    let GuestReply::Definition { identity, definition, .. } = crate::handle("ud-codes", r) else { panic!() };
     assert_eq!(identity.keys["CodeTypeID"], "A");
     assert_eq!(definition, source["returnObj"]);
 }

@@ -20,7 +20,7 @@ const METADATA_FIELDS: [&str; 8] = [
     "ChangedOn",
 ];
 pub fn owns(category: &str, kind: &str) -> bool {
-    category == "C24" && kind == KIND
+    category == "solutions-and-packages" && kind == KIND
 }
 pub fn methods() -> Vec<(String, String)> {
     ["GetInstalledSolutions", "GetInstalledSolution"]
@@ -67,7 +67,7 @@ fn identity(row: &Value, company: &str) -> Result<Identity, Diagnostic> {
         ));
     }
     Ok(Identity {
-        category: "C24".into(),
+        category: "solutions-and-packages".into(),
         kind: KIND.into(),
         scope: Scope::Company {
             company: company.into(),
@@ -82,7 +82,7 @@ fn metadata(row: &Value) -> Result<Value, Diagnostic> {
     for field in METADATA_FIELDS {
         if row.get(field).is_none() {
             return Err(Diagnostic::new("RETAINED_SOLUTION_METADATA_UNVERIFIED",
-                "The installed package catalog omitted native metadata fields."));
+                "The installed package catalog omitted Epicor metadata fields."));
         }
     }
     // Preserve the complete native catalog row, including history and future fields.
@@ -92,7 +92,7 @@ pub(super) fn catalog(response: &Value, company: &str) -> Result<Vec<(Identity, 
     let rows = response["returnObj"].as_array().ok_or_else(|| {
         Diagnostic::new(
             "RETAINED_SOLUTION_INVENTORY_UNVERIFIED",
-            "The native installed-package catalog is not an array.",
+            "The Epicor installed-package catalog is not an array.",
         )
     })?;
     let mut output = Vec::new();
@@ -105,7 +105,7 @@ pub(super) fn catalog(response: &Value, company: &str) -> Result<Vec<(Identity, 
         if !seen.insert(id.keys["SolutionID"].clone()) {
             return Err(Diagnostic::new(
                 "DUPLICATE_NATIVE_IDENTITY",
-                "The native installed-package catalog repeats a company and solution identity.",
+                "The Epicor installed-package catalog repeats a company and solution identity.",
             ));
         }
         output.push((id, metadata(row)?));
@@ -116,7 +116,7 @@ fn discovery(request: GuestRequest) -> GuestReply {
     if request.cursor.is_some() {
         return fail(
             "INVALID_CURSOR",
-            "The native installed-package catalog is unpaged and has no continuation cursor.",
+            "The Epicor installed-package catalog is unpaged and has no resume point saved position.",
         );
     }
     if request.response.is_none() && request.error.is_none() {
@@ -147,7 +147,7 @@ fn discovery(request: GuestRequest) -> GuestReply {
 }
 pub(super) fn inline_bytes(payload: &Value) -> Result<Vec<u8>, Diagnostic> {
     let invalid = || Diagnostic::new("RETAINED_SOLUTION_BYTES_UNVERIFIED",
-        "The native retained package has an invalid byte payload.");
+        "The Epicor retained package has an invalid byte payload.");
     match payload {
         Value::String(s) => base64::engine::general_purpose::STANDARD.decode(s).map_err(|_| invalid()),
         Value::Array(a) => a.iter().map(|v| v.as_u64().filter(|n| *n <= 255)
@@ -159,14 +159,14 @@ pub(super) fn package_signature(response: &Value) -> Result<Value, Diagnostic> {
     let invalid = || {
         Diagnostic::new(
             "RETAINED_SOLUTION_BYTES_UNVERIFIED",
-            "The native retained package lacks a physical row ID or valid byte payload.",
+            "The Epicor retained package lacks a physical row ID or valid byte payload.",
         )
     };
     let id = response["returnObj"].as_str().ok_or_else(invalid)?;
     if id.eq_ignore_ascii_case("00000000-0000-0000-0000-000000000000") {
         return Err(Diagnostic::new(
             "RETAINED_SOLUTION_DISAPPEARED",
-            "The native retained package returned its explicit absent sentinel.",
+            "The Epicor retained package returned its explicit absent sentinel.",
         ));
     }
     if id.len() != 36
@@ -273,7 +273,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if request.operation != "acquire" {
         return fail(
             "UNSUPPORTED_OPERATION",
-            "The retained-package collector supports discovery and exact acquisition.",
+            "The retained-package collector supports discovery and exact download.",
         );
     }
     let Some(id) = request.identity.as_ref() else {
@@ -323,7 +323,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         );
     };
     if phase == "metadata" {
-        let found = catalog(response,&request.company).and_then(|rows| rows.into_iter().find(|(found,_)|found==id).map(|(_,meta)|meta).ok_or_else(||Diagnostic::new("RETAINED_SOLUTION_DISAPPEARED", "The selected solution is absent from the native installed-package catalog.")));
+        let found = catalog(response,&request.company).and_then(|rows| rows.into_iter().find(|(found,_)|found==id).map(|(_,meta)|meta).ok_or_else(||Diagnostic::new("RETAINED_SOLUTION_DISAPPEARED", "The selected solution is absent from the Epicor installed-package catalog.")));
         let meta = match found {
             Ok(meta) => meta,
             Err(diagnostic) => return GuestReply::Failure { diagnostic },
@@ -345,7 +345,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     }
     fail(
         "INVALID_PLUGIN_STATE",
-        "The retained-package checkpoint is invalid.",
+        "The retained-package saved progress is invalid.",
     )
 }
 #[cfg(test)]
@@ -361,7 +361,7 @@ mod tests {
         GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C24".into(),
+            category: "solutions-and-packages".into(),
             company: "C".into(),
             identity: Some(identity(&row(), "C").unwrap()),
             cursor: None,

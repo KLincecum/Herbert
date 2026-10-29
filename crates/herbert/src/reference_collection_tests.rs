@@ -1,11 +1,11 @@
-//! Real collection dispatch, with an inert local producer and the compiled C27.
+//! Real collection dispatch, with an inert local producer and the compiled Configuration references.
 use super::*;
 
 #[tokio::test]
-#[ignore = "Explicit compiled C27 and inert malformed-processor fixture; no ERP"]
-async fn c27_reference_invalid_processor_with_coverage_is_nonauthoritative() {
+#[ignore = "Explicit compiled Configuration references and inert malformed-processor fixture; no ERP"]
+async fn configuration_references_reference_invalid_processor_with_coverage_is_nonauthoritative() {
     let root = tempfile::tempdir().unwrap();
-    let wasm = PathBuf::from(std::env::var("HERBERT_C27_WASM").unwrap());
+    let wasm = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_WASM").unwrap());
     let real = Plugin::load(&wasm).await.unwrap();
     let descriptor = GuestReply::Descriptor {
         abi: PLUGIN_ABI,
@@ -23,10 +23,10 @@ async fn c27_reference_invalid_processor_with_coverage_is_nonauthoritative() {
         },
         keys: BTreeMap::from([("ID".into(), "one".into())]),
     };
-    let invalid = json!({"identity":{"category":"C27","kind":"DatabaseTableReference","scope":source.scope,"keys":{"Schema":"Erp","Table":"Part"}},"occurrences":[{"source":source,"pointer":"/absent"}]});
+    let invalid = json!({"identity":{"category":"configuration-references","kind":"DatabaseTableReference","scope":source.scope,"keys":{"Schema":"Erp","Table":"Part"}},"occurrences":[{"source":source,"pointer":"/absent"}]});
     let reply = GuestReply::References {
         records: vec![
-            json!({"identity":{"category":"C27","kind":"DatabaseTableReference","scope":source.scope,"keys":{"Schema":"Erp","Table":"Part"}},"occurrences":[{"source":source,"pointer":""}]}),
+            json!({"identity":{"category":"configuration-references","kind":"DatabaseTableReference","scope":source.scope,"keys":{"Schema":"Erp","Table":"Part"}},"occurrences":[{"source":source,"pointer":""}]}),
             invalid,
         ],
         diagnostics: vec![Diagnostic::new(
@@ -77,7 +77,7 @@ async fn c27_reference_invalid_processor_with_coverage_is_nonauthoritative() {
                 .any(|d| d.code == "PROCESSOR_REFERENCE_INVALID")
         );
         let context =
-            super::super::super::reference_processing::reference_context(&s.journal, "C27");
+            super::super::super::reference_processing::reference_context(&s.journal, "configuration-references");
         assert_eq!(context["producerCount"], 1);
         assert_eq!(context["producerReferenceErrors"], true);
         assert_eq!(s.journal.references.len(), 1);
@@ -87,7 +87,7 @@ async fn c27_reference_invalid_processor_with_coverage_is_nonauthoritative() {
     let request = GuestRequest {
         abi: PLUGIN_ABI,
         operation: "discover".into(),
-        category: "C27".into(),
+        category: "configuration-references".into(),
         company: "C".into(),
         identity: None,
         cursor: None,
@@ -108,7 +108,7 @@ async fn c27_reference_invalid_processor_with_coverage_is_nonauthoritative() {
 
 async fn producer(root: &Path, processor: &Plugin) -> Plugin {
     let mut category = processor.category.clone();
-    category.id = "C01".into();
+    category.id = "ud-codes".into();
     category.name = "Reference fixture".into();
     category.roles = vec!["collector".into(), "pagedDefinitions".into()];
     category.helpers.clear();
@@ -122,7 +122,7 @@ async fn producer(root: &Path, processor: &Plugin) -> Plugin {
         response_policies: vec![],
     };
     let id = Identity {
-        category: "C01".into(),
+        category: "ud-codes".into(),
         kind: "Fixture".into(),
         scope: Scope::Company {
             company: "C".into(),
@@ -202,15 +202,15 @@ async fn scripted(
 }
 
 #[tokio::test]
-#[ignore = "Explicit compiled C27; loopback admission only, no ERP"]
-async fn c27_reference_real_exact_acquire_and_full_ordering() {
-    let wasm = PathBuf::from(std::env::var("HERBERT_C27_WASM").unwrap());
+#[ignore = "Explicit compiled Configuration references; loopback admission only, no ERP"]
+async fn configuration_references_reference_real_exact_acquire_and_full_ordering() {
+    let wasm = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_WASM").unwrap());
     for exact in [true, false] {
         let root = tempfile::tempdir().unwrap();
         let plugins = root.path().join("plugins");
         std::fs::create_dir(&plugins).unwrap();
-        std::fs::copy(&wasm, plugins.join("c27.wasm")).unwrap();
-        let processor = Plugin::load(&plugins.join("c27.wasm")).await.unwrap();
+        std::fs::copy(&wasm, plugins.join("configuration-references.wasm")).unwrap();
+        let processor = Plugin::load(&plugins.join("configuration-references.wasm")).await.unwrap();
         let producer = producer(&plugins, &processor).await;
         let host = Host::with_roots(
             root.path().join("state"),
@@ -231,7 +231,7 @@ async fn c27_reference_real_exact_acquire_and_full_ordering() {
                 producer,
                 vec![processor],
                 Identity {
-                    category: "C01".into(),
+                    category: "ud-codes".into(),
                     kind: "Fixture".into(),
                     scope: Scope::Company {
                         company: "C".into(),
@@ -249,7 +249,7 @@ async fn c27_reference_real_exact_acquire_and_full_ordering() {
                 .collect(
                     run.clone(),
                     connection.clone(),
-                    vec!["C27".into(), "C01".into()],
+                    vec!["configuration-references".into(), "ud-codes".into()],
                     vec![],
                     true,
                     None,
@@ -262,7 +262,7 @@ async fn c27_reference_real_exact_acquire_and_full_ordering() {
             .journal
             .artifacts
             .iter()
-            .find(|a| a.identity.category == "C01")
+            .find(|a| a.identity.category == "ud-codes")
             .unwrap();
         assert_eq!(source.dependencies.len(), 1);
         assert_eq!(source.processing, "derived");
@@ -274,7 +274,7 @@ async fn c27_reference_real_exact_acquire_and_full_ordering() {
                 s.journal
                     .artifacts
                     .iter()
-                    .any(|a| a.identity.category == "C27"
+                    .any(|a| a.identity.category == "configuration-references"
                         && a.acquisition == Completeness::Collected)
             );
             assert_eq!(s.journal.phase, "completed", "{:?}", s.journal.diagnostics);
@@ -284,7 +284,7 @@ async fn c27_reference_real_exact_acquire_and_full_ordering() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|a| a["identity"]["category"] == "C01")
+            .find(|a| a["identity"]["category"] == "ud-codes")
             .unwrap();
         assert!(source["diagnostics"].as_array().unwrap().is_empty());
         assert!(!source["referenceCoverage"].as_array().unwrap().is_empty());
@@ -295,7 +295,7 @@ async fn c27_reference_real_exact_acquire_and_full_ordering() {
 #[ignore = "Compiled single-plugin host pipeline with saved local index; no ERP connection"]
 async fn reference_saved_index_host_pipeline() {
     let saved: storage::RunJournal = serde_json::from_slice(&std::fs::read(std::env::var_os("HERBERT_PROFILE_JOURNAL").unwrap()).unwrap()).unwrap();
-    let plugin = Plugin::load(&PathBuf::from(std::env::var_os("HERBERT_C27_WASM").unwrap())).await.unwrap();
+    let plugin = Plugin::load(&PathBuf::from(std::env::var_os("HERBERT_CONFIGURATION_REFERENCES_WASM").unwrap())).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let host = Host::with_roots(root.path().join("state"),root.path().join("plugins"),Some(root.path().join("coordination")));
     // Only local caller admission is simulated. Unexpected native operations fail.
@@ -303,7 +303,7 @@ async fn reference_saved_index_host_pipeline() {
     let mut journal=storage::new_journal("reference-host-profile".into());
     journal.company=saved.company.clone(); journal.endpoint=connection.endpoint.to_string(); journal.caller="fixture".into();
     journal.temporary_access_enabled=false; journal.references=saved.references.clone();
-    journal.categories=vec!["C27".into()];journal.category_names=saved.category_names.clone();
+    journal.categories=vec!["configuration-references".into()];journal.category_names=saved.category_names.clone();
     let run=run(Storage::open(&root.path().join("output"),false,journal).unwrap());
     *run.collection_context.lock().await=Some(CollectionContext {processors:vec![plugin.clone()],page_size:None,full:true,processed_inputs:Arc::new(Mutex::new(BTreeSet::new()))});
     let start=std::time::Instant::now();
@@ -312,7 +312,7 @@ async fn reference_saved_index_host_pipeline() {
     let elapsed=start.elapsed().as_millis();
     let s=run.storage.lock().unwrap();
     assert_eq!(s.journal.artifacts.len(),saved.references.len(),"Diagnostic codes: {:?}",s.journal.diagnostics.iter().map(|d| &d.code).collect::<Vec<_>>());
-    assert_eq!(run.activity.statistics()["workTimings"]["C27"]["pluginCall"]["calls"],1,"Bulk host collection must not reacquire each reference");
+    assert_eq!(run.activity.statistics()["workTimings"]["configuration-references"]["pluginCall"]["calls"],1,"Bulk host collection must not reacquire each reference");
     for artifact in &s.journal.artifacts {
         assert_eq!(artifact.acquisition,Completeness::Collected);
         for file in &artifact.files {s.verify(file).unwrap();}

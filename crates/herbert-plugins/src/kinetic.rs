@@ -55,7 +55,7 @@ fn layer_identity(
     if get("TypeCode").is_empty() || get("DeviceType").is_empty() {
         return Err(Diagnostic::new(
             "LAYER_IDENTITY_UNVERIFIED",
-            "A layer lacks its native type or device identity.",
+            "A layer lacks its Epicor type or device identity.",
         ));
     }
     let owner = get("UserName");
@@ -96,9 +96,9 @@ fn layer_identity(
     })
 }
 fn discover(request: GuestRequest) -> GuestReply {
-    // Application summary projections omit personal owner/parent identity. C13
+    // Application summary projections omit personal owner/parent identity. Kinetic personalizations
     // uses the independent paged XXXDef families declared in tables.json.
-    if request.category == "C13" {
+    if request.category == "kinetic-personalizations" {
         return GuestReply::Inventory {
             identities: vec![],
             next_cursor: None,
@@ -109,7 +109,7 @@ fn discover(request: GuestRequest) -> GuestReply {
     let published = match request.cursor.as_deref() {
         None => false,
         Some("published") => true,
-        _ => return fail("INVALID_CURSOR", "The MetaFX discovery cursor is invalid."),
+        _ => return fail("INVALID_CURSOR", "The MetaFX discovery saved position is invalid."),
     };
     if request.response.is_none() && request.error.is_none() {
         return action(
@@ -152,13 +152,13 @@ fn discover(request: GuestRequest) -> GuestReply {
         let Some(view) = object_text(app, "Id").filter(|s| !s.is_empty()) else {
             diagnostics.push(Diagnostic::new(
                 "APP_IDENTITY_UNVERIFIED",
-                "A native application lacks its exact Id.",
+                "An Epicor application lacks its exact Id.",
             ));
             continue;
         };
-        if request.category == "C12" && !crate::system_artifacts::marked(app) {
+        if request.category == "kinetic-applications-and-layers" && !crate::system_artifacts::marked(app) {
             identities.push(Identity {
-                category: "C12".into(),
+                category: "kinetic-applications-and-layers".into(),
                 kind: "MetaFXApplication".into(),
                 scope: Scope::Company {
                     company: request.company.clone(),
@@ -181,7 +181,7 @@ fn discover(request: GuestRequest) -> GuestReply {
                     continue;
                 }
                 let code = object_text(layer, "TypeCode").unwrap_or("");
-                if personal(code) != (request.category == "C13") {
+                if personal(code) != (request.category == "kinetic-personalizations") {
                     continue;
                 }
                 match layer_identity(&request.category, layer, view, &request.company) {
@@ -206,7 +206,7 @@ fn layer_request(id: &Identity, caller: &str, draft: bool, version: i64) -> Valu
         "IncludeDraftContent":draft,"UxAppVersion":version}})
 }
 pub fn owns(category: &str, kind: &str) -> bool {
-    matches!(category, "C12" | "C13") && matches!(kind, "MetaFXApplication" | "MetaFXLayer")
+    matches!(category, "kinetic-applications-and-layers" | "kinetic-personalizations") && matches!(kind, "MetaFXApplication" | "MetaFXLayer")
 }
 pub fn handle(mut request: GuestRequest) -> GuestReply {
     if request.operation == "discover" {
@@ -242,7 +242,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     {
         return fail(
             "INVALID_IDENTITY",
-            "The complete native MetaFX identity is required.",
+            "The complete Epicor MetaFX identity is required.",
         );
     }
     if !id.keys["Company"].is_empty() && id.keys["Company"] != request.company {
@@ -259,26 +259,26 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if caller.is_empty() {
         return fail(
             "CALLER_REQUIRED",
-            "The host must supply the authenticated caller identity for the native read contract.",
+            "The host must supply the authenticated Epicor user identity for the Epicor read contract.",
         );
     }
     if layer && personal(&id.keys["TypeCode"]) && id.keys["UserName"].is_empty() {
         return fail(
             "PERSONAL_OWNER_UNVERIFIED",
-            "The personal layer inventory does not establish its native owner. Do not substitute the editor or initiating caller for the owner.",
+            "The personal layer inventory does not establish its Epicor owner. Do not substitute the editor or initiating Epicor user for the owner.",
         );
     }
     let expected_scope = if layer && personal(&id.keys["TypeCode"]) {
-        if request.category != "C13" {
+        if request.category != "kinetic-personalizations" {
             return fail(
                 "INVALID_IDENTITY",
-                "Personal Kinetic definitions belong to C13.",
+                "Personal Kinetic layouts are downloaded by the Kinetic personalizations plugin. Choose that plugin instead.",
             );
         }
         if id.keys["UserName"] != caller {
             return fail(
                 "PERSONAL_PERSISTED_ROUTE_REQUIRED",
-                "Native GetLayer replaces UserName with the authenticated caller. Use the independently discovered persisted XXXDef identity to acquire another owner's definition.",
+                "Epicor GetLayer replaces UserName with the authenticated Epicor user. Use the independently discovered saved XXXDef identity to acquire another owner's definition.",
             );
         }
         Scope::Personal {
@@ -295,7 +295,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if id.scope != expected_scope {
         return fail(
             "SCOPE_MISMATCH",
-            "The native MetaFX keys and declared ownership scope differ.",
+            "The Epicor MetaFX keys and declared ownership scope differ.",
         );
     }
     let phase = request
@@ -311,7 +311,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     {
         return fail(
             "KINETIC_CHECKPOINT_UPGRADE_REQUIRED",
-            "This checkpoint predates current retained-version and child ownership checks. Restart this exact identity from its initial read; retained native receipts remain available.",
+            "This saved progress predates current retained-version and child ownership checks. Restart this exact identity from its initial read; retained Epicor receipts remain available.",
         );
     }
     if phase == "resourceFiles" {
@@ -348,7 +348,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         else {
             return fail(
                 "SYSTEM_POLICY_UNVERIFIED",
-                "The native application catalog could not verify this artifact.",
+                "The Epicor application catalog could not verify this artifact.",
             );
         };
         if !identities.iter().any(|candidate| {
@@ -456,7 +456,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         }
         return finish(request, state);
     }
-    fail("INVALID_PLUGIN_STATE", "The MetaFX checkpoint is invalid.")
+    fail("INVALID_PLUGIN_STATE", "The MetaFX saved progress is invalid.")
 }
 
 pub(crate) fn read_versions(request: GuestRequest, mut state: Value) -> GuestReply {
@@ -476,7 +476,7 @@ pub(crate) fn finish(request: GuestRequest, state: Value) -> GuestReply {
     if state["content"].as_object().is_none_or(|c| c.is_empty()) {
         return fail(
             "CONTENT_UNAVAILABLE",
-            "None of the native authored-content reads succeeded. Their failures remain recorded by the host.",
+            "None of the Epicor authored-content reads succeeded. Their failures remain recorded by the host.",
         );
     }
     let authored_files = state["content"]["export"]
@@ -539,7 +539,7 @@ fn retained_versions(
     let Some(rows) = body(response).as_array() else {
         diagnostics.push(Diagnostic::new(
             "VERSION_INVENTORY_UNVERIFIED",
-            "The retained version route omitted its native row array.",
+            "The retained version route omitted its Epicor row array.",
         ));
         return vec![];
     };
@@ -567,14 +567,14 @@ fn retained_versions(
                 .get("Content")
                 .is_some_and(|v| v.is_string() || v.is_null())
         {
-            diagnostics.push(Diagnostic::new("VERSION_IDENTITY_UNVERIFIED", "A retained version row lacks its complete native key, Int32 version, or Content field."));
+            diagnostics.push(Diagnostic::new("VERSION_IDENTITY_UNVERIFIED", "Epicor returned an application version without its full ID, version number or content, so that version was not saved."));
             continue;
         }
         let get = |field: &str| row[field].as_str().unwrap();
         if !get("Company").is_empty() && get("Company") != selected_company {
             diagnostics.push(Diagnostic::new(
                 "VERSION_SCOPE_MISMATCH",
-                "The native version route returned a row outside the selected company.",
+                "The Epicor version route returned a row outside the selected company.",
             ));
             continue;
         }
@@ -614,7 +614,7 @@ fn retained_versions(
         if !seen.insert(key) {
             diagnostics.push(Diagnostic::new(
                 "VERSION_IDENTITY_DUPLICATE",
-                "The retained version response repeats a complete native version key.",
+                "The retained version response repeats a complete Epicor version key.",
             ));
             continue;
         }
@@ -639,19 +639,19 @@ fn validate_layer_response(id: &Identity, response: &Value, diagnostics: &mut Ve
     {
         diagnostics.push(Diagnostic::new(
             "LAYER_CONTENT_IDENTITY_UNVERIFIED",
-            "The native layer content does not match the complete requested layer identity.",
+            "The Epicor layer content does not match the complete requested layer identity.",
         ));
     }
     if personal(&id.keys["TypeCode"])
         && layer.get("UserName").and_then(Value::as_str) != Some(id.keys["UserName"].as_str())
     {
-        diagnostics.push(Diagnostic::new("PERSONAL_OWNER_UNVERIFIED", "The native GetLayer route replaces UserName with the authenticated caller; acquire other owners through the exact persisted definition route."));
+        diagnostics.push(Diagnostic::new("PERSONAL_OWNER_UNVERIFIED", "The Epicor GetLayer route replaces UserName with the authenticated Epicor user; acquire other owners through the exact saved definition route."));
     }
 }
 fn validate_app_export(id: &Identity, response: &Value, diagnostics: &mut Vec<Diagnostic>) {
     let export = body(response);
     if export.get("ViewId").and_then(Value::as_str) != Some(id.keys["ViewId"].as_str()) {
-        diagnostics.push(Diagnostic::new("APP_EXPORT_IDENTITY_UNVERIFIED", "The native export ViewId does not match the requested app. Configurator exports require their documented ConfigId mapping."));
+        diagnostics.push(Diagnostic::new("APP_EXPORT_IDENTITY_UNVERIFIED", "Epicor's export ViewId does not match the requested app. Configurator exports require their documented ConfigId mapping."));
     }
     if !export
         .get("Files")
@@ -660,7 +660,7 @@ fn validate_app_export(id: &Identity, response: &Value, diagnostics: &mut Vec<Di
     {
         diagnostics.push(Diagnostic::new(
             "APP_EXPORT_CONTENT_UNVERIFIED",
-            "The native app export lacks its authored Files map of text values.",
+            "The Epicor app export lacks its authored Files map of text values.",
         ));
     }
 }
@@ -669,7 +669,7 @@ mod tests {
     use super::*;
     fn app() -> Identity {
         Identity {
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             kind: "MetaFXApplication".into(),
             scope: Scope::Company {
                 company: "EXAMPLE".into(),
@@ -687,7 +687,7 @@ mod tests {
         GuestRequest {
             abi: 1,
             operation: "discover".into(),
-            category: "C12".into(),
+            category: "kinetic-applications-and-layers".into(),
             company: "EXAMPLE".into(),
             identity: None,
             cursor: None,
@@ -826,7 +826,7 @@ mod tests {
 
     fn personal_layer() -> Identity {
         Identity {
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             kind: "MetaFXLayer".into(),
             scope: Scope::Personal {
                 company: "EXAMPLE".into(),
@@ -884,7 +884,7 @@ mod tests {
     fn other_personal_owner_and_forged_scope_are_refused_before_native_read() {
         let mut r = request();
         r.operation = "acquire".into();
-        r.category = "C13".into();
+        r.category = "kinetic-personalizations".into();
         r.identity = Some(personal_layer());
         r.state = json!({"_hostCaller":"manager"});
         let GuestReply::Failure { diagnostic } = handle(r.clone()) else {

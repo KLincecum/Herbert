@@ -22,8 +22,8 @@ pub(crate) fn personal_union(request: GuestRequest) -> GuestReply {
 /// Read the persisted parents and their children in bounded pages instead.
 pub(crate) fn search_page(request: GuestRequest) -> GuestReply {
     let all = specs();
-    let mut parent = all.iter().find(|s| s.category == "C14" && s.table == "QuickSearch")
-        .expect("C14 QuickSearch specification").clone();
+    let mut parent = all.iter().find(|s| s.category == "searches-and-navigation" && s.table == "QuickSearch")
+        .expect("Searches and navigation QuickSearch specification").clone();
     parent.children = ["QuickSearchCriteria", "QuickSearchValueList"].into_iter().map(|table| Child {
         table: table.into(),
         links: ["Company", "GlbCompany", "QuickSearchID"].into_iter()
@@ -39,8 +39,8 @@ pub(crate) fn search_page(request: GuestRequest) -> GuestReply {
 /// without that display mutation so parent and child identities stay intact.
 pub(crate) fn context_page(request: GuestRequest) -> GuestReply {
     let mut parent = specs().into_iter()
-        .find(|s| s.category == "C14" && s.table == "ContextMenu")
-        .expect("C14 ContextMenu specification");
+        .find(|s| s.category == "searches-and-navigation" && s.table == "ContextMenu")
+        .expect("Searches and navigation ContextMenu specification");
     // Custom children can belong to a system parent. Filter complete graphs
     // after collection, keeping the keys of any required system parent.
     parent.filters.clear();
@@ -139,7 +139,7 @@ mod search_scope_tests {
             let req = GuestRequest {
                 abi: 1,
                 operation: "acquire".into(),
-                category: "C15".into(),
+                category: "menus-and-launch-definitions".into(),
                 company: "C".into(),
                 identity: Some(id),
                 cursor: None,
@@ -187,7 +187,7 @@ mod search_scope_tests {
     }
     #[test]
     fn persisted_searches_use_full_keys_and_filter_only_real_native_markers() {
-        for spec in specs().into_iter().filter(|s| s.category == "C14") {
+        for spec in specs().into_iter().filter(|s| s.category == "searches-and-navigation") {
             let mut row = json!({"Company":"C","UserID":"another-owner","SysRowID":"owned-row"});
             for key in &spec.keys {
                 if key != "Company" && key != "UserID" {
@@ -200,7 +200,7 @@ mod search_scope_tests {
             let req = GuestRequest {
                 abi: 1,
                 operation: "acquire".into(),
-                category: "C14".into(),
+                category: "searches-and-navigation".into(),
                 company: "C".into(),
                 identity: Some(id),
                 cursor: None,
@@ -212,7 +212,7 @@ mod search_scope_tests {
             let GuestReply::Action {
                 action: HostAction::Query { query },
                 ..
-            } = crate::handle("C14", req)
+            } = crate::handle("searches-and-navigation", req)
             else {
                 panic!()
             };
@@ -272,7 +272,7 @@ mod download_budget_tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C15".into(),
+            category: "menus-and-launch-definitions".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -355,13 +355,13 @@ fn scalar(value: &Value) -> Option<String> {
     }
 }
 fn identity(spec: &TableFamily, row: &Value, company: &str) -> Result<Identity, GuestReply> {
-    if spec.category == "C09" && !row["TypeCode"].as_str().is_some_and(classic_scope::owns) {
+    if spec.category == "classic-customizations" && !row["TypeCode"].as_str().is_some_and(classic_scope::owns) {
         return Err(fail(
             "SOURCE_MISMATCH",
-            "The native definition type does not belong to Classic customizations.",
+            "The Epicor definition type does not belong to Classic customizations.",
         ));
     }
-    if spec.category == "C09"
+    if spec.category == "classic-customizations"
         && !row["TypeCode"]
             .as_str()
             .zip(spec.filters.get("TypeCode").and_then(Value::as_str))
@@ -369,7 +369,7 @@ fn identity(spec: &TableFamily, row: &Value, company: &str) -> Result<Identity, 
     {
         return Err(fail(
             "SOURCE_MISMATCH",
-            "The native definition type does not match the requested discovery branch.",
+            "The Epicor definition type does not match the requested discovery branch.",
         ));
     }
     let mut keys = BTreeMap::new();
@@ -377,7 +377,7 @@ fn identity(spec: &TableFamily, row: &Value, company: &str) -> Result<Identity, 
         let Some(value) = row.get(key).and_then(scalar) else {
             return Err(fail(
                 "IDENTITY_UNVERIFIED",
-                "A persisted definition lacks a complete native identity.",
+                "A saved definition lacks a complete Epicor ID.",
             ));
         };
         keys.insert(key.clone(), value);
@@ -385,7 +385,7 @@ fn identity(spec: &TableFamily, row: &Value, company: &str) -> Result<Identity, 
     if spec.kind == kinetic_registration::KIND && !kinetic_registration::valid_keys(&keys) {
         return Err(fail(
             "SOURCE_MISMATCH",
-            "The native row does not identify a user-defined Kinetic application registration.",
+            "The Epicor row does not identify a user-defined Kinetic application registration.",
         ));
     }
     let scope = crate::personal_scope::scope(
@@ -407,8 +407,10 @@ fn reuse_inventory(spec: &TableFamily) -> bool {
     // still need their native parent classification before reading a body.
     matches!(
         spec.category.as_str(),
-        "C09" | "C10" | "C11" | "C14" | "C15" | "C18" | "C19" | "C20" | "C24"
-    ) || spec.category == "C13"
+        // classic-dashboards is absent: dashboard_pages re-reads every selected root with DashBoardSvc.GetRows,
+        // so its discovery page is key-only (tables.json discovery_fields; CLASSIC-DASHBOARDS.md).
+        "classic-customizations" | "classic-personalizations" | "searches-and-navigation" | "menus-and-launch-definitions" | "report-behavior" | "configurators" | "business-rules-and-mappings" | "solutions-and-packages"
+    ) || spec.category == "kinetic-personalizations"
         || crate::shell_layout::owns(&spec.kind)
         || crate::kinetic_persisted::owns(&spec.kind)
         || spec.kind == "PersistedKineticPersonalization"
@@ -472,7 +474,7 @@ fn query(
     }
     // These dashboard children have independent native ownership markers.
     // Filter at query execution, before the host retains their response.
-    if (crate::category_enabled("C11") && spec.category == "C11")
+    if (crate::category_enabled("classic-dashboards") && spec.category == "classic-dashboards")
         && matches!(table, "DashBdChunk" | "DashBdLike")
     {
         criteria.push(QueryCriterion {
@@ -551,7 +553,7 @@ fn query(
                 ("SysCharacter01", "HerbertSecurityBytes"),
                 ("SysCharacter02", "HerbertCreatorBytes"),
             ],
-            "XXXDef" if (crate::category_enabled("C12") && spec.category == "C12") => &[
+            "XXXDef" if (crate::category_enabled("kinetic-applications-and-layers") && spec.category == "kinetic-applications-and-layers") => &[
                 ("Content", "HerbertContentBytes"),
                 ("SysCharacter03", "HerbertDraftBytes"),
                 ("SysCharacter01", "HerbertParentsBytes"),
@@ -601,7 +603,7 @@ fn query(
         metadata: vec![],
     }];
     let mut joins = Vec::new();
-    if (crate::category_enabled("C14") && spec.category == "C14") && table == "ESSearchFields" {
+    if (crate::category_enabled("searches-and-navigation") && spec.category == "searches-and-navigation") && table == "ESSearchFields" {
         // These children have no independent marker. Classify their exact
         // persisted parent in the same query before retaining field bodies.
         source_tables.push(QueryTable {
@@ -745,17 +747,42 @@ pub(crate) fn classic_page(request: &GuestRequest, company: &str, code: &str, af
     }
 }
 /// Read the full persisted identity without the native country-view filter.
-pub(crate) fn dashboard_page(request: &GuestRequest, company: &str, after: Value, state: Value) -> GuestReply {
-    let spec = specs().into_iter().find(|s| s.category == "C11").unwrap();
+pub(crate) fn dashboard_page(request: &GuestRequest, company: &str, after: Value, state: Value, prefix: &str) -> GuestReply {
+    let spec = specs().into_iter().find(|s| s.category == "classic-dashboards").unwrap();
     let mut links = BTreeMap::from([("Company".into(), json!(company))]);
     if let Some(id) = &request.identity {
         for (key, value) in &id.keys { links.insert(key.clone(), json!(value)); }
     }
     match query(&spec, request, &spec.table, links, true, json!({"after":after})) {
+        GuestReply::Action { action: HostAction::Query { mut query }, .. } if request.identity.is_none() => {
+            // Broad server-side superset of the literal DefinitionID prefix; dashboard_pages keeps the exact check.
+            if let Some(stem) = crate::report_query::like_stem(prefix) {
+                query.criteria.push(QueryCriterion { table: "DefinitionSource".into(), field: "DefinitionID".into(), operator: "LIKE".into(), parameter: "definitionPrefix".into() });
+                query.parameters.insert("definitionPrefix".into(), json!(format!("{stem}%")));
+            }
+            GuestReply::Action { action: HostAction::Query { query }, state }
+        }
         GuestReply::Action { action, .. } => GuestReply::Action { action, state },
         other => other,
     }
 }
+// Only the native Searches and navigation legacy graph reads system parents to find authored children.
+// Keep the full graph until search_archive filters pure stock graphs and emits
+// prerequisite parent keys. Every other persisted family keeps stock exclusion.
+fn inventory_root_allowed(spec: &TableFamily, row: &Value) -> bool {
+    if !crate::system_artifacts::marked(row) { return true; }
+    let links: BTreeMap<String, String> = ["LikeID", "ContextTypeCode"].into_iter()
+        .map(|key| (key.into(), key.into())).collect();
+    row["SystemFlag"] == true
+        && spec.category == "searches-and-navigation" && spec.schema == "Ice"
+        && spec.table == "ContextMenu" && spec.kind == "PersistedContextMenu"
+        && !spec.company && spec.keys == ["LikeID", "ContextTypeCode"]
+        && spec.children.len() == crate::search_archive::CONTEXT_CHILDREN.len()
+        && spec.children.iter().map(|child| child.table.as_str()).collect::<BTreeSet<_>>()
+            == crate::search_archive::CONTEXT_CHILDREN.iter().copied().collect()
+        && spec.children.iter().all(|child| child.links == links)
+}
+
 fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
     let cursor = match request
         .cursor
@@ -769,21 +796,21 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
         Err(_) => {
             return fail(
                 "INVALID_CURSOR",
-                "The persisted-definition cursor is invalid.",
+                "The saved-definition saved position is invalid.",
             );
         }
     };
-    if request.category == "C09" && cursor["classicTypesVersion"] != 1 {
+    if request.category == "classic-customizations" && cursor["classicTypesVersion"] != 1 {
         return fail(
             "CLASSIC_CURSOR_UPGRADE_REQUIRED",
-            "Restart Classic discovery to use the native type branches. The old cursor cannot establish complete coverage.",
+            "Restart Classic discovery to use the Epicor type branches. The old saved position cannot establish complete coverage.",
         );
     }
     let index = cursor.get("family").and_then(Value::as_u64).unwrap_or(0) as usize;
     let Some(spec) = selected.get(index) else {
         return fail(
             "INVALID_CURSOR",
-            "The cursor names an unavailable definition family.",
+            "The saved position names an unavailable definition family.",
         );
     };
     if request.state["phase"] == "inventoryChildren" {
@@ -793,8 +820,8 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
         .get("global")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let tenant = request.category == "C13" && cursor["tenant"] == true;
-    let has_tenant = request.category == "C13"
+    let tenant = request.category == "kinetic-personalizations" && cursor["tenant"] == true;
+    let has_tenant = request.category == "kinetic-personalizations"
         && request.state["_personalTenant"].as_str().is_some_and(|s| !s.is_empty());
     let next_branch = || {
         if spec.company && !global {
@@ -836,14 +863,14 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
     let Some(rows) = response.get("rows").and_then(Value::as_array) else {
         return fail(
             "INVALID_NATIVE_RESPONSE",
-            "The persisted inventory omitted its Results rows.",
+            "The saved inventory omitted its Results rows.",
         );
     };
     let mut identities = Vec::new();
     let mut diagnostics = Vec::new();
     let mut seen = BTreeSet::new();
     for row in rows {
-        if crate::system_artifacts::marked(row) {
+        if !inventory_root_allowed(spec, row) {
             continue;
         }
         match identity(spec, row, &request.company) {
@@ -853,7 +880,7 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
                 } else {
                     diagnostics.push(Diagnostic::new(
                         "DUPLICATE_NATIVE_IDENTITY",
-                        "The persisted inventory repeats an exact definition identity.",
+                        "The saved inventory repeats an exact definition identity.",
                     ));
                 }
             }
@@ -871,7 +898,7 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
             || after == cursor["after"].as_str()
             || request.page_size.is_some_and(|n| rows.len() > n as usize)
         {
-            diagnostics.push(Diagnostic::new("PAGING_UNVERIFIED", "The full inventory page has no advancing native cursor. Empty or complete coverage cannot be established."));
+            diagnostics.push(Diagnostic::new("PAGING_UNVERIFIED", "The full inventory page has no advancing Epicor saved position. Empty or complete coverage cannot be established."));
             return GuestReply::Inventory {
                 identities,
                 next_cursor: next_branch(),
@@ -898,7 +925,7 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
         let roots: Vec<_> = rows
             .iter()
             .filter(|row| {
-                !crate::system_artifacts::marked(row)
+                inventory_root_allowed(spec, row)
                     && identity(spec, row, &request.company).is_ok()
             })
             .cloned()
@@ -908,7 +935,7 @@ fn discovery(request: GuestRequest, selected: Vec<TableFamily>) -> GuestReply {
         }
         let records = rows
             .iter()
-            .filter(|row| !crate::system_artifacts::marked(row))
+            .filter(|row| inventory_root_allowed(spec, row))
             .filter_map(|row| {
                 identity(spec, row, &request.company)
                     .ok()
@@ -940,7 +967,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     let Some(id) = request.identity.as_ref() else {
         return fail("IDENTITY_REQUIRED", "Select an exact definition identity.");
     };
-    if request.category == "C09"
+    if request.category == "classic-customizations"
         && !id
             .keys
             .get("TypeCode")
@@ -948,7 +975,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     {
         return fail(
             "SOURCE_MISMATCH",
-            "The native definition type does not belong to Classic customizations.",
+            "The Epicor definition type does not belong to Classic customizations.",
         );
     }
     let Some(spec) = selected.iter().find(|s| {
@@ -968,13 +995,13 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if id.keys.keys().collect::<BTreeSet<_>>() != spec.keys.iter().collect::<BTreeSet<_>>() {
         return fail(
             "INVALID_IDENTITY",
-            "The complete native definition key is required.",
+            "The complete Epicor definition key is required.",
         );
     }
     if spec.kind == kinetic_registration::KIND && !kinetic_registration::valid_keys(&id.keys) {
         return fail(
             "SOURCE_MISMATCH",
-            "The native key does not identify a user-defined Kinetic application registration.",
+            "The Epicor key does not identify a user-defined Kinetic application registration.",
         );
     }
     if id
@@ -994,7 +1021,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         .unwrap_or("initial")
         .to_string();
 
-    if crate::category_enabled("C18")
+    if crate::category_enabled("report-behavior")
         && spec.table == "ReportStyleRule"
         && phase.starts_with("reportRule")
         && phase != "reportRuleScopeVerified"
@@ -1007,7 +1034,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         }
         return finish(spec, request);
     }
-    if crate::category_enabled("C17")
+    if crate::category_enabled("report-styles-and-layouts")
         && matches!(
             phase.as_str(),
             "reportHistoryInventory" | "reportHistoryParse"
@@ -1022,7 +1049,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         return finish(spec, request);
     }
 
-    if crate::category_enabled("C13")
+    if crate::category_enabled("kinetic-personalizations")
         && crate::shell_layout::owns(&spec.kind)
         && phase.starts_with("shell")
         && phase != "shellComplete"
@@ -1075,7 +1102,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         else {
             return fail(
                 "ROOT_UNVERIFIED",
-                "The persisted definition omitted its root rows.",
+                "The saved definition omitted its root rows.",
             );
         };
         if rows.len() != 1
@@ -1136,7 +1163,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let Some(child) = spec.children.get(index) else {
             return fail(
                 "INVALID_PLUGIN_STATE",
-                "A child-table checkpoint has an invalid index.",
+                "A child-table saved progress has an invalid index.",
             );
         };
         let mut state = request.state.clone();
@@ -1161,7 +1188,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 .unwrap()
                 .push(json!(Diagnostic::new(
                     "CHILDREN_UNVERIFIED",
-                    "A persisted child read omitted its Results rows."
+                    "A saved child read omitted its Results rows."
                 )));
         }
         state["index"] = json!(index + 1);
@@ -1173,7 +1200,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     }
     fail(
         "INVALID_PLUGIN_STATE",
-        "The persisted-definition checkpoint is invalid.",
+        "The saved-definition saved progress is invalid.",
     )
 }
 fn child_action(
@@ -1187,7 +1214,7 @@ fn child_action(
         let Some(value) = state["root"].get(parent).filter(|value| !value.is_null()) else {
             return fail(
                 "PARENT_KEY_UNVERIFIED",
-                "A child read cannot bind its native parent key.",
+                "A child read cannot bind its Epicor parent key.",
             );
         };
         links.insert(field.clone(), value.clone());
@@ -1195,7 +1222,7 @@ fn child_action(
     query(spec, request, &child.table, links, false, state)
 }
 fn finish(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
-    if crate::category_enabled("C18")
+    if crate::category_enabled("report-behavior")
         && spec.table == "ReportStyleRule"
         && request.state["phase"] != "reportRuleComplete"
     {
@@ -1206,7 +1233,7 @@ fn finish(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
             };
         }
     }
-    if crate::category_enabled("C13")
+    if crate::category_enabled("kinetic-personalizations")
         && crate::shell_layout::owns(&spec.kind)
         && request.state["phase"] != "shellComplete"
     {
@@ -1248,7 +1275,7 @@ fn finish(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
                 .as_array()
                 .is_none_or(|rows| rows.is_empty())
         {
-            diagnostics.push(Diagnostic::new("CLASSIC_ASSEMBLY_UNVERIFIED", "The dashboard declares a deployed assembly, but neither the persisted assembly field nor retained legacy chunks contain it."));
+            diagnostics.push(Diagnostic::new("CLASSIC_ASSEMBLY_UNVERIFIED", "The dashboard declares a deployed assembly, but neither the saved assembly field nor retained legacy chunks contain it."));
         }
     }
     // The collector declares source relationships. The host only supplies the
@@ -1276,7 +1303,7 @@ fn finish(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
         .filter(|(field, _)| definition["XXXDef"][0][*field].is_string())
         .map(|(field, length)| json!({"row":root_pointer,"field":field,"lengthField":length}))
         .collect(),
-        "XXXDef" if (crate::category_enabled("C12") && spec.category == "C12") => [
+        "XXXDef" if (crate::category_enabled("kinetic-applications-and-layers") && spec.category == "kinetic-applications-and-layers") => [
             ("Content", "HerbertContentBytes"),
             ("SysCharacter03", "HerbertDraftBytes"),
             ("SysCharacter01", "HerbertParentsBytes"),
@@ -1332,7 +1359,7 @@ fn finish(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
     if !lengths.is_empty() || !streams.is_empty() {
         definition["herbertSources"] = json!({"textLengths":lengths,"chunkStreams":streams});
     }
-    if (crate::category_enabled("C09") && spec.category == "C09") && spec.table == "XXXDef" {
+    if (crate::category_enabled("classic-customizations") && spec.category == "classic-customizations") && spec.table == "XXXDef" {
         diagnostics.extend(crate::classic_sources::append_persisted_scripts(
             &mut definition,
         ));
@@ -1340,13 +1367,13 @@ fn finish(spec: &TableFamily, mut request: GuestRequest) -> GuestReply {
     if crate::kind_enabled("PersistedKineticPersonalization")
         && spec.kind == "PersistedKineticPersonalization"
     {}
-    if crate::category_enabled("C12") && crate::kinetic_persisted::owns(&spec.kind) {
+    if crate::category_enabled("kinetic-applications-and-layers") && crate::kinetic_persisted::owns(&spec.kind) {
         crate::kinetic_persisted::append(&request.state, &mut definition);
     }
-    if crate::category_enabled("C18") && spec.table == "ReportStyleRule" {
+    if crate::category_enabled("report-behavior") && spec.table == "ReportStyleRule" {
         diagnostics.extend(report_behavior::attach(&mut definition));
     }
-    if crate::category_enabled("C13") && crate::shell_layout::owns(&spec.kind) {
+    if crate::category_enabled("kinetic-personalizations") && crate::shell_layout::owns(&spec.kind) {
         crate::shell_layout::append(&request.state, &mut definition);
     }
     GuestReply::Definition {
@@ -1370,7 +1397,7 @@ mod solution_type_scope_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C24".into(),
+            category: "solutions-and-packages".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1425,7 +1452,7 @@ mod solution_type_scope_tests {
     fn solution_type_missing_schema_stays_incomplete_and_continues_next_family() {
         let selected: Vec<_> = specs()
             .into_iter()
-            .filter(|s| s.category == "C24")
+            .filter(|s| s.category == "solutions-and-packages")
             .collect();
         let index = selected
             .iter()
@@ -1502,7 +1529,7 @@ mod completion_tests {
         let r = GuestRequest {
             abi: 1,
             operation: "discover".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1539,7 +1566,7 @@ mod completion_tests {
         let mut r = GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: Some(id),
             cursor: None,
@@ -1590,7 +1617,7 @@ mod grid_contract_tests {
         let spec = specs()
             .into_iter()
             .find(|s| {
-                s.category == "C13"
+                s.category == "kinetic-personalizations"
                     && s.filters.get("TypeCode") == Some(&json!("KineticGridLayout"))
             })
             .unwrap();
@@ -1600,7 +1627,7 @@ mod grid_contract_tests {
         let mut request = GuestRequest {
             abi: 1,
             operation: "acquire".into(),
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             company: "C".into(),
             identity: Some(id),
             cursor: None,
@@ -1718,7 +1745,7 @@ mod classic_persisted_tests {
     use super::*;
     #[test]
     fn absent_declared_assembly_is_partial_but_undeployed_dashboard_can_complete() {
-        let spec = specs().into_iter().find(|s| s.category == "C11").unwrap();
+        let spec = specs().into_iter().find(|s| s.category == "classic-dashboards").unwrap();
         let mut row = json!({"Company":"C","ProductID":"EP","GlbCompany":"","DefinitionID":"D","CGCCode":"","SysRowID":"r","SysRevID":1,"DashboardSchema":"<schema/>","DashboardAssembly":"","HasDashboardAssembly":false});
         let id = identity(&spec, &row, "C").unwrap();
         for deployed in [false, true] {
@@ -1726,7 +1753,7 @@ mod classic_persisted_tests {
             let request = GuestRequest {
                 abi: 1,
                 operation: "acquire".into(),
-                category: "C11".into(),
+                category: "classic-dashboards".into(),
                 company: "C".into(),
                 identity: Some(id.clone()),
                 cursor: None,
@@ -1767,6 +1794,15 @@ mod classic_persisted_tests {
             );
         }
     }
+    #[test]
+    fn dashboard_discovery_reads_only_key_fields() {
+        // dashboard_pages re-reads each selected root with GetRows; discovery must not download bodies twice.
+        let request = GuestRequest { abi: 1, operation: "discover".into(), category: "classic-dashboards".into(), company: "C".into(), identity: None, cursor: None, page_size: Some(16), state: json!({}), response: None, error: None };
+        let GuestReply::Action { action, .. } = dashboard_page(&request, "C", Value::Null, json!({"phase":"inventory"}), "") else { panic!() };
+        let text = serde_json::to_string(&action).unwrap();
+        for body in ["DashboardSchema", "DashboardAssembly", "HerbertDashboardSchemaBytes", "\"*\""] { assert!(!text.contains(body), "{body} in {text}"); }
+        for key in ["Company", "ProductID", "GlbCompany", "DefinitionID", "CGCCode", "SysRowID", "SystemFlag"] { assert!(text.contains(&format!("\"{key}\"")), "{key}"); }
+    }
 }
 
 #[cfg(test)]
@@ -1776,7 +1812,7 @@ mod classic_classification_tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C09".into(),
+            category: "classic-customizations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -1936,7 +1972,7 @@ mod persisted_cursor_completeness_tests {
 
     #[test]
     fn invalid_full_page_cursor_retains_identities_and_advances_independent_branch() {
-        for category in ["C09", "C12", "C17"] {
+        for category in ["classic-customizations", "kinetic-applications-and-layers", "report-styles-and-layouts"] {
             let spec = specs()
                 .into_iter()
                 .find(|spec| spec.category == category)
@@ -1964,7 +2000,7 @@ mod persisted_cursor_completeness_tests {
 
     #[test]
     fn oversized_page_with_advancing_cursor_retains_identities_but_is_incomplete() {
-        for category in ["C09", "C12", "C17"] {
+        for category in ["classic-customizations", "kinetic-applications-and-layers", "report-styles-and-layouts"] {
             let spec = specs()
                 .into_iter()
                 .find(|spec| spec.category == category)

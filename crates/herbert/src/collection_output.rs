@@ -159,11 +159,11 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
 
-    /// Repeatable local I/O specimen. Run explicitly on the qualification disk.
+    /// Repeatable local I/O benchmark. Run explicitly on the benchmark disk.
     #[test]
     #[ignore]
     fn measure_personalization_file_writes() {
-        let base = std::env::var("HERBERT_WRITE_BENCH_ROOT").expect("Set the qualification output root");
+        let base = std::env::var("HERBERT_WRITE_BENCH_ROOT").expect("Set the benchmark output root");
         let temp = tempfile::tempdir_in(base).unwrap();
         let mut storage = Storage::open(temp.path(), false,
             crate::storage::new_journal("write-measurement".into())).unwrap();
@@ -171,7 +171,7 @@ mod tests {
         let mut naming = std::time::Duration::ZERO;
         let mut writing = std::time::Duration::ZERO;
         for index in 0..1000 {
-            let id = Identity { category: "C13".into(), kind: "Favorite".into(),
+            let id = Identity { category: "kinetic-personalizations".into(), kind: "Favorite".into(),
                 scope: Scope::Personal { company: "C".into(), owner: format!("user{}", index % 100) },
                 keys: BTreeMap::from([("ItemSeq".into(), index.to_string())]) };
             storage.page_owns_derived_files = true;
@@ -249,7 +249,7 @@ mod tests {
     fn page_receipts_survive_reopen_and_preserve_user_edits() {
         let temp = tempfile::tempdir().unwrap();
         let journal = crate::storage::new_journal("page-receipts".into());
-        let id = Identity { category: "C13".into(), kind: "Favorite".into(),
+        let id = Identity { category: "kinetic-personalizations".into(), kind: "Favorite".into(),
             scope: Scope::Personal { company: "C".into(), owner: "a/b".into() },
             keys: BTreeMap::from([("FolderSeq".into(), "1".into())]) };
         let definition = json!({"herbertDirectOutput":true,"herbertOutputGroup":"User - a/b",
@@ -274,7 +274,7 @@ mod tests {
     fn page_names_survive_reopen_and_resolve_case_collisions() {
         let temp=tempfile::tempdir().unwrap();
         let journal=crate::storage::new_journal("page-names".into());
-        let id=|name: &str| Identity { category:"C04".into(),kind:"BAQ".into(),scope:Scope::Global,
+        let id=|name: &str| Identity { category:"baqs-and-ubaqs".into(),kind:"BAQ".into(),scope:Scope::Global,
             keys:BTreeMap::from([("QueryID".into(),name.into())]) };
         let mut store=Storage::open(temp.path(),false,journal.clone()).unwrap();
         let definition=json!({"herbertDirectOutput":true,"value":"original"});
@@ -294,7 +294,7 @@ mod tests {
     fn interrupted_page_does_not_claim_uncommitted_files() {
         let temp = tempfile::tempdir().unwrap();
         let journal = crate::storage::new_journal("interrupted-page".into());
-        let id = Identity { category: "C13".into(), kind: "Favorite".into(),
+        let id = Identity { category: "kinetic-personalizations".into(), kind: "Favorite".into(),
             scope: Scope::Global, keys: BTreeMap::from([("ID".into(), "1".into())]) };
         let definition = json!({"herbertDirectOutput":true,"value":"first"});
         let mut storage = Storage::open(temp.path(), false, journal.clone()).unwrap();
@@ -316,10 +316,10 @@ mod tests {
         journal.company = "C".into();
         journal
             .category_names
-            .insert("C01".into(), "UD Codes".into());
+            .insert("ud-codes".into(), "UD codes".into());
         let mut storage = Storage::open(temp.path(), false, journal).unwrap();
         let id = Identity {
-            category: "C01".into(),
+            category: "ud-codes".into(),
             kind: "UDCodeType".into(),
             scope: Scope::Company {
                 company: "C".into(),
@@ -328,7 +328,7 @@ mod tests {
         };
         let data = json!({"UDCodeType":[{"CodeTypeID":"Example"}],
             "UDCodes":[{"CodeID":"A","CodeDesc":"Unicode Ω"}]});
-        let path = temp.path().join("UD Codes/Example/Example.json");
+        let path = temp.path().join("UD codes/Example/Example.json");
         let mut progress = Vec::new();
         write_page_with_progress(&mut storage, vec![(id.clone(), data.clone())], |count| {
             assert!(

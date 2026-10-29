@@ -87,14 +87,8 @@ fn issues(journal: &Value) -> Vec<Issue> {
                 if packages > 0 { format!("{packages} ZIP package(s)") } else { String::new() })
         };
         let next = match code.as_str() {
-            "KINETIC_PARENT_NOT_FOUND" => "Check the named parent layer before restoring this package. Retrying only helps if the parent becomes available.",
             "KINETIC_RESOURCE_PATH_UNVERIFIED" if id.is_null() => "The source identity was not recorded. Copy the run details for investigation. This message alone does not establish that an application is broken.",
-            "KINETIC_RESOURCE_PATH_UNVERIFIED" => "Review the named source file and reference. Check the saved output for the original definition. The referenced resource was not verified.",
-            "KINETIC_PACKAGE_INVALID" => "Review the saved recovery files and the package explanation. Do not treat recovery JSON as an importable ZIP.",
-            "KINETIC_PACKAGE_RECOVERY_ONLY" => "Keep the saved custom recovery files. This collector did not produce a standalone application package for this group; it does not mean the server read failed.",
-            "DIAGNOSTIC_LOG_WRITE_FAILED" => "Check destination access and preserve the run journal for diagnosis.",
-            _ if diagnostic["retryable"] == true => "This problem is marked retryable. Resolve the reported cause before starting another download.",
-            _ => "Review the explanation and saved files. Copy these details when reporting the problem.",
+            _ => crate::next_steps::for_issue(&code, diagnostic["retryable"] == true),
         }.to_owned();
         let technical = serde_json::to_string_pretty(&json!({"runId":journal["runId"],
             "diagnostic":diagnostic,"acquisition":artifact.map(|a|&a["acquisition"]),
@@ -164,7 +158,7 @@ pub(super) fn show(ui: &mut egui::Ui, journal: &Value) {
                 ui.label(format!("{} issues", items.len()));
                 ui.add(
                     egui::TextEdit::singleline(&mut filter)
-                        .hint_text("Filter by item, message or code")
+                        .hint_text("Filter issues")
                         .desired_width(320.0),
                 );
                 if ui.button("Copy private details").clicked() {
@@ -279,7 +273,7 @@ mod tests {
     fn selecting_an_issue_and_copying_uses_its_own_file_evidence() {
         let ctx=egui::Context::default();
         let artifacts:Vec<_>=["Alpha","Beta"].into_iter().map(|name|json!({
-            "identity":{"category":"C12","kind":"application","keys":{"ViewId":name}},
+            "identity":{"category":"kinetic-applications-and-layers","kind":"application","keys":{"ViewId":name}},
             "acquisition":"collected","processing":"derived","files":[{"path":format!("{name}.zip")}],
             "diagnostics":[{"code":"MISSING","message":format!("Check {name}")}]})).collect();
         let journal=json!({"runId":"interaction","artifacts":artifacts});
@@ -314,7 +308,7 @@ mod tests {
     #[test]
     fn global_diagnostic_resolves_saved_files_and_deduplicates_artifact_copy() {
         let id =
-            json!({"category":"C12","kind":"KineticApplicationBundle","keys":{"ViewId":"App"}});
+            json!({"category":"kinetic-applications-and-layers","kind":"KineticApplicationBundle","keys":{"ViewId":"App"}});
         let diagnostic =
             json!({"identity":id,"code":"KINETIC_PARENT_NOT_FOUND","message":"Missing Parent"});
         let journal = json!({"diagnostics":[diagnostic],"artifacts":[{"identity":id,"acquisition":"collected","processing":"derived","files":[{"path":"App.zip"}],"diagnostics":[diagnostic]}]});
@@ -338,7 +332,7 @@ mod tests {
         for width in [720.0, 1180.0] {
             let ctx = egui::Context::default();
             let journal = json!({"runId":"fixture","diagnostics":[{"code":"KINETIC_PARENT_NOT_FOUND",
-                "identity":{"category":"C12","kind":"application","keys":{"ViewId":"App"}},"message":"Missing parent. Child ZIP saved."}]});
+                "identity":{"category":"kinetic-applications-and-layers","kind":"application","keys":{"ViewId":"App"}},"message":"Missing parent. Child ZIP saved."}]});
             let mut shapes = Vec::new();
             for _ in 0..4 {
                 let mut output = ctx.run_ui(

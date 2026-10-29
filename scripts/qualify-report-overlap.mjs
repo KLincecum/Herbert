@@ -246,7 +246,7 @@ try {
           requestId: randomUUID(),
           destination,
           outputMode: "separate",
-          categories: ["C17", "C18"],
+          categories: ["report-styles-and-layouts", "report-behavior"],
           pageSize: 2,
           temporaryAccess: false,
         }),
@@ -297,7 +297,7 @@ try {
         "Both plugins share three company rule pages plus two populated-global paging requests",
       );
       for (const artifact of status.artifacts.filter(
-        (a) => a.identity.category === "C17",
+        (a) => a.identity.category === "report-styles-and-layouts",
       )) {
         assert.equal(
           artifact.processing,
@@ -327,7 +327,7 @@ try {
         );
       }
       for (const artifact of status.artifacts.filter(
-        (a) => a.identity.category === "C18",
+        (a) => a.identity.category === "report-behavior",
       )) {
         const expected = rules.find(
           (r) => r.SysRowID === artifact.identity.keys.SysRowID,

@@ -210,7 +210,7 @@ try {
         requestId: randomUUID(),
         destination: join(evidenceDir, mode),
         outputMode: "separate",
-        categories: ["C17"],
+        categories: ["report-styles-and-layouts"],
         pageSize: 2,
         temporaryAccess: false,
       }),

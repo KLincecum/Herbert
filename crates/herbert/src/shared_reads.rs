@@ -51,6 +51,13 @@ impl ReadCache {
         };
         result.map(|response| (response, !executed))
     }
+    /// Drop every retained body when the execution settles. Recovery creates a new cache.
+    pub async fn clear(&self) {
+        self.entries.lock().await.clear();
+    }
+    pub async fn is_empty(&self) -> bool {
+        self.entries.lock().await.is_empty()
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -104,12 +111,12 @@ mod tests {
         assert_eq!(a.0.raw, b.0.raw);
         let activity = crate::activity::Activity::default();
         for (response, reused) in [a, b] {
-            if reused { activity.cached_response("C17", None, response.raw.len()); }
-            else { activity.native_response("C17", None, response.elapsed_ms, response.raw.len(), &response.value); }
+            if reused { activity.cached_response("report-styles-and-layouts", None, response.raw.len()); }
+            else { activity.native_response("report-styles-and-layouts", None, response.elapsed_ms, response.raw.len(), &response.value); }
         }
         let (_, reused) = cache.read_with_source("body".into(), &cancel, read).await.unwrap();
         assert!(reused);
-        activity.cached_response("C17", None, 2);
+        activity.cached_response("report-styles-and-layouts", None, 2);
         let stats = activity.statistics();
         assert_eq!(stats["requests"], 1);
         assert_eq!(stats["requestMs"], 93);

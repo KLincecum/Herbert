@@ -19,7 +19,7 @@ fn invalid(message: &str) -> GuestReply {
 pub(super) fn handle(mut request: GuestRequest) -> GuestReply {
     let selected: Vec<_> = specs()
         .into_iter()
-        .filter(|s| s.category == "C13")
+        .filter(|s| s.category == "kinetic-personalizations")
         .collect();
     if request.state["phase"] == "children" {
         return children(request, &selected);
@@ -33,11 +33,11 @@ pub(super) fn handle(mut request: GuestRequest) -> GuestReply {
             .as_ref()
             .and_then(|v| v["returnObj"]["TableFieldList"].as_array())
         else {
-            return invalid("The native field dictionary omitted its fields.");
+            return invalid("The Epicor field dictionary omitted its fields.");
         };
         let table = request.state["table"].as_str().unwrap_or("").to_owned();
         if fields.is_empty() || !fields.iter().any(|f| f["FieldName"] == "SysRowID") {
-            return invalid("The native field dictionary has no row identity.");
+            return invalid("The Epicor field dictionary has no row identity.");
         }
         if !request.state["metadata"].is_object() {
             request.state["metadata"] = json!({});
@@ -90,6 +90,11 @@ pub(super) fn handle(mut request: GuestRequest) -> GuestReply {
                     })
                     .collect(),
             );
+            // Select before validation: unselected rows produce no diagnostics.
+            // Paging below still uses the raw rows, so the keyset is unchanged.
+            if !owner_selected(spec, &row, owner_prefix(&request)) {
+                continue;
+            }
             // Native query reads expose SQL rowversion as UInt64. The union
             // projects its original eight bytes; restore that same wire value.
             for field in request.state["metadata"][&spec.table].as_array().unwrap() {
@@ -235,6 +240,15 @@ fn children(mut request: GuestRequest, selected: &[TableFamily]) -> GuestReply {
         request.response = None;
         request.error = None;
     }
+}
+
+fn owner_prefix(request: &GuestRequest) -> &str {
+    request.state.pointer("/_pluginSettings/userIdPrefix").and_then(Value::as_str).unwrap_or("")
+}
+/// Mirrors personal_pages::selected_owner on the raw row, before validation.
+fn owner_selected(spec: &TableFamily, row: &Value, prefix: &str) -> bool {
+    prefix.is_empty()
+        || spec.owner_field.as_ref().is_some_and(|field| row[field].as_str().is_some_and(|o| o.starts_with(prefix)))
 }
 
 fn valid_guid(text: &str) -> bool {
@@ -405,6 +419,24 @@ fn build(request: &GuestRequest, selected: &[TableFamily]) -> Result<Value, Stri
                 String::new(),
             ));
         }
+        // Owner prefix: a server LIKE superset; the exact starts_with check
+        // in the union phase still decides selection. An ownerless source can
+        // never match a non-empty prefix, so it reads no rows.
+        let prefix = owner_prefix(request);
+        let server = crate::personal_pages::server_literal(prefix);
+        match (&spec.owner_field, prefix.is_empty()) {
+            (_, true) => {}
+            (Some(owner), false) => if !server.is_empty() {
+                criteria.push((owner.as_str(), "LIKE", literal(&json!(format!("{server}%")))?,
+                    "And".into(), String::new(), String::new()));
+            },
+            (None, false) => {
+                for op in ["=", "<>"] {
+                    criteria.push(("SysRowID", op, "'00000000-0000-0000-0000-000000000000'".into(),
+                        "And".into(), String::new(), String::new()));
+                }
+            }
+        }
         if let Some(family) = cursor["family"].as_u64() {
             if (branch as u64) < family {
                 criteria.push((
@@ -454,7 +486,7 @@ mod tests {
     #[test]
     fn combined_page_preserves_chunk_rows_under_the_exact_parent() {
         let root = json!({"Company":"C","ProductID":"EP","TypeCode":"KineticGridLayout","Key1":"alice","Key2":"Form","Key3":"Grid","CGCCode":"","SysRowID":"11111111-1111-1111-1111-111111111111","SystemFlag":false});
-        let spec = specs().into_iter().find(|s| s.category == "C13").unwrap();
+        let spec = specs().into_iter().find(|s| s.category == "kinetic-personalizations").unwrap();
         let id = identity(&spec, &root, "C").unwrap();
         let inventory = GuestReply::Inventory {
             identities: vec![id.clone()],
@@ -465,7 +497,7 @@ mod tests {
         let mut request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -511,7 +543,7 @@ mod tests {
         let request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             company: "C'1".into(),
             identity: None,
             cursor: Some(
@@ -525,7 +557,7 @@ mod tests {
         };
         let selected: Vec<_> = specs()
             .into_iter()
-            .filter(|s| s.category == "C13")
+            .filter(|s| s.category == "kinetic-personalizations")
             .collect();
         let args = build(&request, &selected).unwrap();
         let ds = &args["queryDS"];
@@ -573,11 +605,42 @@ mod tests {
         assert!(build(&old, &selected).is_err());
     }
     #[test]
+    fn owner_prefix_pushes_like_literal_and_selects_before_validation() {
+        let selected: Vec<_> = specs().into_iter().filter(|s| s.category == "kinetic-personalizations").collect();
+        let mut metadata = json!({});
+        for table in TABLES {metadata[*table] = json!([{"FieldName":"SysRowID","DataType":"uniqueidentifier"}]);}
+        let mut request = GuestRequest {abi:PLUGIN_ABI,operation:"discover".into(),category:"kinetic-personalizations".into(),
+            company:"C".into(),identity:None,cursor:None,page_size:Some(10),
+            state:json!({"metadata":metadata,"_pluginSettings":{"userIdPrefix":"Ab'%c"}}),response:None,error:None};
+        let items = |request: &GuestRequest| build(request,&selected).unwrap()["queryDS"]["QueryWhereItem"].as_array().unwrap().clone();
+        let where_items = items(&request);
+        for (branch,spec) in selected.iter().enumerate() {
+            let alias = format!("Source{branch}");
+            let like: Vec<_> = where_items.iter().filter(|r| r["TableID"] == alias && r["CompOp"] == "LIKE").collect();
+            match &spec.owner_field {
+                Some(owner) => {assert_eq!(like.len(),1);assert_eq!(like[0]["FieldName"],owner.as_str());assert_eq!(like[0]["RValue"],"N'Ab''%'");}
+                None => {assert!(like.is_empty());assert!(where_items.iter().any(|r| r["TableID"] == alias && r["FieldName"] == "SysRowID" && r["CompOp"] == "<>"));}
+            }
+        }
+        request.state["_pluginSettings"]["userIdPrefix"] = json!("%x");
+        assert!(items(&request).iter().all(|r| r["CompOp"] != "LIKE"));
+        // An unselected row that would fail identity validation is skipped silently.
+        let family = selected.iter().position(|s| s.table == "FavFolder").unwrap();
+        request.state["_pluginSettings"]["userIdPrefix"] = json!("Al");
+        request.state["phase"] = json!("union");
+        request.state["metadata"] = json!({"FavFolder":[{"FieldName":"SysRowID","DataType":"uniqueidentifier"}]});
+        request.response = Some(json!({"returnObj":{"Errors":[],"Results":[{"RecordKind":family,"RecordID":"11111111-1111-1111-1111-111111111111",
+            "FavFolder_UserID":"Beta","FavFolder_Company":"OTHER","FavFolder_SysRowID":"11111111-1111-1111-1111-111111111111"}]}}));
+        let GuestReply::InventoryData {records,inventory} = handle(request) else {panic!()};
+        assert!(records.is_empty());
+        assert!(matches!(*inventory, GuestReply::Inventory {authoritative:true,ref diagnostics,..} if diagnostics.is_empty()));
+    }
+    #[test]
     fn native_query_errors_do_not_report_an_empty_success() {
         let request = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C13".into(),
+            category: "kinetic-personalizations".into(),
             company: "C".into(),
             identity: None,
             cursor: None,

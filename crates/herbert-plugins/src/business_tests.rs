@@ -14,7 +14,7 @@ fn family_prefix_preserves_complete_form_bytes_and_independent_output_settings()
 #[test]
 fn excluded_output_and_read_errors_remain_incomplete_with_zero_matches_and_good_peers() {
     let mut records=form_records();records[1].1["herbertNativePageExtensions"]=json!([{"secret":"EXCLUDED_PAYLOAD"}]);
-    for independent in [false,true] {let (selected,errors)=finish_records(finish_selected(records.clone(),Some("raw".into()),true,independent,&selection_state("forms","A")));assert_eq!(selected.len(),1);assert_eq!(errors.len(),1);assert_eq!(errors[0].identity.as_ref().unwrap().keys["FormId"],"B");assert!(!serde_json::to_string(&errors).unwrap().contains("EXCLUDED_PAYLOAD"));let (selected,errors)=finish_records(finish_selected(records.clone(),Some("raw".into()),true,independent,&selection_state("postingRules","Missing")));assert!(selected.is_empty());assert!(!errors.is_empty());}
+    for independent in [false,true] {let (selected,errors)=finish_records(finish_selected(records.clone(),Some("raw".into()),true,independent,&selection_state("forms","A")));assert_eq!(selected.len(),1);assert!(errors.is_empty(),"a prefix-excluded record is not validated or reported: {errors:?}");assert!(!serde_json::to_string(&errors).unwrap().contains("EXCLUDED_PAYLOAD"));let (selected,errors)=finish_records(finish_selected(records.clone(),Some("raw".into()),true,independent,&selection_state("postingRules","Missing")));assert!(selected.is_empty());assert!(!errors.is_empty());}
     let mut r=request();r.state=selection_state("structuredOutput","Missing");r.state["records"]=json!(form_records());r.error=Some(Diagnostic::new("DENIED","read failed"));let result=finish_records(handle(r));assert!(result.0.is_empty());assert!(result.1.iter().all(|error|error.code=="DENIED"));assert_eq!(result.1.len(),2);
 }
 #[test]
@@ -122,7 +122,7 @@ fn request() -> GuestRequest {
     GuestRequest {
         abi: PLUGIN_ABI,
         operation: "discover".into(),
-        category: "C20".into(),
+        category: "business-rules-and-mappings".into(),
         company: "TESTCO".into(),
         identity: None,
         cursor: None,
@@ -193,7 +193,7 @@ fn descriptor_is_pure_bulk_and_excludes_side_effecting_posting_service() {
     assert!(!reads.iter().any(|(s, _)| s == "Erp.BO.ACTTypeSvc"));
     let mut r = request();
     r.operation = "descriptor".into();
-    let GuestReply::Descriptor { category, .. } = crate::handle("C20", r) else {
+    let GuestReply::Descriptor { category, .. } = crate::handle("business-rules-and-mappings", r) else {
         panic!()
     };
     assert!(category.roles.iter().any(|r| r == "pagedDefinitions"));
@@ -201,7 +201,7 @@ fn descriptor_is_pure_bulk_and_excludes_side_effecting_posting_service() {
 }
 #[test]
 fn supplied_native_data_survives_pages_and_every_serialized_continuation() {
-    let Ok(base) = std::env::var("HERBERT_C20_REPLAY") else {
+    let Ok(base) = std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_REPLAY") else {
         return;
     };
     for lane in ["2026.1", "2025.2"] {
@@ -215,7 +215,7 @@ fn supplied_native_data_survives_pages_and_every_serialized_continuation() {
                 std::path::Path::new(&base)
                     .parent()
                     .unwrap()
-                    .join("c20-output-proof")
+                    .join("business-rules-and-mappings-output-proof")
                     .join(lane)
                     .join("graph-routes/schema.json"),
             )
@@ -261,7 +261,7 @@ fn supplied_native_data_survives_pages_and_every_serialized_continuation() {
         loop {
             // Simulate a fresh guest process at every host boundary.
             r = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
-            match crate::handle("C20", r.clone()) {
+            match crate::handle("business-rules-and-mappings", r.clone()) {
                 GuestReply::Action { action, state } => {
                     r.state = state;
                     r.state["_hostPreparePage"] = json!(true);

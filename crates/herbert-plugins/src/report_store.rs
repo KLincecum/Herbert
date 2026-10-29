@@ -11,7 +11,7 @@ pub fn contract() -> HelperContract {
     .expect("Reviewed report helper contract")
 }
 pub fn owns(category: &str, kind: &str) -> bool {
-    category == "C17" && kind == "CurrentCustomReportPackage"
+    category == "report-styles-and-layouts" && kind == "CurrentCustomReportPackage"
 }
 fn fail(code: &str, message: &str) -> GuestReply {
     GuestReply::Failure {
@@ -20,7 +20,7 @@ fn fail(code: &str, message: &str) -> GuestReply {
 }
 fn identity(key: &str) -> Identity {
     Identity {
-        category: "C17".into(),
+        category: "report-styles-and-layouts".into(),
         kind: "CurrentCustomReportPackage".into(),
         scope: Scope::Global,
         keys: BTreeMap::from([("PrintProgram".into(), key.into())]),
@@ -137,7 +137,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
             let Some(size) = r.page_size.filter(|n| *n > 0 && *n <= i32::MAX as u32) else {
                 return fail(
                     "PAGE_SIZE_REQUIRED",
-                    "Supply a positive native Int32 page size.",
+                    "Enter a page size from 1 to 2147483647.",
                 );
             };
             return call(
@@ -150,13 +150,13 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
         if body["oSuccess"] != true {
             return fail(
                 "CURRENT_REPORT_INVENTORY_REFUSED",
-                "The native current custom report inventory refused; absence is unverified.",
+                "The Epicor current custom report inventory refused; absence is unverified.",
             );
         }
         let Some(rows) = body.pointer("/oDS/Store").and_then(Value::as_array) else {
             return fail(
                 "CURRENT_REPORT_INVENTORY_INVALID",
-                "The native inventory omitted its rows.",
+                "The Epicor inventory omitted its rows.",
             );
         };
         let mut ids = vec![];
@@ -166,7 +166,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
             let Some(key) = row["PrintProgram"].as_str().filter(|s| !s.is_empty()) else {
                 diagnostics.push(Diagnostic::new(
                     "CURRENT_REPORT_KEY_INVALID",
-                    "A current package omitted its full native key.",
+                    "A current package omitted its full Epicor key.",
                 ));
                 continue;
             };
@@ -279,7 +279,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
         {
             return fail(
                 "CURRENT_REPORT_KEY_MISMATCH",
-                "The native package metadata differs from its selected key or omits source fields.",
+                "The Epicor package metadata differs from its selected key or omits source fields.",
             );
         }
         let Some(file) = body
@@ -297,7 +297,7 @@ pub fn handle(mut r: GuestRequest) -> GuestReply {
         {
             return fail(
                 "CURRENT_REPORT_BYTES_MISMATCH",
-                "The original package bytes differ from native length/hash metadata or are empty.",
+                "The original package bytes differ from Epicor length/hash metadata or are empty.",
             );
         }
         r.state = json!({"phase":"assemble","metadata":meta,"file":file});
@@ -420,7 +420,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C17".into(),
+            category: "report-styles-and-layouts".into(),
             company: "C".into(),
             identity: Some(identity("/Root/reports/StockName/Main")),
             cursor: None,

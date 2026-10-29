@@ -247,7 +247,7 @@ try {
         requestId: randomUUID(),
         destination,
         outputMode: "separate",
-        categories: ["C12", "C13"],
+        categories: ["kinetic-applications-and-layers", "kinetic-personalizations"],
         pageSize: 2,
         temporaryAccess: false,
       }),

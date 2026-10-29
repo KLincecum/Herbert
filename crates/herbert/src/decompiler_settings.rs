@@ -4,7 +4,7 @@ use herbert_contract::Diagnostic;
 use serde_json::{json,Value};
 use std::path::Path;
 const KEY:&str="localDecompilerWorkers";
-fn error()->Diagnostic { Diagnostic::new("INVALID_DECOMPILER_WORKERS","Saved local decompiler workers must be a positive u32 within this platform's semaphore range. The original settings were preserved.") }
+fn error()->Diagnostic { Diagnostic::new("INVALID_DECOMPILER_WORKERS","The saved number of decompiler workers is not valid. Enter a whole number of 1 or more. Your other settings were kept.") }
 pub(crate) fn validate(count:u32)->Result<(),Diagnostic>{
  if count==0 || count as u64>tokio::sync::Semaphore::MAX_PERMITS as u64 {Err(error())}else{Ok(())}
 }

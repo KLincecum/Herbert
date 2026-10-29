@@ -2,11 +2,37 @@
 use super::*;
 use crate::collection_output::PreparedRecord;
 
+/// A current artifact needs no second reference scan when every processor's coverage is recorded and
+/// nothing asked for a refresh: its file is unchanged, so a rescan returns the same references.
+/// Partial acquisitions count too; the write path already marked their processing "partial".
+/// Before, every Partial artifact was read back and rescanned, one saved update at a time, before
+/// the processors started (34 s idle for 204 Direct-only extended-properties tables).
+pub(super) fn already_scanned(artifact: &Artifact, processor_hashes: &[&str]) -> bool {
+    let processed = match artifact.acquisition {
+        Completeness::Collected => artifact.processing == "derived",
+        Completeness::Partial => artifact.processing == "partial",
+        _ => false,
+    };
+    processed
+        && !artifact.diagnostics.iter().any(|d| d.code == "REFERENCE_REFRESH_PENDING")
+        && processor_hashes.iter().all(|hash| {
+            artifact.diagnostics.iter().any(|d| {
+                d.code == "REFERENCE_SCAN_COVERAGE" && d.context.get("processorSha256") == Some(&json!(hash))
+            })
+        })
+}
+
 pub(super) fn reference_error(d: &Diagnostic) -> bool {
     d.code != "REFERENCE_SCAN_COVERAGE" && d.code != "USER_EDIT_CONFLICT"
 }
 
 pub(super) fn reference_context(journal: &storage::RunJournal, consumer: &str) -> Value {
+    reference_context_for(journal, consumer, None)
+}
+/// With `exact`, pass only the references to that identity. An exact acquire
+/// reads nothing else (`herbert-plugins` references.rs), and copying the whole
+/// index into every per-identity request grew with the run.
+fn reference_context_for(journal: &storage::RunJournal, consumer: &str, exact: Option<&Identity>) -> Value {
     let producers = journal
         .artifacts
         .iter()
@@ -32,7 +58,22 @@ pub(super) fn reference_context(journal: &storage::RunJournal, consumer: &str) -
                     && reference_error(d)
             })
     });
-    json!({"references":journal.references,"producerCount":inspected,"producerReferenceErrors":partial})
+    let references = match exact {
+        None => json!(journal.references),
+        Some(identity) => {
+            let identity = json!(identity);
+            json!(journal.references.iter().filter(|r| r.get("identity") == Some(&identity)).collect::<Vec<_>>())
+        }
+    };
+    json!({"references":references,"producerCount":inspected,"producerReferenceErrors":partial})
+}
+pub(super) async fn exact_reference_context(run: &Arc<Run>, consumer: &str, identity: &Identity) -> Result<Value, Diagnostic> {
+    let shared = run.storage.clone();
+    let (consumer, identity) = (consumer.to_owned(), identity.clone());
+    blocking(move || {
+        let storage = shared.lock().map_err(|_| Diagnostic::new("RUN_STATE_FAILED", "Run state is unavailable."))?;
+        Ok(reference_context_for(&storage.journal, &consumer, Some(&identity)))
+    }).await
 }
 
 /// Copy only the processor's input, not every retained file and run receipt.
@@ -71,6 +112,7 @@ impl Host {
             .iter()
             .map(|a| storage::identity_key(&a.identity))
             .collect::<std::collections::BTreeSet<_>>();
+        let processor_hashes = processors.iter().map(|p| p.hash.as_str()).collect::<Vec<_>>();
         let mut sources = run
             .storage
             .lock()
@@ -99,17 +141,7 @@ impl Host {
             {
                 continue;
             }
-            if !force
-                && current.contains(&key)
-                && artifact.acquisition == Completeness::Collected
-                && artifact.processing == "derived"
-                && processors.iter().all(|p| {
-                    artifact.diagnostics.iter().any(|d| {
-                        d.code == "REFERENCE_SCAN_COVERAGE"
-                            && d.context.get("processorSha256") == Some(&json!(p.hash))
-                    })
-                })
-            {
+            if !force && current.contains(&key) && already_scanned(&artifact, &processor_hashes) {
                 continue;
             }
             if matches!(

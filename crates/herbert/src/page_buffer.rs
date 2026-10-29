@@ -110,19 +110,19 @@ impl Producer {
         };
         let spilled = charge.is_none();
         let payload = if spilled {
-            std::fs::create_dir_all(directory).map_err(|_| io_error())?;
+            std::fs::create_dir_all(directory).map_err(|e| io_error().with_cause(&e))?;
             // Anonymous files are removed when their last handle closes, including
             // process termination. No saved cursor depends on this temporary file.
-            let file = tempfile::tempfile_in(directory).map_err(|_| io_error())?;
+            let file = tempfile::tempfile_in(directory).map_err(|e| io_error().with_cause(&e))?;
             let mut writer = HashWriter {
                 inner: BufWriter::new(file),
                 hash: Sha256::new(),
             };
-            serde_json::to_writer(&mut writer, &page).map_err(|_| io_error())?;
-            writer.flush().map_err(|_| io_error())?;
+            serde_json::to_writer(&mut writer, &page).map_err(|e| io_error().with_cause(&e))?;
+            writer.flush().map_err(|e| io_error().with_cause(&e))?;
             let hash: [u8; 32] = writer.hash.finalize().into();
-            let mut file = writer.inner.into_inner().map_err(|_| io_error())?;
-            file.seek(SeekFrom::Start(0)).map_err(|_| io_error())?;
+            let mut file = writer.inner.into_inner().map_err(|e| io_error().with_cause(&e))?;
+            file.seek(SeekFrom::Start(0)).map_err(|e| io_error().with_cause(&e))?;
             Payload::Disk(file, hash)
         } else {
             Payload::Memory(page)
@@ -140,7 +140,7 @@ impl BufferedPage {
         let page = match self.payload {
             Payload::Memory(page) => page,
             Payload::Disk(mut file, expected) => {
-                file.seek(SeekFrom::Start(0)).map_err(|_| io_error())?;
+                file.seek(SeekFrom::Start(0)).map_err(|e| io_error().with_cause(&e))?;
                 let mut reader = BufReader::new(HashReader {
                     inner: file,
                     hash: Sha256::new(),

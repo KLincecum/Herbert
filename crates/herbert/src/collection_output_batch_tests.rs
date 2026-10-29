@@ -7,7 +7,7 @@ use std::{
 };
 
 fn records(count: usize) -> Vec<(Identity, Value)> {
-    (0..count).map(|index| (Identity { category: "C13".into(), kind: "Favorite".into(),
+    (0..count).map(|index| (Identity { category: "kinetic-personalizations".into(), kind: "Favorite".into(),
         scope: herbert_contract::Scope::Personal { company: "C".into(), owner: format!("user{}", index % 100) },
         keys: BTreeMap::from([("ItemSeq".into(), index.to_string())]) },
         json!({"herbertDirectOutput":true,"herbertOutputGroup":format!("User - {}",index % 100),
@@ -42,7 +42,7 @@ fn writer_snapshot_keeps_selected_receipts_without_copying_the_backup() {
 #[ignore = "Compare two and four workers taking chunks of 100 prepared files"]
 fn measure_hundred_file_chunks() {
     use std::{collections::VecDeque, time::Instant};
-    let root = std::env::var("HERBERT_WRITE_BENCH_ROOT").expect("Select the qualification disk");
+    let root = std::env::var("HERBERT_WRITE_BENCH_ROOT").expect("Select the benchmark disk");
     let mut reference = None;
     // Alternate order across three trials. Every run gets a fresh destination.
     for (trial, workers) in [(1, 2), (1, 4), (2, 4), (2, 2), (3, 2), (3, 4)] {
@@ -280,7 +280,7 @@ fn shared_pool_writes_mixed_pages_from_multiple_plugins() {
     ));
     let pool = crate::file_writers::WriterPool::default();
     std::thread::scope(|scope| {
-        for category in ["C01", "C04", "C08", "C13"] {
+        for category in ["ud-codes", "baqs-and-ubaqs", "functions", "kinetic-personalizations"] {
             let storage = storage.clone();
             let pool = &pool;
             scope.spawn(move || {
@@ -451,8 +451,8 @@ fn recovery_replays_missing_outputs_and_preserves_changed_files() {
     let mut storage = Storage::open(directory.path(), false,
         crate::storage::new_journal("reconcile-output".into())).unwrap();
     write_page(&mut storage, page.clone()).unwrap();
-    storage.journal.cursors.insert("C13".into(), "finished-page".into());
-    storage.journal.discovery_finished.insert("C13".into(), true);
+    storage.journal.cursors.insert("kinetic-personalizations".into(), "finished-page".into());
+    storage.journal.discovery_finished.insert("kinetic-personalizations".into(), true);
     let missing = storage.journal.artifacts[0].files[0].clone();
     let changed = storage.journal.artifacts[1].files[0].clone();
     storage.checkpoint().unwrap();
@@ -464,8 +464,8 @@ fn recovery_replays_missing_outputs_and_preserves_changed_files() {
     std::fs::write(&changed_path, b"keep my edits").unwrap();
     let mut storage = Storage::open(directory.path(), false, journal).unwrap();
     storage.reconcile_downloads().unwrap();
-    assert!(!storage.journal.cursors.contains_key("C13"));
-    assert!(!storage.journal.discovery_finished.contains_key("C13"));
+    assert!(!storage.journal.cursors.contains_key("kinetic-personalizations"));
+    assert!(!storage.journal.discovery_finished.contains_key("kinetic-personalizations"));
     assert_eq!(storage.journal.artifacts.iter()
         .filter(|a| a.acquisition == Completeness::Partial).count(), 2);
     let shared = Arc::new(Mutex::new(storage));
@@ -607,4 +607,240 @@ fn final_selected_definition_diagnostics_survive_shared_writer_without_changing_
     write_shared_page(shared.clone(),prepare_page(data.clone()).unwrap(),&pool,&cancel,|_|{}).unwrap();
     {let storage=shared.lock().unwrap();let a=&storage.journal.artifacts[0];assert_eq!(a.acquisition,Completeness::Collected);assert_eq!(a.files,baseline.files);assert_eq!(a.processing,"derived");assert!(a.diagnostics.is_empty());}
     let mut foreign=failure;let mut other=owner.clone();other.category="other-category".into();foreign.identity=Some(other);let mut prepared=prepare_page(data).unwrap();assert!(prepared[0].extend_diagnostics(vec![foreign]).is_err());assert!(shared.lock().unwrap().journal.artifacts[0].diagnostics.is_empty());
+}
+
+fn records_from(start: usize, count: usize) -> Vec<(Identity, Value)> {
+    records(start + count).split_off(start)
+}
+fn folders(storage: &Storage, data: &[(Identity, Value)]) -> Vec<String> {
+    data.iter().map(|(id, _)| storage.artifact_folder(id).unwrap()).collect()
+}
+
+#[test]
+fn name_registry_appends_between_saves_and_ignores_only_a_torn_final_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let journal = crate::storage::new_journal("name-log".into());
+    let shared = Arc::new(Mutex::new(Storage::open(dir.path(), false, journal.clone()).unwrap()));
+    let (pool, token) = (crate::file_writers::WriterPool::default(), tokio_util::sync::CancellationToken::new());
+    let names = dir.path().join("Herbert Data/names");
+    for batch in 0..6 {
+        write_shared_page(shared.clone(), prepare_page(records_from(batch * 10, 10)).unwrap(), &pool, &token, |_| {}).unwrap();
+        shared.lock().unwrap().checkpoint().unwrap();
+    }
+    // The base is rewritten only when the log outgrows it (after saves 1 and 3);
+    // saves 4 to 6 only append.
+    let base: Vec<Value> = serde_json::from_slice(&std::fs::read(names.join("pages.json")).unwrap()).unwrap();
+    let log = std::fs::read_to_string(names.join("pages.log")).unwrap();
+    assert_eq!((base.len(), log.lines().count()), (30, 30));
+    let expected = folders(&shared.lock().unwrap(), &records(60));
+    drop(shared);
+    // A crash can tear only the final, unacknowledged append.
+    let mut torn = std::fs::OpenOptions::new().append(true).open(names.join("pages.log")).unwrap();
+    std::io::Write::write_all(&mut torn, br#"{"identity":{"categ"#).unwrap();
+    drop(torn);
+    let storage = Storage::open(dir.path(), false, journal.clone()).unwrap();
+    assert_eq!(folders(&storage, &records(60)), expected);
+    storage.checkpoint().unwrap();
+    assert!(!names.join("pages.log").exists(), "a torn log is folded into pages.json");
+    drop(storage);
+    // Damage before the final line is not a crash artifact; refuse it.
+    std::fs::write(names.join("pages.log"), b"not json\n{}\n").unwrap();
+    assert!(Storage::open(dir.path(), false, journal.clone()).unwrap().artifact_folder(&records(1)[0].0).is_err());
+    std::fs::remove_file(names.join("pages.log")).unwrap();
+    // Releasing the destination leaves one complete pages.json for older readers.
+    let shared = Arc::new(Mutex::new(Storage::open(dir.path(), false, journal).unwrap()));
+    write_shared_page(shared.clone(), prepare_page(records_from(60, 5)).unwrap(), &pool, &token, |_| {}).unwrap();
+    shared.lock().unwrap().release_destination().unwrap();
+    assert!(!names.join("pages.log").exists());
+    let base: Vec<Value> = serde_json::from_slice(&std::fs::read(names.join("pages.json")).unwrap()).unwrap();
+    assert_eq!(base.len(), 65);
+}
+
+#[test]
+fn abrupt_writer_between_saves_child() {
+    let Some(root) = std::env::var_os("HERBERT_ABRUPT_BETWEEN_SAVES") else { return; };
+    let shared = Arc::new(Mutex::new(Storage::open(std::path::Path::new(&root), false,
+        crate::storage::new_journal("between-saves".into())).unwrap()));
+    let (pool, token) = (crate::file_writers::WriterPool::default(), tokio_util::sync::CancellationToken::new());
+    write_shared_page(shared.clone(), prepare_page(records_from(0, 30)).unwrap(), &pool, &token, |_| {}).unwrap();
+    shared.lock().unwrap().checkpoint().unwrap();
+    // Two more groups are written but the paced save has not run yet.
+    write_shared_page(shared.clone(), prepare_page(records_from(30, 30)).unwrap(), &pool, &token, |_| {}).unwrap();
+    write_shared_page(shared, prepare_page(records_from(60, 30)).unwrap(), &pool, &token, |_| {}).unwrap();
+    std::process::exit(0);
+}
+
+#[test]
+fn a_crash_between_paced_saves_resumes_without_conflicts_or_renames() {
+    let directory = tempfile::tempdir().unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("collection_output::batch_tests::abrupt_writer_between_saves_child")
+        .arg("--exact").env("HERBERT_ABRUPT_BETWEEN_SAVES", directory.path())
+        .status().unwrap();
+    assert!(status.success());
+    let journal = crate::storage::new_journal("between-saves".into());
+    let shared = Arc::new(Mutex::new(Storage::open(directory.path(), false, journal).unwrap()));
+    // Groups two and three were never acknowledged; their files and names are
+    // recovered by readback, not from saved progress.
+    write_shared_page(shared.clone(), prepare_page(records(90)).unwrap(),
+        &crate::file_writers::WriterPool::default(), &tokio_util::sync::CancellationToken::new(), |_| {}).unwrap();
+    let storage = shared.lock().unwrap();
+    assert_eq!(storage.journal.artifacts.len(), 90);
+    assert!(storage.journal.artifacts.iter().all(|a| a.diagnostics.is_empty() && a.acquisition == Completeness::Collected));
+    for file in storage.journal.artifacts.iter().flat_map(|a| &a.files) {
+        assert!(!file.path.starts_with("Conflicts/"), "{}", file.path);
+        storage.verify(file).unwrap();
+    }
+    assert!(!directory.path().join("Conflicts").exists());
+}
+
+/// Write `total` small records the way the ready-output consumer does.
+/// `per_record` reproduces the old cadence: one write and one full save
+/// (including a full names rewrite) per record.
+fn ready_output_cadence(root: &std::path::Path, total: usize, per_record: bool) -> std::time::Duration {
+    let shared = Arc::new(Mutex::new(Storage::open(root, false, crate::storage::new_journal("cadence".into())).unwrap()));
+    let (pool, token) = (crate::file_writers::WriterPool::default(), tokio_util::sync::CancellationToken::new());
+    let batch = if per_record { 1 } else { crate::file_writers::WRITERS * crate::file_writers::FILES_PER_CHUNK };
+    let data = records(total);
+    let started = std::time::Instant::now();
+    let mut saved_at = started;
+    for chunk in data.chunks(batch) {
+        write_shared_page(shared.clone(), prepare_page(chunk.to_vec()).unwrap(), &pool, &token, |_| {}).unwrap();
+        let storage = shared.lock().unwrap();
+        if per_record {
+            storage.checkpoint().unwrap();
+            storage.compact_names().unwrap();
+        } else if saved_at.elapsed() >= std::time::Duration::from_secs(2) {
+            storage.checkpoint().unwrap();
+            saved_at = std::time::Instant::now();
+        }
+    }
+    shared.lock().unwrap().checkpoint().unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(shared.lock().unwrap().journal.artifacts.len(), total);
+    elapsed
+}
+
+/// Regression guard for a large production run (about 15 minutes for local
+/// writing after a 3.5 minute download). The bound is deliberately loose: it
+/// fails on a return to per-record, quadratic saving, not on a slow disk.
+#[test]
+fn five_thousand_small_records_write_in_seconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let elapsed = ready_output_cadence(dir.path(), 5_000, false);
+    eprintln!("ready-output cadence: 5000 records in {elapsed:?}");
+    assert!(elapsed < std::time::Duration::from_secs(120), "5,000 records took {elapsed:?}");
+}
+
+#[test]
+#[ignore = "Measurement: old per-record cadence against the paced, merged cadence"]
+fn measure_per_record_against_paced_saves() {
+    let root = std::env::var("HERBERT_WRITE_BENCH_ROOT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    for (total, per_record) in [(1_000, true), (1_000, false), (2_000, true), (2_000, false), (5_000, false)] {
+        let dir = tempfile::tempdir_in(&root).unwrap();
+        let elapsed = ready_output_cadence(dir.path(), total, per_record);
+        eprintln!("MEASURE records={total} perRecord={per_record} elapsedMs={}", elapsed.as_millis());
+    }
+}
+
+fn reference_table(n: usize) -> Value {
+    json!({"category":"configuration-references","kind":"DatabaseTableReference",
+        "scope":{"company":{"company":"C"}},"keys":{"Company":"C","TableName":format!("Erp.T{n:06}")}})
+}
+fn reference_source(n: usize) -> Identity {
+    Identity { category: "baqs-and-ubaqs".into(), kind: "Baq".into(),
+        scope: herbert_contract::Scope::Company { company: "C".into() },
+        keys: BTreeMap::from([("QueryID".into(), format!("Q{n:05}"))]) }
+}
+fn reference_records(source: usize, tables: impl IntoIterator<Item = usize>) -> Vec<Value> {
+    tables.into_iter().map(|table| json!({"identity":reference_table(table),"occurrences":[{
+        "source":reference_source(source),"path":format!("/QueryTable/{table}"),"field":"TableID"}]})).collect()
+}
+
+/// A large production run: 100-record groups held the run mutex for 25-46 s in
+/// commit_batch and the checkpoint log reached 179 MB, so retained responses
+/// waited 17-39 s. Each new source re-sorted and cloned the whole index; each
+/// reference inserted in sorted order made the log rewrite the index tail.
+#[test]
+#[ignore = "Measurement: reference index commits and large retained responses"]
+fn measure_reference_commits_and_large_responses() {
+    let root = tempfile::tempdir().unwrap();
+    let mut storage = Storage::open(root.path(), false, crate::storage::new_journal("measure-refs".into())).unwrap();
+    // Existing index: 3,000 tables (even numbers) referenced by 1,000 sources.
+    let mut index = BTreeMap::<String, (Value, Vec<Value>)>::new();
+    for source in 0..1000 {
+        for record in reference_records(source, (0..40).map(|k| ((source * 7 + k * 13) % 3000) * 2)) {
+            let entry = index.entry(serde_json::to_string(&record["identity"]).unwrap())
+                .or_insert_with(|| (record["identity"].clone(), vec![]));
+            entry.1.extend(record["occurrences"].as_array().unwrap().iter().cloned());
+        }
+    }
+    storage.journal.references = index.into_values().map(|(identity, mut occurrences)| {
+        occurrences.sort_by_key(|v| serde_json::to_string(v).unwrap());
+        json!({"identity":identity,"occurrences":occurrences})
+    }).collect();
+    storage.checkpoint_all().unwrap();
+    let log = root.path().join(format!("Herbert Data/runs/{}/checkpoint-v2/state.log", storage.journal.run_id));
+    let base = std::fs::metadata(&log).unwrap().len();
+    // 300 new sources in groups of 100, as commit_batch does, each adding two new tables mid-index.
+    let started = std::time::Instant::now();
+    let mut slowest = std::time::Duration::ZERO;
+    for group in 0..3 {
+        let group_started = std::time::Instant::now();
+        for source in 1000 + group * 100..1100 + group * 100 {
+            let tables = (0..38).map(|k| ((source * 11 + k * 17) % 3000) * 2).chain([source * 2 + 1, source * 2 + 3]);
+            crate::processing::replace_references(&mut storage, &reference_source(source), reference_records(source, tables));
+        }
+        slowest = slowest.max(group_started.elapsed());
+        storage.checkpoint().unwrap();
+    }
+    storage.checkpoint_all().unwrap();
+    let references = started.elapsed();
+    let grown = std::fs::metadata(&log).unwrap().len() - base;
+    // Replay must reproduce the index exactly.
+    let replayed = crate::checkpoint_log::read_journal(root.path(), &storage.journal.run_id).unwrap().unwrap();
+    assert!(replayed.references == storage.journal.references);
+    let manifest = crate::checkpoint_log::read_manifest(root.path(), storage.manifest.clone()).unwrap();
+    assert!(manifest.references == storage.journal.references);
+    let started = std::time::Instant::now();
+    let mut retain = vec![];
+    for index in 0..5 {
+        let body = format!("{{\"response\":{index},\"rows\":\"{}\"}}", "x".repeat(15 << 20));
+        let one = std::time::Instant::now();
+        storage.preserve_for_paced(None, body.as_bytes(), "json").unwrap();
+        retain.push(one.elapsed().as_millis());
+    }
+    storage.checkpoint_all().unwrap();
+    eprintln!("MEASURE references sources=300 elapsedMs={} slowestGroupMs={} logGrowthBytes={grown}",
+        references.as_millis(), slowest.as_millis());
+    eprintln!("MEASURE retain15MB eachMs={retain:?} totalMs={}", started.elapsed().as_millis());
+}
+
+/// The source index kept by `replace_references` must give exactly the result of
+/// a full index scan: through additions, removals, emptied entries, an index
+/// replaced by another path, and a source that no longer references anything.
+#[test]
+fn incremental_source_index_matches_a_full_rebuild() {
+    let open = |dir: &std::path::Path| Storage::open(dir, false, crate::storage::new_journal("source-index".into())).unwrap();
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (mut kept, mut rebuilt) = (open(a.path()), open(b.path()));
+    let both = |source: usize, records: Vec<Value>, kept: &mut Storage, rebuilt: &mut Storage| {
+        crate::processing::replace_references(kept, &reference_source(source), records.clone());
+        rebuilt.reference_sources = Default::default();
+        crate::processing::replace_references(rebuilt, &reference_source(source), records);
+        assert!(kept.journal.references == rebuilt.journal.references, "source {source}");
+    };
+    for round in 0..3 {
+        for source in 0..30 {
+            both(source, reference_records(source, (0..6).map(|k| (source * 3 + k * 5 + round * 7) % 40)), &mut kept, &mut rebuilt);
+        }
+    }
+    assert!(!kept.journal.references.is_empty());
+    let replaced = kept.journal.references[..10].to_vec();
+    kept.journal.references = replaced.clone();
+    rebuilt.journal.references = replaced;
+    for source in 0..30 {
+        both(source, vec![], &mut kept, &mut rebuilt);
+    }
+    assert!(kept.journal.references.is_empty());
 }

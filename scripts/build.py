@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from package_licenses import write_inventory
 from build_workspace import compiler_cache, run
@@ -24,32 +25,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Collectors included in the standard package.
 RELEASE_CATEGORIES = (
-    "C01",
-    "C02",
-    "C03",
-    "C04",
-    "C06",
-    "C08",
-    "C09",
-    "C10",
-    "C11",
-    "C12",
-    "C13",
-    "C14",
-    "C15",
-    "C16",
-    "C17",
-    "C18",
-    "C19",
-    "C20",
-    "C21",
-    "C22",
-    "C24",
-    "C25",
-    "C26",
-    "C27",
+    "ud-codes",
+    "ud-schema",
+    "extended-properties",
+    "baqs-and-ubaqs",
+    "bpm-directives",
+    "functions",
+    "classic-customizations",
+    "classic-personalizations",
+    "classic-dashboards",
+    "kinetic-applications-and-layers",
+    "kinetic-personalizations",
+    "searches-and-navigation",
+    "menus-and-launch-definitions",
+    "report-definitions",
+    "report-styles-and-layouts",
+    "report-behavior",
+    "configurators",
+    "business-rules-and-mappings",
+    "custom-resources",
+    "programs-and-extensions",
+    "solutions-and-packages",
+    "automation-and-integrations",
+    "access-and-assignments",
+    "configuration-references",
 )
 
+# User-facing documents only. Engineering and category notes stay in the repository.
 HOST_DOCUMENTS = (
     ("docs/RELEASE-AGENTS.md", "AGENTS.md"),
     ("docs/release/mcp.claude-desktop.example.json", "mcp.claude-desktop.example.json"),
@@ -57,7 +59,9 @@ HOST_DOCUMENTS = (
     ("docs/app/user-guide.json", "docs/app/user-guide.json"),
     ("docs/RUN-DIAGNOSTICS.md", "RUN-DIAGNOSTICS.md"),
     ("skills/herbert/SKILL.md", "skills/herbert/SKILL.md"),
+    ("skills/codex/herbert/SKILL.md", "skills/codex/herbert/SKILL.md"),
     ("README.md", "README.md"),
+    ("CHANGELOG.md", "CHANGELOG.md"),
     ("docs/Herbert-Guide.md", "docs/Herbert-Guide.md"),
     ("docs/MCP-GUIDE.md", "docs/MCP-GUIDE.md"),
 )
@@ -70,7 +74,7 @@ HOST_ASSETS = (
 
 def standard_plugins(source_directory: Path) -> list[tuple[str, str]]:
     """Select rewritten collectors and fail if an approved source is missing."""
-    selected = [(category.lower(), category) for category in RELEASE_CATEGORIES]
+    selected = [(category, category) for category in RELEASE_CATEGORIES]
     for binary, _ in selected:
         if not (source_directory / (binary + ".rs")).is_file():
             raise RuntimeError("An approved plugin source is missing: " + binary)
@@ -78,9 +82,13 @@ def standard_plugins(source_directory: Path) -> list[tuple[str, str]]:
 
 
 def standard_plugin_features(category: str) -> list[str]:
-    """Compiled collection support is part of the standard C04/C06/C08 package."""
-    feature = {"C04": "ubaq-compiled", "C06": "ordinary-bpm-compiled", "C08": "function-compiled"}.get(category)
-    return ["--features", feature] if feature else []
+    """Compiled collection support for BAQs and UBAQs, BPM directives and Functions is part of the standard package.
+
+    Every plugin also gets its own no-op `plugin-<category>` feature. Each build compiles the shared library for one
+    category (HERBERT_PLUGIN_CATEGORY); a distinct feature set gives each category its own fingerprinted library in
+    the shared cache, so an unchanged plugin is not rebuilt because another plugin was built in between."""
+    compiled = {"baqs-and-ubaqs": "ubaq-compiled", "bpm-directives": "ordinary-bpm-compiled", "functions": "function-compiled"}.get(category)
+    return ["--features", ",".join([f"plugin-{category}", *([compiled] if compiled else [])])]
 
 
 def standard_host_documents(root: Path) -> list[tuple[Path, Path]]:
@@ -221,7 +229,7 @@ def managed_companion(source: Path, native_target: str) -> tuple[Path, dict]:
     """Explicit pinned input; no download, PATH discovery or first-use build."""
     rid = {"x86_64-pc-windows-msvc": "win-x64", "x86_64-unknown-linux-gnu": "linux-x64"}.get(native_target)
     if rid is None:
-        raise RuntimeError("No qualified managed companion for " + native_target)
+        raise RuntimeError("No supported managed companion for " + native_target)
     directory = source.resolve() / rid
     manifest = json.loads((directory / "companion.json").read_text(encoding="utf-8"))
     executable = "herbert-managed-decompiler.exe" if rid == "win-x64" else "herbert-managed-decompiler"
@@ -234,6 +242,51 @@ def managed_companion(source: Path, native_target: str) -> tuple[Path, dict]:
     if len(data) != manifest.get("bytes") or hashlib.sha256(data).hexdigest() != manifest.get("sha256"):
         raise RuntimeError("The companion differs from its pinned bytes.")
     return directory, manifest
+
+
+def precompile_guests(executable: Path, output: Path, files: list[dict], cache: Path | None = None) -> dict:
+    """Precompile bundled guests with the packaged host's own engine; bind each to its .wasm.
+
+    With a cache folder, a .cwasm is reused when the same engine already precompiled identical .wasm bytes
+    (`herbert precompile` is byte-deterministic). The cache keeps only the entries this build used, so it never grows
+    beyond one package's guests."""
+    with tempfile.TemporaryDirectory() as scratch:
+        def host(*arguments: str) -> str:
+            return subprocess.run([str(executable), "precompile", *arguments], cwd=scratch, check=True, capture_output=True, text=True, shell=False).stdout.strip()
+
+        engine = host("--engine")
+        if not engine:
+            raise RuntimeError("The host reported no precompiled-engine fingerprint.")
+        folder = cache / hashlib.sha256(engine.encode()).hexdigest() if cache else None
+        used, hits, misses = set(), 0, 0
+        bindings = {}
+        for record in list(files):
+            relative = Path(record["path"])
+            if len(relative.parts) != 3 or relative.parts[0] != "plugins" or relative.suffix != ".wasm" or relative.stem != relative.parts[1]:
+                continue
+            cwasm = relative.with_suffix(".cwasm")
+            cached = folder / (record["sha256"] + ".cwasm") if folder else None
+            if cached and cached.is_file():
+                shutil.copyfile(cached, output / cwasm)
+                hits += 1
+            else:
+                host(str(output / relative), str(output / cwasm))
+                misses += 1
+                if cached:
+                    cached.parent.mkdir(parents=True, exist_ok=True)
+                    staged = cached.with_suffix(".partial")
+                    shutil.copyfile(output / cwasm, staged)
+                    os.replace(staged, cached)
+            if cached:
+                used.add(cached.name)
+            files.append(file_record(output / cwasm, output))
+            bindings[relative.as_posix()] = {"cwasm": cwasm.as_posix(), "engine": engine}
+    if cache:
+        # Entries for other engines or for guests no longer built are not reused.
+        for stale in [p for p in cache.rglob("*") if p.is_file() and (p.parent != folder or p.name not in used)]:
+            stale.unlink()
+        print(f"Precompiled guests: {hits} reused, {misses} compiled")
+    return bindings
 
 
 def final_file_records(output: Path, records: list[dict]) -> list[dict]:
@@ -258,7 +311,7 @@ def main() -> None:
     parser.add_argument(
         "--debug", action="store_true", help="Build a development package."
     )
-    parser.add_argument("--managed-decompilation-companions", type=Path, required=True, help="Required pinned companion root with RID/companion.json and native binary. Standard packages include compiled C04/C06/C08 support. No download or PATH fallback.")
+    parser.add_argument("--managed-decompilation-companions", type=Path, required=True, help="Required pinned companion root with RID/companion.json and native binary. Standard packages include compiled support for BAQs and UBAQs, BPM directives and Functions. No download or PATH fallback.")
     parser.add_argument("--ordinary-bpm-compiled", action="store_true", default=True, help="Compatibility flag. Standard packages always include compiled BPM support.")
     parser.add_argument("--ubaq-compiled", action="store_true", default=True, help="Compatibility flag. Standard packages always include compiled UBAQ support.")
     args = parser.parse_args()
@@ -317,7 +370,7 @@ def main() -> None:
             files.append(copy_file(sound, args.output, Path("sounds") / sound.name))
     plugin_names = dict(
         re.findall(
-            r'\(\s*"(C\d+)"\s*,\s*"([^"]+)"',
+            r'\(\s*"([a-z0-9-]+)"\s*,\s*"([^"]+)"',
             (ROOT / "crates/herbert-plugins/src/catalog.rs").read_text(),
         )
     )
@@ -327,7 +380,7 @@ def main() -> None:
         for filename in item["filenames"]:
             module = Path(filename)
             if module.suffix == ".wasm":
-                name = plugin_names.get(module.stem.upper(), module.stem)
+                name = plugin_names.get(module.stem, module.stem)
                 relative = Path("plugins") / name / (name + ".wasm")
                 files.append(copy_file(module, args.output, relative))
                 # Plugin-owned native exports and their ordinary sibling manifest.
@@ -368,8 +421,8 @@ def main() -> None:
         for asset in sorted((ROOT / "helpers/compiled-ubaq").glob("*.efxj")):
             files.append(copy_file(asset, args.output, Path("plugins/BAQs and UBAQs/artifacts") / asset.name))
         files.append(copy_file(ROOT / "helpers/compiled-ubaq/plugin.json", args.output, Path("plugins/BAQs and UBAQs/plugin.json")))
-    # Apply the qualified size profile only to the native release host.
-    # Plugin compilation above retains its independently qualified profile.
+    # Apply the tested size profile only to the native release host.
+    # Plugin compilation above retains its own tested profile.
     host_environment = native_compiler_environment(native_target)
     if not args.debug:
         host_environment.update(
@@ -385,6 +438,8 @@ def main() -> None:
     executable = executable_from(host, "herbert")
     verify_compiler_paths(executable, host_environment)
     files.append(copy_file(executable, args.output, Path(executable.name)))
+    # Native builds only: a cross-target host cannot run here to compile its guests.
+    precompiled = {} if args.target else precompile_guests(executable, args.output, files, compiler_cache() / "precompile-cache")
     files.extend(
         write_inventory(
             ROOT,
@@ -402,6 +457,7 @@ def main() -> None:
         "privateHelper": False,
         "pluginCategories": list(RELEASE_CATEGORIES),
         **({"managedDecompilation": {"protocolVersion": 1, "engineId": companion_manifest["engineId"], "targetRid": companion_manifest["targetRid"], "sha256": companion_manifest["sha256"], "firstUseDownload": False}} if managed else {}),
+        **({"precompiledPlugins": precompiled} if precompiled else {}),
         "files": final_file_records(args.output, files),
     }
     (args.output / "package.json").write_text(

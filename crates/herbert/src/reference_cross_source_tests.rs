@@ -1,4 +1,4 @@
-//! Supplemental local cases; these do not claim native producer qualification.
+//! Supplemental local cases; these do not claim native producer test.
 use super::*;
 
 fn identity(name: &str) -> Identity {
@@ -59,7 +59,7 @@ fn verify_index(run: &Arc<Run>) {
 }
 fn reference_id(schema: &str, table: &str) -> Identity {
     Identity {
-        category: "C27".into(),
+        category: "configuration-references".into(),
         kind: "DatabaseTableReference".into(),
         scope: Scope::Company {
             company: "TESTCO".into(),
@@ -89,16 +89,16 @@ fn consumer_file(run: &Arc<Run>, id: &Identity) -> (PathBuf, Value) {
     (path, data)
 }
 #[tokio::test]
-#[ignore = "Explicit compiled C27; supplemental cross-source/error/reprocess cases, no ERP"]
-async fn c27_reference_cross_source_changes_failures_and_reprocess() {
-    let proof = PathBuf::from(std::env::var("HERBERT_C27_PROOF").unwrap());
-    let wasm = PathBuf::from(std::env::var("HERBERT_C27_WASM").unwrap());
+#[ignore = "Explicit compiled Configuration references; supplemental cross-source/error/reprocess cases, no ERP"]
+async fn configuration_references_reference_cross_source_changes_failures_and_reprocess() {
+    let proof = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_PROOF").unwrap());
+    let wasm = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_WASM").unwrap());
     let dir = tempfile::tempdir().unwrap();
     let temporary = dir.path().to_path_buf();
     let plugins = dir.path().join("plugins");
     std::fs::create_dir(&plugins).unwrap();
-    std::fs::copy(&wasm, plugins.join("c27.wasm")).unwrap();
-    let plugin = Plugin::load(&plugins.join("c27.wasm")).await.unwrap();
+    std::fs::copy(&wasm, plugins.join("configuration-references.wasm")).unwrap();
+    let plugin = Plugin::load(&plugins.join("configuration-references.wasm")).await.unwrap();
     let host = Host::with_roots(
         dir.path().join("state"),
         plugins,
@@ -107,7 +107,7 @@ async fn c27_reference_cross_source_changes_failures_and_reprocess() {
     let mut journal = storage::new_journal("cross-source-reference-proof".into());
     journal.company = "TESTCO".into();
     journal.scope = "fullBackup".into();
-    journal.categories = vec!["fixture".into(), "C27".into()];
+    journal.categories = vec!["fixture".into(), "configuration-references".into()];
     let mut run = owned_run(Storage::open(&dir.path().join("output"), false, journal).unwrap());
     let a = identity("A");
     let b = identity("B");
@@ -184,7 +184,7 @@ async fn c27_reference_cross_source_changes_failures_and_reprocess() {
         assert_eq!(failed.processing, "partial");
         assert!(failed.dependencies.is_empty());
         assert_eq!(
-            reference_context(&storage.journal, "C27")["producerReferenceErrors"],
+            reference_context(&storage.journal, "configuration-references")["producerReferenceErrors"],
             true
         );
     }
@@ -244,7 +244,7 @@ async fn c27_reference_cross_source_changes_failures_and_reprocess() {
         );
         assert_eq!(storage.journal.references.len(), 2);
         assert_eq!(
-            reference_context(&storage.journal, "C27")["producerReferenceErrors"],
+            reference_context(&storage.journal, "configuration-references")["producerReferenceErrors"],
             false
         );
     }
@@ -283,7 +283,7 @@ async fn c27_reference_cross_source_changes_failures_and_reprocess() {
     {
         let storage = run.storage.lock().unwrap();
         assert_eq!(
-            reference_context(&storage.journal, "C27")["producerReferenceErrors"],
+            reference_context(&storage.journal, "configuration-references")["producerReferenceErrors"],
             true
         );
         let part = storage
@@ -418,16 +418,16 @@ async fn c27_reference_cross_source_changes_failures_and_reprocess() {
 }
 
 #[tokio::test]
-#[ignore = "Explicit compiled C27; independent producer write failure/retry, no ERP"]
-async fn c27_reference_producer_write_failure_does_not_block_reprocess() {
-    let proof = PathBuf::from(std::env::var("HERBERT_C27_PROOF").unwrap());
-    let wasm = PathBuf::from(std::env::var("HERBERT_C27_WASM").unwrap());
+#[ignore = "Explicit compiled Configuration references; independent producer write failure/retry, no ERP"]
+async fn configuration_references_reference_producer_write_failure_does_not_block_reprocess() {
+    let proof = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_PROOF").unwrap());
+    let wasm = PathBuf::from(std::env::var("HERBERT_CONFIGURATION_REFERENCES_WASM").unwrap());
     let dir = tempfile::tempdir().unwrap();
     let temporary = dir.path().to_path_buf();
     let plugins = dir.path().join("plugins");
     std::fs::create_dir(&plugins).unwrap();
-    std::fs::copy(wasm, plugins.join("c27.wasm")).unwrap();
-    let plugin = Plugin::load(&plugins.join("c27.wasm")).await.unwrap();
+    std::fs::copy(wasm, plugins.join("configuration-references.wasm")).unwrap();
+    let plugin = Plugin::load(&plugins.join("configuration-references.wasm")).await.unwrap();
     let host = Host::with_roots(
         dir.path().join("state"),
         plugins,
@@ -436,7 +436,7 @@ async fn c27_reference_producer_write_failure_does_not_block_reprocess() {
     let mut journal = storage::new_journal("independent-reference-producers".into());
     journal.company = "TESTCO".into();
     journal.scope = "fullBackup".into();
-    journal.categories = vec!["fixture".into(), "C27".into()];
+    journal.categories = vec!["fixture".into(), "configuration-references".into()];
     let mut run = owned_run(Storage::open(&dir.path().join("output"), false, journal).unwrap());
     let blocked = identity("D-blocked");
     let independent = identity("E-independent");

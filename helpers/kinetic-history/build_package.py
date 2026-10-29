@@ -4,7 +4,7 @@ import json
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[1]
-PLUGIN = REPO / 'crates/herbert-plugins/packages/c12'
+PLUGIN = REPO / 'crates/herbert-plugins/packages/kinetic-applications-and-layers'
 GLOBAL_ID = 'ff896bb9-5bfb-4cfe-a4c0-126880575f43'
 
 def build():

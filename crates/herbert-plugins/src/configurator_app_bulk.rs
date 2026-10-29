@@ -12,7 +12,7 @@ pub enum Step {
 pub fn start(company: &str, roots: &[Value], size: u32) -> Result<Step, Diagnostic> {
     if company.is_empty() || size == 0 || size > i32::MAX as u32 {
         return Err(error(
-            "App reads require company and positive native Int32 page size.",
+            "Configurator application reads need a selected company and a page size from 1 to 2147483647.",
         ));
     }
     let mut views = BTreeMap::new();
@@ -51,7 +51,7 @@ pub fn start(company: &str, roots: &[Value], size: u32) -> Result<Step, Diagnost
 fn query(mut state: Value) -> Result<Step, Diagnostic> {
     let branch = state["branch"]
         .as_u64()
-        .ok_or_else(|| error("Missing app branch."))?;
+        .ok_or_else(|| error("Herbert could not continue this download from its saved progress (configurator application step). Start the download again."))?;
     if branch == 6 {
         state["phase"] = json!("visible");
         state["page"] = json!(1);
@@ -60,7 +60,7 @@ fn query(mut state: Value) -> Result<Step, Diagnostic> {
     }
     let company = state["company"]
         .as_str()
-        .ok_or_else(|| error("Missing app company."))?;
+        .ok_or_else(|| error("Epicor did not say which company this configurator application belongs to, so it was not saved."))?;
     let event = branch == 2 || branch == 3;
     let body = branch >= 4;
     let owner = if branch % 2 == 0 { "" } else { company };
@@ -117,7 +117,7 @@ fn query(mut state: Value) -> Result<Step, Diagnostic> {
     }
     let fields: Vec<_> = state["fields"]
         .as_array()
-        .ok_or_else(|| error("Missing app dictionary."))?
+        .ok_or_else(|| error("Epicor did not return the configurator's application records, so it was not saved."))?
         .iter()
         .filter(|f| {
             body || [
@@ -175,13 +175,13 @@ fn query(mut state: Value) -> Result<Step, Diagnostic> {
 fn visible_query(state: Value) -> Result<Step, Diagnostic> {
     let views = state["views"]
         .as_object()
-        .ok_or_else(|| error("Missing selected views."))?;
+        .ok_or_else(|| error("Herbert could not continue this download from its saved progress (selected configurator views). Start the download again."))?;
     let clauses: Vec<_> = views
         .keys()
         .map(|view| format!("Key1 = '{}'", view.replace('\'', "''")))
         .collect();
     if clauses.is_empty() {
-        return Err(error("Unscoped native app list is prohibited."));
+        return Err(error("Unscoped Epicor app list is prohibited."));
     }
     Ok(Step::Read {
         action: HostAction::NativeRead {
@@ -197,30 +197,30 @@ fn visible_receive(mut state: Value, response: Value) -> Result<Step, Diagnostic
     let rows = response
         .pointer("/returnObj/XXXDefList")
         .and_then(Value::as_array)
-        .ok_or_else(|| error("Native app list omitted rows."))?;
+        .ok_or_else(|| error("Epicor app list omitted rows."))?;
     let more = response
         .pointer("/parameters/morePages")
         .and_then(Value::as_bool)
-        .ok_or_else(|| error("Native app list omitted pagination status."))?;
+        .ok_or_else(|| error("Epicor app list omitted pagination status."))?;
     if rows.len() > state["size"].as_u64().unwrap() as usize {
-        return Err(error("Native app list exceeded its requested page size."));
+        return Err(error("Epicor app list exceeded its requested page size."));
     }
     for row in rows {
         let view = row["Key1"]
             .as_str()
-            .ok_or_else(|| error("Native app list omitted view."))?;
+            .ok_or_else(|| error("Epicor app list omitted view."))?;
         let config = state["views"]
             .as_object()
             .unwrap()
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(view))
             .and_then(|(_, v)| v.as_str())
-            .ok_or_else(|| error("Native app list returned an unrelated view."))?
+            .ok_or_else(|| error("Epicor app list returned an unrelated view."))?
             .to_owned();
         let id = row["SysRowID"]
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| error("Native app list omitted row identity."))?
+            .ok_or_else(|| error("Epicor app list omitted row identity."))?
             .to_ascii_lowercase();
         if row.get("Content").is_some()
             || row["Key3"] != ""
@@ -228,7 +228,7 @@ fn visible_receive(mut state: Value, response: Value) -> Result<Step, Diagnostic
             || state["seen"].get(&id).is_some()
         {
             return Err(error(
-                "Native app metadata contains a body, revision mismatch or repeated identity.",
+                "Epicor app metadata contains a body, revision mismatch or repeated identity.",
             ));
         }
         state["seen"][id] = json!(true);
@@ -244,12 +244,12 @@ fn visible_receive(mut state: Value, response: Value) -> Result<Step, Diagnostic
             .unwrap()
             .checked_add(1)
             .filter(|p| *p <= i32::MAX as u64)
-            .ok_or_else(|| error("Native app page index exceeded Int32."))?;
+            .ok_or_else(|| error("This download has more configurator application pages than Epicor can address. Use a larger page size, then start again."))?;
         state["page"] = json!(page);
         return visible_query(state);
     }
     let mut apps: BTreeMap<String, Value> =
-        serde_json::from_value(state["apps"].take()).map_err(|_| error("Invalid app results."))?;
+        serde_json::from_value(state["apps"].take()).map_err(|_| error("Epicor returned configurator application data in a form Herbert does not recognize, so it was not saved."))?;
     for app in apps.values_mut() {
         app["complete"] = json!(true);
     }
@@ -263,7 +263,7 @@ pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
         let fields = response
             .pointer("/returnObj/TableFieldList")
             .and_then(Value::as_array)
-            .ok_or_else(|| error("Missing XXXDef dictionary."))?;
+            .ok_or_else(|| error("Epicor did not return the configurator's application layout records, so it was not saved."))?;
         let names: BTreeSet<_> = fields
             .iter()
             .filter_map(|f| f["FieldName"].as_str())
@@ -298,12 +298,12 @@ pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
         .pointer("/returnObj/Errors")
         .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|r| !r.is_empty()))
     {
-        return Err(error("Native app query returned errors."));
+        return Err(error("Epicor app query returned errors."));
     }
     let rows = response
         .pointer("/returnObj/Results")
         .and_then(Value::as_array)
-        .ok_or_else(|| error("Native app query omitted Results."))?;
+        .ok_or_else(|| error("Epicor app query omitted Results."))?;
     let size = state["size"].as_u64().unwrap() as usize;
     if rows.len() > size {
         return Err(error("App response exceeded its requested page size."));
@@ -375,7 +375,7 @@ pub fn receive(mut state: Value, response: Value) -> Result<Step, Diagnostic> {
     if rows.len() == size {
         let after = rows.last().unwrap()["SysRowID"].clone();
         if after == state["after"] {
-            return Err(error("App cursor did not advance."));
+            return Err(error("App saved position did not advance."));
         }
         state["after"] = after;
         return query(state);
@@ -391,7 +391,7 @@ mod tests {
     use super::*;
     #[test]
     fn supplied_selected_page_app_read_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {

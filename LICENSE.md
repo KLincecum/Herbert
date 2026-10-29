@@ -1,6 +1,6 @@
-# Herbert Source-Available License 1.0
+# Herbert Source-Available License 1.1
 
-Adopted October 19, 2026.
+Adopted October 19, 2026. Version 1.1 adopted October 28, 2026.
 
 Copyright 2026 Kevin Lincecum.
 
@@ -77,3 +77,17 @@ To the extent allowed by applicable law, the Owner is not liable for claims, dam
 ## 10. Other rights
 
 Rights not expressly granted are reserved. This license does not restrict rights that applicable law grants independently of this license. If a provision cannot be enforced, the remaining provisions continue to apply to the extent allowed by law.
+
+---
+
+ADDITIONAL TERMS: LIBATION COVENANT
+
+1. Grant of Refreshment. In consideration of the rights granted herein, and by any installation, execution, or other use of the Software, the Licensee hereby covenants and agrees to furnish to the Copyright Holder, at no cost to the Copyright Holder, beer, mixed drinks, or other customary beverages of the Copyright Holder's choosing (collectively, "Libations") at any public or private event, gathering, function, or occasion at which the Licensee and the Copyright Holder are both present (each, a "Qualifying Event").
+
+2. Term. The obligations set forth in Section 1 shall commence upon the Licensee's first use of the Software and shall continue in full force and effect for the natural lifetime of the Copyright Holder.
+
+3. Successors and Assigns. This covenant shall be binding upon the Licensee and the Licensee's heirs, successors, assigns, agents, and representatives, and any of the foregoing present at a Qualifying Event shall be jointly and severally liable for the furnishing of Libations thereunder.
+
+4. Survival; Posthumous Performance. Upon the death of the Copyright Holder, the obligations of Section 1 shall not terminate but shall be converted into, and thereafter satisfied by, the ceremonial pouring of not less than one (1) Libation upon the ground, curb, or other suitable surface in memoriam of the Copyright Holder (colloquially, "pouring one out for the homey"), at such times and with such frequency as good conscience may require.
+
+5. Non-Enforceability. The parties acknowledge that this Libation Covenant is offered in jest, creates no legally enforceable obligation, and does not modify, restrict, or condition any right granted under the license above. Notwithstanding the foregoing, the Licensee is morally bound to comply.

@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [features]
 default = ["gui"]
-# Unqualified optional C08 integration; enabled only in explicit qualification builds.
+# Managed decompilation support; standard packages enable it through function-compiled.
 managed-decompilation = []
 function-compiled = ["managed-decompilation"]
 gui = ["dep:eframe", "dep:image", "dep:rfd"]
@@ -21,6 +21,9 @@ anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std", "fs", "signal", "process"] }
 tokio-util = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
+# Same versions reqwest already uses; needed for the per-profile certificate verifier.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
 httpdate = "1"
 zip = "2.4.2"
 quick-xml = "0.41.0"
@@ -36,6 +39,8 @@ tempfile = "3"
 unicode-normalization = "0.1"
 directories = "6"
 wasmtime = { version = "49.0.3", default-features = false, features = ["cranelift", "parallel-compilation", "runtime", "std"] }
+# Same version wasmtime's parallel compilation already uses; bounds plugin compile threads.
+rayon = "1.12"
 eframe = { version = "0.36.2", optional = true, default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 image = { version = "0.25.10", optional = true, default-features = false, features = ["png"] }
 rfd = { version = "0.17.2", optional = true }
@@ -45,6 +50,10 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 [dev-dependencies]
 herbert-plugins = { path = "../herbert-plugins" }
 wat = "1"
+# Paused-clock lease tests (simulated 30 s heartbeat and 5 min expiry); test builds only.
+tokio = { version = "1", features = ["test-util"] }
+# Parses the printed Codex MCP configuration in tests; test builds only.
+toml_edit = "0.25"
 
 
 # Native GUI preview tests run on the Rust test harness worker thread.

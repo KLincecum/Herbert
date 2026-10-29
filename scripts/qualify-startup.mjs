@@ -117,7 +117,7 @@ try {
       result.checks.push({mode, check: "Unsigned Wasm loads; obsolete signing companions ignored; invalid Wasm refused; restoration loads"});
 
       const example = initial.categories.find((category) =>
-        category.id === "C13",
+        category.id === "kinetic-personalizations",
       );
       assert.ok(example);
       const values = {

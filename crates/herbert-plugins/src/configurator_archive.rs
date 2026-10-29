@@ -101,7 +101,7 @@ pub fn xml(data: &Value, rule_eligibility: &BTreeMap<String, bool>) -> Result<St
             Some(false) => {}
             None => {
                 return Err(invalid(format!(
-                    "Native BOM eligibility is unresolved for rule set {id}."
+                    "Epicor BOM eligibility is unresolved for rule set {id}."
                 )));
             }
         }
@@ -180,7 +180,7 @@ pub fn xml(data: &Value, rule_eligibility: &BTreeMap<String, bool>) -> Result<St
                     ("ulong", Value::String(s)) if s.parse::<u64>().is_ok() => s.clone(),
                     _ => {
                         return Err(invalid(format!(
-                            "{table}.{field} does not match native {kind}."
+                            "{table}.{field} does not match Epicor {kind}."
                         )));
                     }
                 };
@@ -227,16 +227,19 @@ pub fn xml(data: &Value, rule_eligibility: &BTreeMap<String, bool>) -> Result<St
 /// Package native AppContent with the locally projected configurator XML.
 /// The caller must separately establish signature applicability and export policy.
 /// AppContent remains intact; this does not resolve referenced external resources.
+/// `app` uses "/" Files keys; the package writes them with the server's native `separator`
+/// (configurator_app::native_separator).
 pub fn kinetic_package(
     data: &Value,
     rule_eligibility: &BTreeMap<String, bool>,
     app: &Value,
+    separator: char,
 ) -> Result<Vec<u8>, Diagnostic> {
     let text = xml(data, rule_eligibility)?;
     validate_kinetic_app(data, app)?;
     let config = key(&data["PcStatus"][0], "ConfigID")?;
-    let mut app_text = serde_json::to_vec(app)
-        .map_err(|e| invalid(format!("Cannot serialize AppContent: {e}")))?;
+    let mut app_text = serde_json::to_vec(&crate::configurator_app::with_native_keys(app, separator))
+        .map_err(|e| invalid("Herbert could not build the configurator application file from the downloaded definition. The original source was kept.").with_cause(e))?;
     // Native ExportApp writes one JSON object followed by the server newline.
     // The importer parses JSON; package validity does not depend on its spelling.
     app_text.push(b'\n');
@@ -257,7 +260,7 @@ pub fn validate_kinetic_app(data: &Value, app: &Value) -> Result<(), Diagnostic>
     let company = key(root, "Company")?;
     if config.contains(['/', '\\', ':', '\0']) || matches!(config, "." | "..") {
         return Err(invalid(
-            "Configurator ID cannot be used as a native package filename.",
+            "Configurator ID cannot be used as an Epicor package filename.",
         ));
     }
     let view = format!("Erp.UICfg.{config}_{company}");
@@ -292,7 +295,7 @@ mod tests {
     use crate::xml_document::Content;
     #[test]
     fn supplied_native_nic_bulk_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -310,7 +313,7 @@ mod tests {
     #[test]
     fn supplied_native_kinetic_package_replay() {
         use std::io::{Cursor, Read};
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {
@@ -324,7 +327,7 @@ mod tests {
             )
             .unwrap();
             let original = app.clone();
-            let bytes = kinetic_package(&rows, &BTreeMap::new(), &app).unwrap();
+            let bytes = kinetic_package(&rows, &BTreeMap::new(), &app, '/').unwrap();
             assert_eq!(app, original);
             let mut local = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
             let mut native = zip::ZipArchive::new(Cursor::new(
@@ -359,13 +362,13 @@ mod tests {
             std::fs::write(base.join("oracle/kinetic/rust-local.zip"), &bytes).unwrap();
             let mut wrong = app.clone();
             wrong["ViewId"] = serde_json::json!("Other");
-            assert!(kinetic_package(&rows, &BTreeMap::new(), &wrong).is_err());
+            assert!(kinetic_package(&rows, &BTreeMap::new(), &wrong, '/').is_err());
             let mut wrong = app.clone();
             wrong["CompanyId"] = serde_json::json!("Other");
-            assert!(kinetic_package(&rows, &BTreeMap::new(), &wrong).is_err());
+            assert!(kinetic_package(&rows, &BTreeMap::new(), &wrong, '/').is_err());
             let mut wrong = app.clone();
             wrong["Files"]["../outside.jsonc"] = serde_json::json!("{}");
-            assert!(kinetic_package(&rows, &BTreeMap::new(), &wrong).is_err());
+            assert!(kinetic_package(&rows, &BTreeMap::new(), &wrong, '/').is_err());
         }
     }
     fn fixture() -> Value {
@@ -463,7 +466,7 @@ mod tests {
     }
     #[test]
     fn supplied_native_configurator_replay() {
-        let Ok(base) = std::env::var("HERBERT_C19_REPLAY") else {
+        let Ok(base) = std::env::var("HERBERT_CONFIGURATORS_REPLAY") else {
             return;
         };
         for lane in ["2026.1", "2025.2"] {

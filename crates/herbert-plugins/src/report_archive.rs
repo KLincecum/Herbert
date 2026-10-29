@@ -17,7 +17,7 @@ pub fn with_settings(mut state: Value,from: &Value) -> Value {
 }
 pub fn graph_errors(identity: &Identity,data: &Value) -> Vec<Diagnostic> {
     data["errors"].as_array().into_iter().flatten().map(|value|{
-        let mut error=serde_json::from_value::<Diagnostic>(value.clone()).unwrap_or_else(|_|Diagnostic::new("REPORT_GRAPH_INVALID","An acquired report graph has an invalid failure diagnostic."));error.identity=Some(identity.clone());error
+        let mut error=serde_json::from_value::<Diagnostic>(value.clone()).unwrap_or_else(|_|Diagnostic::new("REPORT_GRAPH_INVALID","An downloaded report record set has an invalid failure diagnostic."));error.identity=Some(identity.clone());error
     }).collect()
 }
 
@@ -66,7 +66,7 @@ pub fn xml(service: &str, data: &Value) -> Result<String, Diagnostic> {
                     _ => {
                         return Err(Diagnostic::new(
                             "REPORT_XML_INVALID",
-                            format!("{table}.{field} does not match its native {kind} type."),
+                            format!("{table}.{field} does not match its Epicor {kind} type."),
                         ));
                     }
                 };

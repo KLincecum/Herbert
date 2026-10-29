@@ -43,17 +43,37 @@ pub struct Connection {
     session: Mutex<Option<Session>>,
     caller: Mutex<Option<String>>,
     server_version: Mutex<Option<String>>,
-    // Qualification-only HTTP accounting. Never records bodies, headers or queries.
+    /// The profile's certificate option and what this connection's TLS observed.
+    pub allow_untrusted_certificate: bool,
+    transport_trust: crate::transport_trust::Observed,
+    /// A company-less connection used only by connection.test to list companies.
+    /// It never sets a session company and refuses collection reads and writes.
+    discovery: bool,
+    /// Set when connection.test retains this connection because its sign-out failed.
+    /// A test is never a confirmed connect, so a retained test only waits for disconnect.
+    test_only: std::sync::atomic::AtomicBool,
+    /// Discovery addresses data routes through the account's default session company.
+    discovery_company: std::sync::Mutex<Option<String>>,
+    /// UserComp rows and CompList from the last admission read.
+    admitted_companies: std::sync::Mutex<Option<Value>>,
+    // Test-only HTTP accounting. Never records bodies, headers or queries.
     #[cfg(test)]
     pub(crate) qualification_http: std::sync::Mutex<Vec<Value>>,
 }
 fn canceled() -> Diagnostic {
     Diagnostic::new("CANCELED", "The request was canceled.")
 }
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ConnectionOptions {
+    pub allow_untrusted_certificate: bool,
+}
+pub(crate) fn company_required() -> Diagnostic {
+    Diagnostic::new("COMPANY_REQUIRED", "Choose a company for this connection. Use Test connection, or run connection.test without a company, to list the companies this account can use.")
+}
 fn transport_error() -> Diagnostic {
     Diagnostic::new(
         "TRANSPORT_FAILED",
-        "The native request failed. Check reachability, TLS, timeout settings and response integrity.",
+        "The Epicor request failed. Check reachability, TLS, timeout settings and response integrity.",
     )
 }
 pub(crate) fn valid_segment(s: &str) -> bool {
@@ -99,10 +119,11 @@ impl Connection {
         arguments: Value,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if self.caller().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Connect and verify the caller before a native artifact operation.",
+                "Connect and verify the Epicor user before an Epicor artifact operation.",
             ));
         }
         self.ensure_session(cancel).await?;
@@ -125,16 +146,20 @@ impl Connection {
     pub(crate) async fn lease_call(
         &self, library: &str, request: Value, cancel: &CancellationToken,
     ) -> Result<Value, Diagnostic> {
+        let mut attempt = 0;
         loop {
             let response = self.function_call(library, "Lease", json!({"iRequest":request.to_string()}), cancel, true).await?;
             let text = response.value.get("oJson").or_else(|| response.value.pointer("/returnObj/oJson"))
                 .and_then(Value::as_str).ok_or_else(|| Diagnostic::new("LEASE_RESPONSE_INVALID", "The server omitted its lease response."))?;
             let value: Value = serde_json::from_str(text).map_err(|_| Diagnostic::new("LEASE_RESPONSE_INVALID", "The server returned an invalid lease response."))?;
             if value["leaseBusy"] != true { return Ok(value); }
-            // The server confirms that admission performed no work. A short
-            // delay lets the concurrent registry writer finish without spinning.
+            // The server confirms that admission performed no work: another writer holds the
+            // registry. Back off with jitter so contending runs spread out instead of storming it.
+            // There is no give-up count; cancellation ends the wait.
+            let delay = lease_busy_delay(attempt, uuid::Uuid::new_v4().as_u128() as u16);
+            attempt += 1;
             tokio::select! { _ = cancel.cancelled() => return Err(canceled()),
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {} }
+                _ = tokio::time::sleep(delay) => {} }
         }
     }
 
@@ -143,16 +168,17 @@ impl Connection {
         &self, library: &str, function: &str, arguments: Value,
         cancel: &CancellationToken, lease: bool,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if !valid_segment(library) || !valid_segment(function) {
             return Err(Diagnostic::new(
                 "ARTIFACT_FUNCTION_ID_INVALID",
-                "The native library and function must be valid route segments.",
+                "The Epicor library and function must be valid route segments.",
             ));
         }
         if self.caller().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Connect and verify the caller before a native function call.",
+                "Connect and verify the Epicor user before an Epicor function call.",
             ));
         }
         self.ensure_session(cancel).await?;
@@ -173,7 +199,7 @@ impl Connection {
             .client
             .post(url)
             .header("Accept", "application/json")
-            .header("callSettings", json!({"Company":self.company}).to_string())
+            .header("callSettings", json!({"Company":self.call_company()}).to_string())
             .json(&arguments);
         let request = self.authenticate(request, true).await?;
         if lease {
@@ -186,6 +212,103 @@ impl Connection {
     pub fn settings(&self) -> &OperatingSettings {
         &self.settings
     }
+    /// A certificate failure gets its own plain, non-retryable diagnostic.
+    fn request_error(&self, error: &reqwest::Error) -> Diagnostic {
+        crate::transport_trust::certificate_diagnostic(error, self.endpoint.host_str().unwrap_or(""), self.allow_untrusted_certificate)
+            .unwrap_or_else(transport_error)
+    }
+    /// How this connection's server certificate was trusted. Plain http has no
+    /// certificate and is reported as unencrypted, never as verified. Over https a
+    /// profile without the option uses Windows trust only, so a working
+    /// connection is "verified".
+    pub fn transport_trust(&self) -> crate::transport_trust::TransportTrust {
+        let unobserved = |mode| crate::transport_trust::TransportTrust { mode, certificate_sha256: None, subject: None, issuer: None, not_after: None };
+        if self.endpoint.scheme() != "https" {
+            return unobserved(crate::transport_trust::TrustMode::Unencrypted);
+        }
+        self.transport_trust.lock().ok().and_then(|observed| observed.clone()).unwrap_or(unobserved(crate::transport_trust::TrustMode::Verified))
+    }
+    pub fn is_company_discovery(&self) -> bool {
+        self.discovery
+    }
+    pub(crate) fn mark_test_only(&self) {
+        self.test_only.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// A retained connection.test (with or without a company) or a discovery connection:
+    /// held only so connection.disconnect can retry its sign-out.
+    pub fn is_test_only(&self) -> bool {
+        self.discovery || self.test_only.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// Plain wording for a failed connect step. Codes stay unchanged for clients;
+    /// the native details (already redacted) stay for support.
+    fn connect_failure(&self, stage: &'static str, mut error: Diagnostic) -> Diagnostic {
+        let host = self.endpoint.host_str().unwrap_or("the server");
+        let code = error.code.clone();
+        let plain = match (stage, code.as_str()) {
+            (_, code) if code.starts_with("CERTIFICATE_") || code == "CANCELED" => None,
+            (_, "TRANSPORT_FAILED") => {
+                error.context.insert("host".into(), json!(host));
+                Some("Herbert could not reach the server. Check the URL, VPN or network connection, and the timeout settings.".into())
+            }
+            ("signIn", "ACCESS_DENIED") => Some("Epicor rejected the sign-in. Check the username, password and API key for this environment.".into()),
+            ("accountCheck", "ACCESS_DENIED") => Some("Epicor refused the sign-in or the account check. Check the username, password and API key, and that this account may use the Epicor REST API.".into()),
+            ("session", "COMPANY_CONTEXT_UNVERIFIED") => {
+                error.context.insert("company".into(), json!(self.company));
+                Some("This account cannot use the chosen company. Choose a company from the list that Test connection shows.".into())
+            }
+            ("session", _) => Some("Epicor would not start a session for this account, for example because no license seat is free or the account is disabled or locked. Try again later or ask your Epicor administrator.".into()),
+            _ => None,
+        };
+        if let Some(message) = plain { error.message = message; }
+        error.context.insert("connectionStage".into(), json!(stage));
+        error
+    }
+    /// The company a request addresses: the selected company, or for a discovery
+    /// connection the account's default session company (empty before login).
+    fn call_company(&self) -> String {
+        if self.discovery {
+            self.discovery_company.lock().ok().and_then(|company| company.clone()).unwrap_or_default()
+        } else {
+            self.company.clone()
+        }
+    }
+    fn refuse_discovery(&self) -> Result<(), Diagnostic> {
+        if self.discovery {
+            return Err(Diagnostic::new("COMPANY_REQUIRED", "This connection only lists companies. Choose a company and connect before downloading."));
+        }
+        Ok(())
+    }
+    /// Companies the admitted caller can use, for connection.test. UserComp rows
+    /// (with names) come from the admission read; CompList IDs are the fallback,
+    /// with names from the company list; the company list alone is the last fallback.
+    pub async fn available_companies(&self, cancel: &CancellationToken) -> (Vec<Value>, &'static str, Option<Diagnostic>) {
+        let admitted = self.admitted_companies.lock().ok().and_then(|value| value.clone()).unwrap_or(Value::Null);
+        let rows = |value: &Value| value.as_array().map(|rows| rows.iter().filter_map(|row| {
+            let id = row["Company"].as_str().filter(|id| !id.is_empty())?;
+            Some(json!({"id":id,"name":row["CompanyName"].as_str().or_else(|| row["Name"].as_str()).unwrap_or("")}))
+        }).collect::<Vec<_>>());
+        let mut companies = rows(&admitted["userComp"]).unwrap_or_default();
+        let mut source = "userAccess";
+        if companies.is_empty() {
+            let listed = self.send("Ice.BO.CompanySvc", "GetList", json!({"whereClause":"","pageSize":0,"absolutePage":0}), false, false, true, cancel).await;
+            let names = match &listed {
+                Ok(response) => rows(&response.value["returnObj"]["CompanyList"]).unwrap_or_default(),
+                Err(_) => vec![],
+            };
+            let ids = admitted["compList"].as_str().map(|text| text.split(['~', ',']).map(str::trim).filter(|id| !id.is_empty()).map(String::from).collect::<Vec<_>>()).unwrap_or_default();
+            if !ids.is_empty() {
+                companies = ids.iter().map(|id| json!({"id":id,"name":names.iter().find(|row| row["id"] == id.as_str()).and_then(|row| row["name"].as_str()).unwrap_or("")})).collect();
+            } else if listed.is_ok() {
+                companies = names;
+                source = "companyList";
+            } else {
+                return (vec![], "unavailable", listed.err());
+            }
+        }
+        companies.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        companies.dedup_by(|a, b| a["id"] == b["id"]);
+        (companies, source, None)
+    }
     pub fn new(
         endpoint: Url,
         company: String,
@@ -194,15 +317,31 @@ impl Connection {
         settings: OperatingSettings,
         budget: Arc<Budget>,
     ) -> Result<Arc<Self>, Diagnostic> {
+        Self::with_options(endpoint, Some(company), mode, credentials, settings, budget, ConnectionOptions::default())
+    }
+    /// `company: None` creates a company-discovery connection (connection.test only).
+    pub fn with_options(
+        endpoint: Url,
+        company: Option<String>,
+        mode: AuthMode,
+        credentials: Credentials,
+        settings: OperatingSettings,
+        budget: Arc<Budget>,
+        options: ConnectionOptions,
+    ) -> Result<Arc<Self>, Diagnostic> {
         settings.validate()?;
         credentials.validate(mode)?;
-        if company.is_empty() {
-            return Err(Diagnostic::new(
-                "COMPANY_REQUIRED",
-                "Select exactly one company before connecting.",
-            ));
+        let discovery = company.is_none();
+        let company = company.unwrap_or_default();
+        if !discovery && company.is_empty() {
+            return Err(company_required());
         }
+        let transport_trust = crate::transport_trust::Observed::default();
         let mut builder = Client::builder().redirect(reqwest::redirect::Policy::none());
+        if options.allow_untrusted_certificate {
+            // Only this connection's client relaxes issuer trust; other profiles keep defaults.
+            builder = builder.use_preconfigured_tls(crate::transport_trust::relaxed_client_config(transport_trust.clone())?);
+        }
         if let Some(ms) = settings.connection_timeout_ms {
             builder = builder.connect_timeout(Duration::from_millis(ms));
         }
@@ -226,6 +365,12 @@ impl Connection {
             session: Mutex::new(None),
             caller: Mutex::new(None),
             server_version: Mutex::new(None),
+            allow_untrusted_certificate: options.allow_untrusted_certificate,
+            transport_trust,
+            discovery,
+            test_only: Default::default(),
+            discovery_company: std::sync::Mutex::new(None),
+            admitted_companies: std::sync::Mutex::new(None),
             #[cfg(test)]
             qualification_http: std::sync::Mutex::new(Vec::new()),
         }))
@@ -254,7 +399,7 @@ impl Connection {
         let caller = self.caller().await.ok_or_else(|| {
             Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before changing access.",
+                "Verify the Epicor user before changing access.",
             )
         })?;
         let _shared = tokio::select! {
@@ -288,7 +433,7 @@ impl Connection {
         let caller = self.caller().await.ok_or_else(|| {
             Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before changing access.",
+                "Verify the Epicor user before changing access.",
             )
         })?;
         self.owned_write(
@@ -310,7 +455,7 @@ impl Connection {
         if self.caller().await.as_deref() != Some(current.caller.as_str()) {
             return Err(Diagnostic::new(
                 "ACCESS_SCOPE_MISMATCH",
-                "The account update must belong to the admitted caller.",
+                "The account update must belong to the allowed to start Epicor user.",
             ));
         }
         // A sparse native update changes only the membership. Include fresh
@@ -353,7 +498,7 @@ impl Connection {
         let previous = self.caller().await.ok_or_else(|| {
             Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before refreshing access.",
+                "Verify the Epicor user before refreshing access.",
             )
         })?;
         *self.caller.lock().await = None;
@@ -388,6 +533,7 @@ impl Connection {
         arguments: Value,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if !matches!(
             (service, method),
             ("Ice.BO.UserFileSvc", "AssignGroupToUsers" | "UpdateExt")
@@ -402,14 +548,14 @@ impl Connection {
         ) {
             return Err(Diagnostic::new(
                 "OWNED_WRITE_NOT_REVIEWED",
-                "The requested operation has no reviewed ownership adapter.",
+                "Herbert cannot make this change on the Epicor server because it has no safe way to track and undo it. Nothing was changed.",
             ));
         }
         self.ensure_session(cancel).await?;
         if self.caller().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before an owned native write.",
+                "Verify the Epicor user before an owned change in Epicor.",
             ));
         }
         let _shared = tokio::select! {
@@ -433,35 +579,30 @@ impl Connection {
                     collect_compiler_messages(details, &mut messages);
                 }
                 if !messages.is_empty() {
-                    let mut message = messages.join("\n");
-                    for secret in [
-                        self.credentials.password.as_str(),
-                        self.credentials.api_key.as_deref().unwrap_or(""),
-                    ] {
-                        if !secret.is_empty() {
-                            message = message.replace(secret, "[redacted]");
-                        }
-                    }
-                    use base64::Engine as _;
-                    let basic = base64::engine::general_purpose::STANDARD.encode(format!(
-                        "{}:{}",
-                        self.credentials.username, self.credentials.password
-                    ));
-                    message = message.replace(&basic, "[redacted]");
-                    if let Some(session) = self.session.lock().await.as_ref() {
-                        message = message.replace(session.token.as_str(), "[redacted]");
-                        if let Some(id) = &session.id {
-                            message = message.replace(id.as_str(), "[redacted]");
-                        }
-                    }
+                    let message = self.redact_server_text(messages.join("\n")).await;
                     error.code = "HELPER_COMPILATION_FAILED".into();
-                    error.message = format!("The native helper did not compile: {message}");
+                    error.message = "Epicor could not compile Herbert's temporary server helper, so the content that needs it was not collected. The redacted compiler output is in the technical details. Check that this Epicor version is supported.".into();
+                    // Redacted server compiler output: technical detail, never the message.
+                    error.context.insert("serverMessage".into(), json!(message));
                     error.retryable = false;
                 }
                 Err(error)
             }
             result => result,
         }
+    }
+
+    /// Scrub this connection's secrets (password, API key, Basic header, session
+    /// token and ID) from server text before it becomes `context.serverMessage`.
+    pub(crate) async fn redact_server_text(&self, mut message: String) -> String {
+        let secrets = server_secrets(&self.credentials, self.session.lock().await.as_ref());
+        scrub_text(&mut message, &secrets);
+        message
+    }
+    /// The same scrub applied to every string inside a JSON value, keeping its structure.
+    pub(crate) async fn redact_server_value(&self, value: &mut Value) {
+        let secrets = server_secrets(&self.credentials, self.session.lock().await.as_ref());
+        scrub_value(value, &secrets);
     }
 
     /// Private native-policy reads. Guests cannot use this route to inspect
@@ -473,20 +614,21 @@ impl Connection {
         arguments: Value,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if !matches!(
             (service, method),
             ("Ice.BO.ObjectSecuritySvc", "GetByIDEx") | ("Ice.BO.SecGroupSvc", "GetByID")
         ) {
             return Err(Diagnostic::new(
                 "POLICY_READ_NOT_REVIEWED",
-                "The requested native policy read has no private adapter.",
+                "Herbert does not support reading this Epicor security policy.",
             ));
         }
         self.ensure_session(cancel).await?;
         if self.caller().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before inspecting native access policy.",
+                "Verify the Epicor user before inspecting Epicor access policy.",
             ));
         }
         let _shared = tokio::select! { _ = cancel.cancelled() => return Err(canceled()), gate = self.lifecycle.read() => gate };
@@ -516,7 +658,7 @@ impl Connection {
             .ok_or_else(|| {
                 Diagnostic::new(
                     "ACCESS_GROUP_UNVERIFIED",
-                    "Native readback did not identify one exact security group.",
+                    "Epicor readback did not identify one exact security group.",
                 )
             })?;
         let row = &rows[0];
@@ -526,7 +668,7 @@ impl Connection {
             .ok_or_else(|| {
                 Diagnostic::new(
                     "ACCESS_GROUP_UNVERIFIED",
-                    "The native group omitted its canonical identity.",
+                    "The Epicor group omitted its canonical identity.",
                 )
             })?;
         if row["Company"]
@@ -539,7 +681,7 @@ impl Connection {
         {
             return Err(Diagnostic::new(
                 "ACCESS_GROUP_UNVERIFIED",
-                "The group does not have native identity in the selected company.",
+                "The group does not have Epicor ID in the selected company.",
             ));
         }
         Ok(id.into())
@@ -551,17 +693,18 @@ impl Connection {
         arguments: Value,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if !matches!(method, "GetDefaults" | "IsValidLibraryId") {
             return Err(Diagnostic::new(
                 "HELPER_METADATA_NOT_REVIEWED",
-                "The helper factory requested an unreviewed metadata operation.",
+                "A plugin asked for helper information that Herbert does not allow. Nothing was changed on the server. Update the plugin to the version that ships with this Herbert release.",
             ));
         }
         self.ensure_session(cancel).await?;
         if self.caller().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify the caller before inspecting helper metadata.",
+                "Verify the Epicor user before inspecting helper metadata.",
             ));
         }
         let _shared = tokio::select! {
@@ -587,11 +730,20 @@ impl Connection {
         // A failed reconnect must revoke any earlier admission.
         *self.caller.lock().await = None;
         if self.mode == AuthMode::Session {
-            self.acquire_token(cancel).await?;
+            self.acquire_token(cancel).await.map_err(|error| self.connect_failure("signIn", error))?;
             // Native service reads need SessionInfo, even for the initial role check.
-            self.login_session(cancel).await?;
+            self.login_session(cancel).await.map_err(|error| self.connect_failure("session", error))?;
         }
-        let caller = self.verify_admission(cancel).await?;
+        if self.discovery {
+            let current = self.send("Ice.Lib.SessionModSvc", "GetCurrentValuesFromServer", json!({}), false, true, true, cancel).await?.value;
+            let company = current.pointer("/parameters/companyID").and_then(Value::as_str).filter(|id| !id.is_empty()).ok_or_else(|| {
+                Diagnostic::new("COMPANY_DISCOVERY_UNAVAILABLE", "Epicor did not report a default company for this account, so Herbert cannot list its companies. Enter the company ID manually.")
+            })?;
+            if let Ok(mut path) = self.discovery_company.lock() {
+                *path = Some(company.to_owned());
+            }
+        }
+        let caller = self.verify_admission(cancel).await.map_err(|error| self.connect_failure("accountCheck", error))?;
         let version = self
             .send(
                 "Ice.Lib.SessionModSvc",
@@ -607,7 +759,7 @@ impl Connection {
         *self.server_version.lock().await = observed_database_version(&version);
         *self.caller.lock().await = Some(caller.clone());
         Ok(
-            json!({"endpoint":self.endpoint.as_str(),"company":self.company,"caller":caller,"authMode":self.mode,"admission":"verifiedSecurityManager","version":version.get("returnObj")}),
+            json!({"endpoint":self.endpoint.as_str(),"company":self.call_company(),"caller":caller,"authMode":self.mode,"admission":"verifiedSecurityManager","version":version.get("returnObj")}),
         )
     }
     async fn acquire_token(&self, cancel: &CancellationToken) -> Result<(), Diagnostic> {
@@ -631,7 +783,7 @@ impl Connection {
         if value.get("TokenType").and_then(Value::as_str) != Some("Bearer") {
             return Err(Diagnostic::new(
                 "TOKEN_TYPE_INVALID",
-                "The native token endpoint did not confirm a Bearer token.",
+                "The Epicor token endpoint did not confirm a Bearer token.",
             ));
         }
         let token = value
@@ -695,11 +847,15 @@ impl Connection {
             .ok_or_else(|| {
                 Diagnostic::new(
                     "SESSION_ESTABLISHMENT_FAILED",
-                    "Native Login did not return a SessionMod identity.",
+                    "Epicor Login did not return a SessionMod identity.",
                 )
             })?;
         if let Some(s) = self.session.lock().await.as_mut() {
             s.id = Some(Zeroizing::new(id.into()));
+        }
+        if self.discovery {
+            // Company discovery keeps the account's default session company.
+            return Ok(());
         }
         self.send(
             "Ice.Lib.SessionModSvc",
@@ -734,7 +890,7 @@ impl Connection {
         {
             return Err(Diagnostic::new(
                 "COMPANY_CONTEXT_UNVERIFIED",
-                "The native session did not confirm the selected company.",
+                "The Epicor session did not confirm the selected company.",
             ));
         }
         Ok(())
@@ -759,13 +915,13 @@ impl Connection {
             .ok_or_else(|| {
                 Diagnostic::new(
                     "ADMISSION_UNKNOWN",
-                    "The native current-user read did not establish caller or role.",
+                    "The Epicor current-user read did not establish Epicor user or role.",
                 )
             })?;
         if users.len() != 1 {
             return Err(Diagnostic::new(
                 "ADMISSION_UNKNOWN",
-                "The native current-user read returned an ambiguous caller.",
+                "The Epicor current-user read returned an ambiguous Epicor user.",
             ));
         }
         let user = &users[0];
@@ -777,13 +933,13 @@ impl Connection {
             .ok_or_else(|| {
                 Diagnostic::new(
                     "ADMISSION_UNKNOWN",
-                    "The native current-user identity is missing.",
+                    "The Epicor current-user identity is missing.",
                 )
             })?;
         if user.get("SecurityMgr").and_then(Value::as_bool) != Some(true) {
             return Err(Diagnostic::new(
                 "SECURITY_MANAGER_REQUIRED",
-                "This caller is not a verified Security Manager. Collection is refused.",
+                "This Epicor user is not a verified Security Manager. Ask your Epicor administrator to verify the selected account’s Security Manager access, then test again. Collection is refused.",
             ));
         }
         if user.get("UserDisabled").and_then(Value::as_bool) != Some(false)
@@ -791,14 +947,20 @@ impl Connection {
         {
             return Err(Diagnostic::new(
                 "CALLER_DISABLED_OR_UNKNOWN",
-                "The caller's enabled state could not be verified.",
+                "The Epicor user must be enabled and unlocked. Ask your Epicor administrator to verify both states, then test again.",
             ));
         }
         if !caller.eq_ignore_ascii_case(&self.credentials.username) {
             return Err(Diagnostic::new(
                 "CALLER_MISMATCH",
-                "The native current-user identity does not match the authenticated credentials.",
+                "The Epicor current-user identity does not match the authenticated credentials.",
             ));
+        }
+        // Keep only the accessible-company facts for connection.test; the rest
+        // of the account row stays in memory for this check only.
+        let companies = json!({"userComp":current["returnObj"]["UserComp"],"compList":user["CompList"]});
+        if let Ok(mut admitted) = self.admitted_companies.lock() {
+            *admitted = Some(companies);
         }
         Ok(caller.into())
     }
@@ -848,6 +1010,7 @@ impl Connection {
         page: u64,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         let url = entity_page_url(
             &self.endpoint,
             &self.company,
@@ -860,7 +1023,7 @@ impl Connection {
         if self.caller.lock().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify caller admission before reading definitions.",
+                "Verify Epicor user start check before reading definitions.",
             ));
         }
         self.ensure_session(cancel).await?;
@@ -871,7 +1034,7 @@ impl Connection {
             .client
             .get(url)
             .header("Accept", "application/json")
-            .header("callSettings", json!({"Company":self.company}).to_string());
+            .header("callSettings", json!({"Company":self.call_company()}).to_string());
         self.consume(self.authenticate(request, true).await?, false, true, cancel)
             .await
     }
@@ -883,10 +1046,11 @@ impl Connection {
         export: bool,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if self.caller.lock().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify caller admission before reading definitions.",
+                "Verify Epicor user start check before reading definitions.",
             ));
         }
         self.ensure_session(cancel).await?;
@@ -931,7 +1095,7 @@ impl Connection {
         result.map_err(|_| {
             Diagnostic::new(
                 "LOGOUT_UNCERTAIN",
-                "Native SessionMod logout was not confirmed. Herbert retains this connection. Call connection.disconnect to retry logout.",
+                "Epicor SessionMod logout was not confirmed. Herbert retains this connection. Call connection.disconnect to retry logout.",
             )
         })?;
         *self.session.lock().await = None;
@@ -951,17 +1115,17 @@ impl Connection {
         if !valid_segment(service) || !valid_segment(method) {
             return Err(Diagnostic::new(
                 "INVALID_NATIVE_ROUTE",
-                "The native service or method identity is invalid.",
+                "The Epicor service or method identity is invalid.",
             ));
         }
         let mut url = self.endpoint.clone();
         {
             let mut parts = url.path_segments_mut().map_err(|_| {
-                Diagnostic::new("INVALID_ENDPOINT", "Cannot form a native endpoint.")
+                Diagnostic::new("INVALID_ENDPOINT", "Cannot form an Epicor endpoint.")
             })?;
             parts.pop_if_empty().push("api").push("v2");
             if !lifecycle {
-                parts.push("odata").push(&self.company);
+                parts.push("odata").push(&self.call_company());
             }
             parts.push(service).push(method);
         }
@@ -969,7 +1133,7 @@ impl Connection {
             .client
             .post(url)
             .header("Accept", "application/json")
-            .header("callSettings", json!({"Company":self.company}).to_string())
+            .header("callSettings", json!({"Company":self.call_company()}).to_string())
             .json(&args);
         request = self.authenticate(request, include_session).await?;
         if lifecycle {
@@ -1017,6 +1181,7 @@ impl Connection {
         args: Value,
         cancel: &CancellationToken,
     ) -> Result<NativeResponse, Diagnostic> {
+        self.refuse_discovery()?;
         if helper.company != self.company
             || args.get(&helper.company_argument).and_then(Value::as_str)
                 != Some(self.company.as_str())
@@ -1025,13 +1190,13 @@ impl Connection {
         {
             return Err(Diagnostic::new(
                 "HELPER_SCOPE_MISMATCH",
-                "The helper call must use the fixed selected company and verified native identity.",
+                "The helper call must use the fixed selected company and verified Epicor ID.",
             ));
         }
         if self.caller.lock().await.is_none() {
             return Err(Diagnostic::new(
                 "ADMISSION_REQUIRED",
-                "Verify caller admission before reading definitions.",
+                "Verify Epicor user start check before reading definitions.",
             ));
         }
         self.ensure_session(cancel).await?;
@@ -1043,7 +1208,7 @@ impl Connection {
             let mut parts = url.path_segments_mut().map_err(|_| {
                 Diagnostic::new(
                     "INVALID_ENDPOINT",
-                    "Cannot form the native Function endpoint.",
+                    "Cannot form the Epicor Function endpoint.",
                 )
             })?;
             parts
@@ -1059,7 +1224,7 @@ impl Connection {
             .client
             .post(url)
             .header("Accept", "application/json")
-            .header("callSettings", json!({"Company":self.company}).to_string())
+            .header("callSettings", json!({"Company":self.call_company()}).to_string())
             .json(&args);
         let request = self.authenticate(request, true).await?;
         // Owned temporary-state calls reconcile their retained IDs explicitly.
@@ -1084,7 +1249,7 @@ impl Connection {
             let fresh = request.try_clone().ok_or_else(|| {
                 Diagnostic::new(
                     "REQUEST_NOT_REPLAYABLE",
-                    "The request body cannot be cloned for a fresh native read.",
+                    "The request body cannot be cloned for a fresh Epicor read.",
                 )
             })?;
             let mut retry_after = None;
@@ -1152,7 +1317,7 @@ impl Connection {
         }
         #[cfg(test)]
         let trace_path = request.try_clone().and_then(|r| r.build().ok()).map(|r| r.url().path().to_owned()).unwrap_or_default();
-        let mut response = tokio::select! {_ = cancel.cancelled()=>return Err(canceled()),r=request.send()=>r.map_err(|_|transport_error())?};
+        let mut response = tokio::select! {_ = cancel.cancelled()=>return Err(canceled()),r=request.send()=>r.map_err(|error|self.request_error(&error))?};
         let status = response.status();
         let length = response.content_length();
         let mut raw = Vec::new();
@@ -1183,7 +1348,7 @@ impl Connection {
         if length.is_some_and(|n| n != raw.len() as u64) {
             return Err(Diagnostic::new(
                 "TRANSFER_TRUNCATED",
-                "The native response length differs from Content-Length.",
+                "The Epicor response length differs from Content-Length.",
             ));
         }
         if !status.is_success() {
@@ -1204,14 +1369,14 @@ impl Connection {
             let mut diagnostic = match status {
                 StatusCode::UNAUTHORIZED => Diagnostic::new(
                     "ACCESS_DENIED",
-                    "Native authentication or object access was refused.",
+                    "Epicor authentication or object access was refused.",
                 ),
                 StatusCode::FORBIDDEN => {
-                    Diagnostic::new("ACCESS_DENIED", "Native authorization was refused.")
+                    Diagnostic::new("ACCESS_DENIED", "Epicor authorization was refused.")
                 }
                 StatusCode::NOT_FOUND => Diagnostic::new(
                     "NOT_FOUND",
-                    "The exact native object or capability was not found.",
+                    "The exact Epicor object or capability was not found.",
                 ),
                 StatusCode::TOO_MANY_REQUESTS => Diagnostic::new(
                     "THROTTLED",
@@ -1220,7 +1385,7 @@ impl Connection {
                 _ => Diagnostic::new(
                     "NATIVE_REFUSAL",
                     format!(
-                        "Native operation returned HTTP {}. Server text was omitted to avoid credential reflection.",
+                        "Epicor operation returned HTTP {}. Server text was omitted to avoid credential reflection.",
                         status.as_u16()
                     ),
                 ),
@@ -1271,6 +1436,70 @@ impl Connection {
             elapsed_ms: start.elapsed().as_millis(),
         })
     }
+}
+
+/// Every secret this connection could see reflected in server text: password, API key,
+/// Basic header and, while signed in, the session token and ID. Empty values are dropped.
+fn server_secrets(credentials: &Credentials, session: Option<&Session>) -> Vec<Zeroizing<String>> {
+    use base64::Engine as _;
+    let mut secrets = vec![
+        Zeroizing::new(credentials.password.clone()),
+        Zeroizing::new(credentials.api_key.clone().unwrap_or_default()),
+        Zeroizing::new(base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", credentials.username, credentials.password))),
+    ];
+    if let Some(session) = session {
+        secrets.push(Zeroizing::new(session.token.as_str().to_owned()));
+        if let Some(id) = &session.id {
+            secrets.push(Zeroizing::new(id.as_str().to_owned()));
+        }
+    }
+    secrets.retain(|secret| !secret.is_empty());
+    secrets
+}
+fn scrub_text(text: &mut String, secrets: &[Zeroizing<String>]) {
+    for secret in secrets {
+        if text.contains(secret.as_str()) {
+            *text = text.replace(secret.as_str(), "[redacted]");
+        }
+    }
+}
+fn scrub_value(value: &mut Value, secrets: &[Zeroizing<String>]) {
+    match value {
+        Value::String(text) => scrub_text(text, secrets),
+        Value::Array(items) => items.iter_mut().for_each(|item| scrub_value(item, secrets)),
+        Value::Object(items) => items.values_mut().for_each(|item| scrub_value(item, secrets)),
+        _ => {}
+    }
+}
+
+#[test]
+fn server_text_and_values_are_scrubbed_of_every_connection_secret() {
+    use base64::Engine as _;
+    let credentials = Credentials {
+        username: "fixture".into(),
+        password: "fixture-password".into(),
+        api_key: Some("fixture-key".into()),
+    };
+    let session = Session {
+        token: Zeroizing::new("fixture-token".into()),
+        expires: Instant::now(),
+        id: Some(Zeroizing::new("fixture-session".into())),
+    };
+    let secrets = server_secrets(&credentials, Some(&session));
+    let basic = base64::engine::general_purpose::STANDARD.encode("fixture:fixture-password");
+    let mut text = format!("pw fixture-password key fixture-key basic {basic} token fixture-token id fixture-session user fixture");
+    scrub_text(&mut text, &secrets);
+    assert_eq!(text, "pw [redacted] key [redacted] basic [redacted] token [redacted] id [redacted] user fixture");
+    // Per JSON value: structure, numbers and booleans are kept; every string is scrubbed.
+    let mut value = serde_json::json!({"SameIDInCurrentCompany":"true","log":["ok","Session fixture-token expired"],
+        "nested":{"m":"bad fixture-key"},"n":3,"b":true});
+    scrub_value(&mut value, &secrets);
+    assert_eq!(value, serde_json::json!({"SameIDInCurrentCompany":"true","log":["ok","Session [redacted] expired"],
+        "nested":{"m":"bad [redacted]"},"n":3,"b":true}));
+    // Signed out: no session secrets; an absent API key adds no empty pattern.
+    let anonymous = Credentials { username: "fixture".into(), password: "fixture-password".into(), api_key: None };
+    assert_eq!(server_secrets(&anonymous, None).len(), 2);
 }
 
 fn redact_connection_secrets(value: &mut Value, credentials: &Credentials) {
@@ -1333,7 +1562,7 @@ fn entity_page_url(
     if !valid_segment(service) || !valid_segment(entity) || page_size == 0 || page == 0 {
         return Err(Diagnostic::new(
             "INVALID_ENTITY_READ",
-            "Supply a positive native schema page and page size.",
+            "Supply a positive Epicor schema page and page size.",
         ));
     }
     let skip = (page - 1)
@@ -1341,7 +1570,7 @@ fn entity_page_url(
         .ok_or_else(|| {
             Diagnostic::new(
                 "NATIVE_PAGING_RANGE",
-                "The requested native page offset exceeds UInt64.",
+                "The requested Epicor page offset exceeds UInt64.",
             )
         })?;
     let mut url = endpoint.clone();
@@ -1351,7 +1580,7 @@ fn entity_page_url(
         .map_err(|_| {
             Diagnostic::new(
                 "INVALID_ENDPOINT",
-                "Cannot form the native schema endpoint.",
+                "Cannot form the Epicor schema endpoint.",
             )
         })?
         .pop_if_empty()
@@ -1371,6 +1600,42 @@ fn entity_page_url(
         .append_pair("$skip", &skip.to_string());
     Ok(url)
 }
+/// Delay before retry `attempt` (0-based) after a leaseBusy reply: 10 ms doubling to a 1 s
+/// ceiling, each drawn uniformly from the upper half of that step (`jitter` 0..=u16::MAX).
+/// The registry writer holds the lock for one lease request (milliseconds), so 10 ms keeps the
+/// uncontended case fast. The 1 s ceiling keeps a busy retry far inside the lease timing: a
+/// renewal waiting on the registry still lands well within the 15 s margin before a lease is
+/// treated as lost (server_leases MARGIN), while contending runs poll at most about once a second.
+fn lease_busy_delay(attempt: u32, jitter: u16) -> Duration {
+    const FIRST_MS: u64 = 10;
+    const CEILING_MS: u64 = 1_000;
+    let step = FIRST_MS.saturating_mul(1u64 << attempt.min(16)).min(CEILING_MS);
+    Duration::from_millis(step / 2 + step / 2 * u64::from(jitter) / u64::from(u16::MAX))
+}
+
+#[cfg(test)]
+mod lease_busy_tests {
+    use super::*;
+
+    #[test]
+    fn lease_busy_backoff_grows_with_jitter_up_to_its_ceiling_and_never_stops() {
+        let ms = |attempt, jitter| lease_busy_delay(attempt, jitter).as_millis();
+        assert_eq!((ms(0, 0), ms(0, u16::MAX)), (5, 10));
+        assert_eq!((ms(3, 0), ms(3, u16::MAX)), (40, 80));
+        for attempt in [7, 8, 20, 1_000, u32::MAX] {
+            assert_eq!((ms(attempt, 0), ms(attempt, u16::MAX)), (500, 1_000), "attempt {attempt}");
+        }
+        let spread = (0..=u16::MAX).step_by(4_096).map(|jitter| ms(5, jitter)).collect::<std::collections::BTreeSet<_>>();
+        assert!(spread.len() > 8, "jitter spreads contending runs: {spread:?}");
+        let mut previous = 0;
+        for attempt in 0..12 {
+            let ceiling = ms(attempt, u16::MAX);
+            assert!(ceiling >= previous && ceiling <= 1_000);
+            previous = ceiling;
+        }
+    }
+}
+
 #[cfg(test)]
 mod entity_read_tests {
     use super::*;

@@ -7,4 +7,6 @@
     <StripSymbols>true</StripSymbols><CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
   <ItemGroup><PackageReference Include="ICSharpCode.Decompiler" Version="11.1.0.9782" /></ItemGroup>
+  <!-- Record only the PDB file name in the native image, not the local build path. -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))"><LinkerArg Include="/PDBALTPATH:%_PDB%" /></ItemGroup>
 </Project>

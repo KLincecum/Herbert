@@ -412,6 +412,19 @@ impl Diagnostic {
             native_details: None,
         }
     }
+    /// Keep a lower-level error (io, zip, serde, process, OS) as technical detail.
+    /// The message stays the static sentence passed to `new`. Support exports do not
+    /// include `cause`. The GUI shows `cause`, `osError` and `serverMessage` under a
+    /// collapsed Technical details (error notice and run issues); MCP returns all context.
+    pub fn with_cause(mut self, cause: impl std::fmt::Display) -> Self {
+        self.context.insert("cause".into(), Value::String(cause.to_string()));
+        self
+    }
+    /// Add one structured detail (path, ID, count) instead of formatting it into the message.
+    pub fn with_context(mut self, key: &str, value: impl Into<Value>) -> Self {
+        self.context.insert(key.into(), value.into());
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq)]
@@ -443,7 +456,7 @@ pub struct OperatingSettings {
     /// Simultaneous plugins. Keep the wire name for existing saved settings.
     /// Each plugin issues one request at a time; local processing can overlap.
     pub concurrency: u8,
-    /// Parallel work inside one server collection. Kevin selected 4 on 2026-10-20.
+    /// Parallel work inside one server collection. The default is 4.
     #[serde(default = "default_server_concurrency")]
     pub server_concurrency: u32,
     /// Shared local decompilation budget; default four is measured, not a cap.
@@ -456,8 +469,14 @@ pub struct OperatingSettings {
     pub minimum_request_interval_ms: Option<u64>,
     pub retry_attempts: u32,
     pub retry_backoff_ms: Option<u64>,
+    /// Epicor's page-size parameters are Int32; `validate` enforces the same range.
+    #[schemars(range(max = 2147483647))]
     pub page_size: Option<u32>,
 }
+
+/// Epicor's page-size parameters are Int32: every plugin and the BAQ runner accept 1..=i32::MAX.
+pub const PAGE_SIZE_MESSAGE: &str =
+    "Page size must be a whole number from 1 to 2,147,483,647, or blank to use the default.";
 
 pub fn default_server_concurrency() -> u32 { 4 }
 pub fn default_local_decompiler_workers() -> u32 { 4 }
@@ -486,6 +505,19 @@ mod server_concurrency_tests {
             assert!(OperatingSettings { server_concurrency: count, ..Default::default() }.validate().is_err());
         }
     }
+    #[test]
+    fn page_size_has_only_the_native_int32_boundary() {
+        for size in [None, Some(1), Some(500), Some(i32::MAX as u32)] {
+            OperatingSettings { page_size: size, ..Default::default() }.validate().unwrap();
+        }
+        for size in [0, i32::MAX as u32 + 1, u32::MAX] {
+            let error = OperatingSettings { page_size: Some(size), ..Default::default() }.validate().unwrap_err();
+            assert_eq!(error.message, PAGE_SIZE_MESSAGE);
+        }
+        // MCP clients see the same ceiling in the settings schema.
+        let schema = serde_json::to_value(schemars::schema_for!(OperatingSettings)).unwrap();
+        assert!(schema["properties"]["pageSize"].to_string().contains("\"maximum\":2147483647"), "{schema}");
+    }
 }
 
 impl Default for OperatingSettings {
@@ -493,7 +525,7 @@ impl Default for OperatingSettings {
         // Concurrency uses the selected default. Other defaults need evidence.
         // Plugin-specific choices belong to descriptors, not this host contract.
         Self {
-            // Kevin selected four plugins and the 2/4/6/8 choices on 2026-10-21.
+            // Four plugins and the 2/4/6/8 choices were selected on 2026-10-21.
             // This is a user policy, not a server capacity limit.
             concurrency: 4,
             server_concurrency: default_server_concurrency(),
@@ -505,7 +537,7 @@ impl Default for OperatingSettings {
             minimum_request_interval_ms: None,
             retry_attempts: 0,
             retry_backoff_ms: None,
-            // Lab dictionary tests returned the same items at 100, 200, 500 and
+            // Dictionary tests returned the same items at 100, 200, 500 and
             // 1000 rows. At 500, requests fell from 26 to 11 versus 200, with
             // responses below 191 KB. This is an
             // editable default, not a limit on the total number of results.
@@ -522,7 +554,7 @@ impl OperatingSettings {
         // .NET parallel execution accepts a positive Int32 degree of parallelism.
         if self.server_concurrency == 0 || self.server_concurrency > i32::MAX as u32 {
             return Err(Diagnostic::new("INVALID_SERVER_CONCURRENCY",
-                "Server concurrency must fit a positive Int32 value."));
+                "Server concurrency must be a whole number from 1 to 2147483647."));
         }
         if ![2, 4, 6, 8].contains(&self.concurrency) {
             return Err(Diagnostic::new(
@@ -543,11 +575,8 @@ impl OperatingSettings {
                 ));
             }
         }
-        if self.page_size == Some(0) {
-            return Err(Diagnostic::new(
-                "INVALID_SETTING",
-                "pageSize must be positive or null.",
-            ));
+        if self.page_size.is_some_and(|n| n == 0 || n > i32::MAX as u32) {
+            return Err(Diagnostic::new("INVALID_SETTING", PAGE_SIZE_MESSAGE));
         }
         Ok(())
     }

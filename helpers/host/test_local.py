@@ -1,36 +1,18 @@
 """Compile/run the exact helper body against an explicitly offline Sandbox shim."""
 
 from pathlib import Path
-import json, os, subprocess, tempfile, sys, textwrap
+import os, shutil, subprocess, tempfile, sys, textwrap
 
 ROOT = Path(__file__).resolve().parent
-manifest = json.loads(Path("C:/Tools/Workbench/manifests/installed.json").read_text())
 
 
-def find_dotnet(value):
-    if isinstance(value, dict):
-        for child in value.values():
-            found = find_dotnet(child)
-            if found:
-                return found
-    elif isinstance(value, list):
-        for child in value:
-            found = find_dotnet(child)
-            if found:
-                return found
-    elif (
-        isinstance(value, str)
-        and value.lower().endswith("dotnet.exe")
-        and Path(value).is_file()
-    ):
-        return Path(value)
-
-
-dotnet = find_dotnet(manifest)
+# D4: the .NET SDK comes from HERBERT_DOTNET or PATH.
+found = os.environ.get("HERBERT_DOTNET") or shutil.which("dotnet")
+dotnet = Path(found).resolve() if found else None
 if not dotnet:
-    raise RuntimeError("No manifest-owned .NET SDK")
+    raise RuntimeError("Set HERBERT_DOTNET to the .NET SDK dotnet executable or put dotnet on PATH.")
 newtonsoft = next((dotnet.parent / "sdk").glob("*/Newtonsoft.Json.dll"))
-build = Path("C:/Tools/Workbench/workspace/build/hoover/host-helper-tests")
+build = Path(os.environ.get("HERBERT_BUILD_HOME") or Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "herbert") / "host-helper-tests"
 build.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="run-", dir=build) as temp:
     work = Path(temp)

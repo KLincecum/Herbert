@@ -8,7 +8,7 @@ pub fn build(data: &Value, version: &str) -> Result<Vec<u8>, Diagnostic> {
     let fail = || {
         Diagnostic::new(
             "ACCESS_ARCHIVE_INVALID",
-            "The native access scope archive could not be constructed.",
+            "The Epicor access scope archive could not be constructed.",
         )
     };
     if version.split('.').count() != 4

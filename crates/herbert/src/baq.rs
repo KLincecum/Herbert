@@ -25,7 +25,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
             || !aliases.insert(&table.alias)
         {
             return Err(invalid(
-                "Native table identities and aliases must be valid and unique.",
+                "Epicor table identities and aliases must be valid and unique.",
             ));
         }
         for column in &table.metadata {
@@ -37,7 +37,8 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
             columns.insert((table.alias.clone(), column.name.clone()), column.clone());
         }
     }
-    let query_id = format!("Hoover_{}", Uuid::new_v4().simple());
+    // An unsaved, executed-only query: the name is never persisted on the server.
+    let query_id = format!("Herbert_{}", Uuid::new_v4().simple());
     let subquery = Uuid::new_v4().to_string();
     let base = json!({
         "Company": company,
@@ -83,7 +84,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
             if table.metadata.is_empty() {
                 return Err(Diagnostic::new(
                     "FIELD_METADATA_REQUIRED",
-                    "All-column extraction requires native or explicit metadata. A one-field probe cannot establish a complete definition.",
+                    "All-column extraction requires Epicor or explicit metadata. A one-field probe cannot establish a complete definition.",
                 ));
             }
             table
@@ -103,7 +104,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
                 .ok_or_else(|| {
                     Diagnostic::new(
                         "FIELD_METADATA_REQUIRED",
-                        "A selected field lacks its explicit/native type contract.",
+                        "A selected field lacks its explicit/Epicor type contract.",
                     )
                 })?;
             let mut value = row(json!({
@@ -154,7 +155,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
         }
         let column = columns
             .get(&(criterion.table.clone(), criterion.field.clone()))
-            .ok_or_else(|| invalid("A query criterion lacks native field metadata."))?;
+            .ok_or_else(|| invalid("A query criterion lacks Epicor field metadata."))?;
         let value = spec
             .parameters
             .get(&criterion.parameter)
@@ -199,7 +200,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
             let column = columns
                 .get(&(table.alias.clone(), field.clone()))
                 .ok_or_else(|| invalid("The company-scoped table lacks company-field metadata."))?;
-            let name = format!("HooverCompany_{}", table.alias);
+            let name = format!("HerbertCompany_{}", table.alias);
             parameters.insert(name.clone(), (column.data_type.clone(), json!(company)));
             criteria.push(row(json!({
                 "CriteriaID": Uuid::new_v4().to_string(),
@@ -226,7 +227,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
         let source = calculated.map_or(name, |field| field.field.as_str());
         let column = columns
             .get(&(table.to_owned(), source.to_owned()))
-            .ok_or_else(|| invalid("A join field lacks native metadata."))?;
+            .ok_or_else(|| invalid("A join field lacks Epicor metadata."))?;
         if let Some(field) = calculated {
             let expression = field.expression.as_ref().unwrap();
             validate_expression(expression)?;
@@ -240,7 +241,7 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
     let mut relation_groups = BTreeMap::<(String, String), (String, String, usize)>::new();
     for join in &spec.joins {
         if !["Inner", "LeftOuter"].contains(&join.kind.as_str()) {
-            return Err(invalid("Native join kind must be Inner or LeftOuter."));
+            return Err(invalid("Epicor join kind must be Inner or LeftOuter."));
         }
         let left = join_field(&join.left_table, &join.left_field)?;
         let right = join_field(&join.right_table, &join.right_field)?;
@@ -292,11 +293,11 @@ pub fn build(spec: &QuerySpec, company: &str) -> Result<Value, Diagnostic> {
     if let Some(size) = spec.page_size {
         if size == 0 || size > i32::MAX as u32 {
             return Err(invalid(
-                "pageSize must fit the native positive Int32 paging contract.",
+                "pageSize must be a whole number from 1 to 2147483647.",
             ));
         }
         if spec.order.is_empty() {
-            return Err(invalid("Paged discovery requires stable native ordering."));
+            return Err(invalid("Paged discovery requires stable Epicor ordering."));
         }
         if spec.page != 1 {
             return Err(Diagnostic::new(
@@ -467,6 +468,21 @@ mod tests {
         assert!(!value["queryDS"].to_string().contains(injection));
         assert!(value["executionParams"]["ExecutionParameter"].as_array().unwrap().iter()
             .any(|row| row["ParameterValue"] == injection));
+    }
+    #[test]
+    fn unsaved_query_names_use_the_product_prefix_and_no_development_codename() {
+        let spec = QuerySpec {
+            tables: vec![QueryTable { schema: "Erp".into(), table: "Part".into(), alias: "P".into(), company_field: Some("Company".into()),
+                metadata: vec![QueryColumn { name: "Company".into(), data_type: "nvarchar".into(), format: "x(8)".into() }] }],
+            fields: vec![QueryField { table: "P".into(), field: "Company".into(), alias: "Company".into(), expression: None }],
+            joins: vec![], criteria: vec![], parameters: BTreeMap::new(), order: vec![], page_size: None, page: 1,
+        };
+        let value = build(&spec, "A").unwrap();
+        let query_id = value.pointer("/queryDS/DynamicQuery/0/QueryID").and_then(Value::as_str).unwrap();
+        assert!(query_id.starts_with("Herbert_"), "{query_id}");
+        assert!(value["executionParams"]["ExecutionParameter"].as_array().unwrap().iter().any(|row| row["ParameterID"] == "HerbertCompany_P"),
+            "{}", value["executionParams"]);
+        assert!(!value.to_string().contains("Hoover"), "a development codename reached a native request");
     }
     #[test]
     fn joined_inventory_builds_one_query_with_bound_paging_and_custom_filter() {

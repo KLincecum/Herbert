@@ -75,7 +75,7 @@ fn blob(bytes: &[u8]) -> Result<Blob, Diagnostic> {
     // DATA_BLOB's native DWORD length is the external API boundary, not an
     // application credential-size policy.
     let len = u32::try_from(bytes.len()).map_err(|_| {
-        unavailable("The credential exceeds the Windows DPAPI buffer representation.")
+        unavailable("These credentials are too long for Windows to protect. Use a shorter password or API key, or enter the credentials for this session without saving them.")
     })?;
     Ok(Blob {
         len,
@@ -124,10 +124,12 @@ fn crypt(bytes: &[u8], entropy: &[u8], protect: bool) -> Result<Zeroizing<Vec<u8
         native.zeroize();
         Ok(value)
     } else {
-        Err(unavailable(&format!(
-            "Windows could not {} the saved credential (DPAPI error {error}). Supply credentials explicitly or save them again.",
-            if protect { "protect" } else { "unlock" }
-        )))
+        Err(unavailable(if protect {
+            "Windows could not protect the credentials for saving. Enter them for this session instead, or try saving again."
+        } else {
+            "Windows could not unlock the saved Epicor credentials for this profile. Enter the credentials again, or save them again from the same Windows account."
+        })
+        .with_context("osError", error))
     };
     if !output.bytes.is_null() {
         // Also clear a buffer returned on failure before releasing its memory.
@@ -629,7 +631,7 @@ mod tests {
 
     #[test]
     fn native_public_api_save_child_process_read_status_and_exact_forget() {
-        let profile = format!("dpapi-qualification-{}", uuid::Uuid::new_v4());
+        let profile = format!("dpapi-test-{}", uuid::Uuid::new_v4());
         struct Cleanup<'a>(&'a str);
         impl Drop for Cleanup<'_> {
             fn drop(&mut self) {
@@ -678,7 +680,7 @@ mod tests {
         let Ok(profile) = std::env::var("HERBERT_DPAPI_TEST_PROFILE") else {
             return;
         };
-        assert!(profile.starts_with("dpapi-qualification-"));
+        assert!(profile.starts_with("dpapi-test-"));
         let value = crate::profiles::secure_read(ENDPOINT, &profile).unwrap();
         assert_eq!(value.password, "fictional-cross-process-secret");
         assert_eq!(value.api_key.as_deref(), Some("synthetic-api-key"));

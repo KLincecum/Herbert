@@ -129,7 +129,7 @@ pub fn build_complete(
         ));
     }
     if root["Updatable"] == true && bpm.is_none() {
-        return Err(invalid("An updatable query requires its native BPM dataset."));
+        return Err(invalid("An updatable query requires its Epicor BPM dataset."));
     }
     let bpm_xml = bpm.map(|dataset| {
         if dataset["BpDirective"].as_array().into_iter().flatten()
@@ -209,7 +209,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    #[ignore = "Requires explicitly gathered lab UBAQ fixtures."]
+    #[ignore = "Requires explicitly gathered UBAQ fixtures."]
     fn reconstruct_lab_ubaq() {
         let path = std::path::PathBuf::from(std::env::var("HERBERT_UBAQ_FIXTURE").unwrap());
         let read = |name: &str| -> Value {
@@ -249,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires lab evidence gathered by the opt-in host test."]
+    #[ignore = "Requires evidence gathered by the opt-in host test."]
     fn reconstruct_lab_export() {
         let path = std::path::PathBuf::from(std::env::var("HERBERT_BAQ_FIXTURE").unwrap());
         let read = |name: &str| -> Value {

@@ -14,7 +14,7 @@ async fn guest_mode(root: &Path, prepared: bool, fail_last: bool, independent: b
         entities: vec![],
         methods: vec![],
         category: Category {
-            id: "C01".into(),
+            id: "ud-codes".into(),
             name: "Fixture".into(),
             selected: true,
             description: "fixture".into(),
@@ -58,7 +58,7 @@ async fn guest_mode(root: &Path, prepared: bool, fail_last: bool, independent: b
     let mut writes = Vec::new();
     for index in 1..=3 {
         let identity = Identity {
-            category: "C01".into(),
+            category: "ud-codes".into(),
             kind: "Fixture".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([("ID".into(), index.to_string())]),
@@ -149,7 +149,7 @@ async fn prepared_page_files_cross_the_host_handoff_without_trusting_guest_claim
         journal.temporary_access_enabled = false;
         let run = run(Storage::open(&root.path().join("output"), false, journal).unwrap());
         let file = run.storage.lock().unwrap().preserve_raw(b"<Report><Code>original</Code></Report>", "xml").unwrap();
-        let request = GuestRequest { abi:1, operation:"materialize".into(), category:"C01".into(),
+        let request = GuestRequest { abi:1, operation:"materialize".into(), category:"ud-codes".into(),
             company:"C".into(), identity:None, cursor:None, page_size:Some(100),
             state:json!({"claimedFile":file}), response:None, error:None };
         let reply = GuestReply::Action { action:HostAction::ParseXml { file:file.clone() }, state:request.state.clone() };
@@ -307,7 +307,7 @@ async fn producer_fetches_all_pages_while_first_page_waits_for_writers() {
                     if run
                         .activity
                         .statistics()
-                        .pointer("/pageBuffers/C01/memoryPages")
+                        .pointer("/pageBuffers/ud-codes/memoryPages")
                         .and_then(Value::as_u64)
                         .unwrap_or(0)
                         >= 2
@@ -354,13 +354,13 @@ async fn ready_records_are_durable_without_advancing_the_page_cursor() {
     journal.company = "C".into();
     journal.endpoint = connection.endpoint.to_string();
     journal.caller = "fixture".into();
-    journal.cursors.insert("C01".into(), "1".into());
+    journal.cursors.insert("ud-codes".into(), "1".into());
     journal.temporary_access_enabled = false;
     let output = root.path().join("output");
     let run = run(Storage::open(&output, false, journal).unwrap());
-    let identity = Identity { category:"C01".into(), kind:"Fixture".into(), scope:Scope::Global,
+    let identity = Identity { category:"ud-codes".into(), kind:"Fixture".into(), scope:Scope::Global,
         keys:BTreeMap::from([("ID".into(),"ready".into())]) };
-    let request = GuestRequest { abi:1,operation:"materialize".into(),category:"C01".into(),company:"C".into(),
+    let request = GuestRequest { abi:1,operation:"materialize".into(),category:"ud-codes".into(),company:"C".into(),
         identity:None,cursor:None,page_size:Some(100),state:Value::Null,response:None,error:None };
     let reply = GuestReply::ReadyRecords { records:vec![(identity.clone(),json!({"ready":true}))],state:json!({}) };
     // Occupy all disk workers. The plugin must still reach its final record,
@@ -386,7 +386,7 @@ async fn ready_records_are_durable_without_advancing_the_page_cursor() {
     let (result, (queued, before)) = tokio::join!(drive, check);
     assert!(queued, "Materialization waited for the blocked writers");
     assert!(before.artifacts.is_empty());
-    assert_eq!(before.cursors["C01"], "1");
+    assert_eq!(before.cursors["ud-codes"], "1");
     let (final_reply, _) = result.unwrap();
     let batches = run.activity.batches();
     assert_eq!(batches.as_array().unwrap().len(), 1);
@@ -398,7 +398,7 @@ async fn ready_records_are_durable_without_advancing_the_page_cursor() {
     assert_eq!(identities[0],identity);
     let storage = run.storage.lock().unwrap();
     assert_eq!(storage.journal.artifacts.len(),2);
-    assert_eq!(storage.journal.cursors["C01"],"1");
+    assert_eq!(storage.journal.cursors["ud-codes"],"1");
     for artifact in &storage.journal.artifacts {
         for file in &artifact.files { storage.verify(file).unwrap(); }
     }
@@ -408,7 +408,7 @@ async fn ready_records_are_durable_without_advancing_the_page_cursor() {
     drop(run);
     let recovered = Storage::open(&output,false,saved).unwrap();
     assert_eq!(recovered.journal.artifacts.len(),2);
-    assert_eq!(recovered.journal.cursors["C01"],"1");
+    assert_eq!(recovered.journal.cursors["ud-codes"],"1");
 }
 
 #[tokio::test]
@@ -422,12 +422,12 @@ async fn ready_output_failure_does_not_return_a_successful_page() {
     journal.company = "C".into();
     journal.endpoint = connection.endpoint.to_string();
     journal.caller = "fixture".into();
-    journal.cursors.insert("C01".into(), "1".into());
+    journal.cursors.insert("ud-codes".into(), "1".into());
     journal.temporary_access_enabled = false;
     let run = run(Storage::open(&root.path().join("output"), false, journal).unwrap());
-    let identity = Identity { category:"C01".into(), kind:"Fixture".into(), scope:Scope::Global,
+    let identity = Identity { category:"ud-codes".into(), kind:"Fixture".into(), scope:Scope::Global,
         keys:BTreeMap::from([("ID".into(),"bad-output".into())]) };
-    let request = GuestRequest { abi:1, operation:"materialize".into(), category:"C01".into(),
+    let request = GuestRequest { abi:1, operation:"materialize".into(), category:"ud-codes".into(),
         company:"C".into(), identity:None, cursor:None, page_size:Some(100),
         state:Value::Null, response:None, error:None };
     let reply = GuestReply::ReadyRecords { records:vec![(identity,json!({
@@ -436,7 +436,7 @@ async fn ready_output_failure_does_not_return_a_successful_page() {
                 "sha256":"00".repeat(32),"role":"nativeExport"}}]}}))],state:json!({}) };
     let result = host.drive_with_reply(&plugin,request,&connection,&run,&run.cancel,Some(reply)).await;
     assert!(result.is_err());
-    assert_eq!(run.storage.lock().unwrap().journal.cursors["C01"], "1");
+    assert_eq!(run.storage.lock().unwrap().journal.cursors["ud-codes"], "1");
     assert!(run.storage.lock().unwrap().journal.artifacts.iter().any(|artifact|
         artifact.identity.keys.get("ID").map(String::as_str) == Some("bad-output")
             && artifact.acquisition == Completeness::Partial));
@@ -452,9 +452,9 @@ async fn independent_materializations_queue_while_writers_wait_and_commit_only_a
     let mut journal = storage::new_journal("independent-materialization".into());
     journal.company = "C".into(); journal.endpoint = connection.endpoint.to_string();
     journal.caller = "fixture".into(); journal.temporary_access_enabled = false;
-    journal.cursors.insert("C01".into(), "uncommitted".into());
+    journal.cursors.insert("ud-codes".into(), "uncommitted".into());
     let run = run(Storage::open(&root.path().join("output"), false, journal).unwrap());
-    let request = GuestRequest { abi:1, operation:"materialize".into(), category:"C01".into(),
+    let request = GuestRequest { abi:1, operation:"materialize".into(), category:"ud-codes".into(),
         company:"C".into(), identity:None, cursor:None, page_size:Some(100),
         state:json!({"_hostWorkItems":[{"cursor":"1"},{"cursor":"2"},{"cursor":"3"}],
             "_hostWorkNextCursor":"next-page","_progress":{"pageRecords":3}}), response:None, error:None };
@@ -467,7 +467,7 @@ async fn independent_materializations_queue_while_writers_wait_and_commit_only_a
     let check=async {
         let queued=tokio::time::timeout(std::time::Duration::from_secs(10),async{
             loop {
-                if run.activity.statistics().pointer("/pageBuffers/C01/memoryPages").and_then(Value::as_u64).unwrap_or(0)>=2{break;}
+                if run.activity.statistics().pointer("/pageBuffers/ud-codes/memoryPages").and_then(Value::as_u64).unwrap_or(0)>=2{break;}
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
         }).await.is_ok();
@@ -477,7 +477,7 @@ async fn independent_materializations_queue_while_writers_wait_and_commit_only_a
     };
     let(result,(queued,before))=tokio::join!(drive,check);
     assert!(queued,"Later independent items waited for the first write");
-    assert!(before.artifacts.is_empty());assert_eq!(before.cursors["C01"],"uncommitted");
+    assert!(before.artifacts.is_empty());assert_eq!(before.cursors["ud-codes"],"uncommitted");
     let(GuestReply::Inventory{identities,next_cursor,authoritative,diagnostics},_)=result.unwrap()else{panic!("Missing final page inventory")};
     assert_eq!(identities.len(),3);assert_eq!(next_cursor.as_deref(),Some("next-page"));assert!(authoritative&&diagnostics.is_empty());
     let saved=run.storage.lock().unwrap();assert_eq!(saved.journal.artifacts.len(),3);
@@ -489,11 +489,11 @@ async fn independent_materialization_failure_preserves_earlier_output_and_cursor
     let root=tempfile::tempdir().unwrap();let plugin=guest_mode(root.path(),true,false,true).await;
     let host=Host::with_roots(root.path().join("state"),root.path().join("plugins"),Some(root.path().join("coordination")));
     let(connection,_server)=connection().await;let mut journal=storage::new_journal("independent-failure".into());
-    journal.company="C".into();journal.endpoint=connection.endpoint.to_string();journal.caller="fixture".into();journal.temporary_access_enabled=false;journal.cursors.insert("C01".into(),"uncommitted".into());
+    journal.company="C".into();journal.endpoint=connection.endpoint.to_string();journal.caller="fixture".into();journal.temporary_access_enabled=false;journal.cursors.insert("ud-codes".into(),"uncommitted".into());
     let run=run(Storage::open(&root.path().join("output"),false,journal).unwrap());
-    let request=GuestRequest{abi:1,operation:"materialize".into(),category:"C01".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostWorkItems":[{"cursor":"1"},{"failure":"PAYLOAD_OWNERSHIP_DENIED"}],"_hostWorkNextCursor":null,"_progress":{"pageRecords":2}}),response:None,error:None};
+    let request=GuestRequest{abi:1,operation:"materialize".into(),category:"ud-codes".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(100),state:json!({"_hostWorkItems":[{"cursor":"1"},{"failure":"PAYLOAD_OWNERSHIP_DENIED"}],"_hostWorkNextCursor":null,"_progress":{"pageRecords":2}}),response:None,error:None};
     let result=host.drive_with_reply(&plugin,request,&connection,&run,&run.cancel,None).await;
-    assert!(result.is_err());let saved=run.storage.lock().unwrap();assert_eq!(saved.journal.artifacts.len(),1);assert_eq!(saved.journal.cursors["C01"],"uncommitted");
+    assert!(result.is_err());let saved=run.storage.lock().unwrap();assert_eq!(saved.journal.artifacts.len(),1);assert_eq!(saved.journal.cursors["ud-codes"],"uncommitted");
     for file in &saved.journal.artifacts[0].files{saved.verify(file).unwrap();}
 }
 
@@ -518,9 +518,9 @@ async fn late_fetch_failure_keeps_written_pages_and_the_next_uncommitted_cursor(
         .unwrap();
     let saved = snapshot(&run).await.unwrap();
     assert_eq!(saved.artifacts.len(), 2, "{:?}", saved.diagnostics);
-    assert_eq!(saved.cursors["C01"], "3");
-    assert_eq!(saved.discovery_finished["C01"], false);
-    assert_eq!(run.activity.plugin_states()["C01"], "failed");
+    assert_eq!(saved.cursors["ud-codes"], "3");
+    assert_eq!(saved.discovery_finished["ud-codes"], false);
+    assert_eq!(run.activity.plugin_states()["ud-codes"], "failed");
     assert!(
         saved
             .diagnostics
@@ -545,7 +545,7 @@ async fn recovery_rereads_a_completed_category_when_an_output_is_missing() {
         let first = run(Storage::open(&output, false, journal).unwrap());
         host.discover_targets(&first, &connection, &plugin, &[], Some(1)).await.unwrap();
         let saved = snapshot(&first).await.unwrap();
-        assert!(saved.discovery_finished["C01"]);
+        assert!(saved.discovery_finished["ud-codes"]);
         let missing = saved.artifacts[0].files[0].clone();
         let path = first.storage.lock().unwrap().confined(&missing.path).unwrap();
         drop(first);
@@ -556,26 +556,26 @@ async fn recovery_rereads_a_completed_category_when_an_output_is_missing() {
         host.discover_targets(&recovered, &connection, &plugin, &[], Some(1)).await.unwrap();
         let storage = recovered.storage.lock().unwrap();
         assert_eq!(storage.journal.artifacts.len(), 3);
-        assert!(storage.journal.discovery_finished["C01"]);
+        assert!(storage.journal.discovery_finished["ud-codes"]);
         assert!(storage.journal.artifacts.iter().all(|a| a.diagnostics.is_empty()));
         storage.verify(&missing).unwrap();
     }
 }
 
 #[tokio::test]
-#[ignore="Explicit C19 lab-only host collection; isolated output and direct mode"]
-async fn c19_native_host_collection() {
-    let lane=std::env::var("HERBERT_C19_LANE").unwrap();
-    let (endpoint,profile)=match lane.as_str(){"2026.1"=>("https://kinetic-2026-1.lab.test:9448/","lab-2026-1"),"2025.2"=>("https://kinetic-2025-2.lab.test:9449/","lab-2025-2"),_=>panic!("Only owned lab targets are permitted")};
-    let base=PathBuf::from(std::env::var("HERBERT_C19_REPLAY").unwrap()).join(&lane);
-    let output=base.join(std::env::var("HERBERT_C19_RUN_NAME").unwrap());
+#[ignore="Explicit Configurators test-only host collection; isolated output and direct mode"]
+async fn configurators_native_host_collection() {
+    let lane=std::env::var("HERBERT_CONFIGURATORS_LANE").unwrap();
+    let (endpoint,profile)=crate::test_targets::lane(&lane);
+    let base=PathBuf::from(std::env::var("HERBERT_CONFIGURATORS_REPLAY").unwrap()).join(&lane);
+    let output=base.join(std::env::var("HERBERT_CONFIGURATORS_RUN_NAME").unwrap());
     assert!(!output.exists(),"Preserve earlier run and recovery evidence");
     let credentials=crate::profiles::secure_read(endpoint,profile).unwrap();
     let mode=if credentials.api_key.as_ref().is_some_and(|s|!s.is_empty()){AuthMode::BasicApiKey}else{AuthMode::Session};
     let connection=Connection::new(crate::input::endpoint(endpoint).unwrap(),"TESTCO".into(),mode,credentials,OperatingSettings::default(),Budget::new(4).unwrap()).unwrap();
     let cancel=CancellationToken::new();let admitted=connection.connect(&cancel).await.unwrap();
-    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_C19_WASM").unwrap())).await.unwrap();
-    assert_eq!(plugin.category.id,"C19");
+    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_CONFIGURATORS_WASM").unwrap())).await.unwrap();
+    assert_eq!(plugin.category.id,"configurators");
     let host=Host::with_roots(output.join("state"),output.join("plugins"),Some(output.join("coordination")));
     let mut journal=storage::new_journal(uuid::Uuid::new_v4().to_string());
     journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=herbert_contract::CollectionMethod::DirectOnly;
@@ -587,99 +587,99 @@ async fn c19_native_host_collection() {
     std::fs::write(output.join("result.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
     println!("{}",json!({"lane":lane,"targets":result.as_ref().map(|ids|ids.len()).unwrap_or(0),"artifacts":storage.journal.artifacts.len(),"diagnostics":storage.journal.diagnostics}));
     assert!(result.is_ok(),"{result:?}");
-    let mut expected:Vec<String>=std::env::var("HERBERT_C19_EXPECTED_FIXTURES").map(|v|serde_json::from_str(&v).unwrap()).unwrap_or_else(|_|vec!["H19C1024A".into(),"H19K1024A".into(),"H19L1024A".into(),"H19N1024A".into()]);expected.sort();
+    let mut expected:Vec<String>=std::env::var("HERBERT_CONFIGURATORS_EXPECTED_FIXTURES").map(|v|serde_json::from_str(&v).unwrap()).unwrap_or_else(|_|vec!["H19C1024A".into(),"H19K1024A".into(),"H19L1024A".into(),"H19N1024A".into()]);expected.sort();
     assert_eq!(storage.journal.artifacts.len(),expected.len());
-    let mut fixture_ids:Vec<_>=storage.journal.artifacts.iter().map(|a|a.identity.keys.get("ConfigID").or_else(||a.identity.keys.get("LookupTblID")).or_else(||a.identity.keys.get("SysRowID")).expect("C19 fixture identity must have a native root or persisted row key").as_str()).collect();fixture_ids.sort();assert_eq!(fixture_ids,expected);
+    let mut fixture_ids:Vec<_>=storage.journal.artifacts.iter().map(|a|a.identity.keys.get("ConfigID").or_else(||a.identity.keys.get("LookupTblID")).or_else(||a.identity.keys.get("SysRowID")).expect("Configurators fixture identity must have a native root or persisted row key").as_str()).collect();fixture_ids.sort();assert_eq!(fixture_ids,expected);
     for artifact in &storage.journal.artifacts {assert_eq!(artifact.acquisition,Completeness::Collected,"{artifact:?}");for file in &artifact.files {storage.verify(file).unwrap();}}
 }
 
 #[tokio::test]
-#[ignore="Explicit C20 lab-only host collection; isolated output and direct mode"]
-async fn c20_native_host_collection() {
-    let lane=std::env::var("HERBERT_C20_LANE").unwrap();
-    let (endpoint,profile)=match lane.as_str(){"2026.1"=>("https://kinetic-2026-1.lab.test:9448/","lab-2026-1"),"2025.2"=>("https://kinetic-2025-2.lab.test:9449/","lab-2025-2"),_=>panic!("Only owned lab targets are permitted")};
-    let base=PathBuf::from(std::env::var("HERBERT_C20_REPLAY").unwrap()).join(&lane);
-    let output=base.join(std::env::var("HERBERT_C20_RUN_NAME").unwrap());
+#[ignore="Explicit Business rules and mappings test-only host collection; isolated output and direct mode"]
+async fn business_rules_and_mappings_native_host_collection() {
+    let lane=std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_LANE").unwrap();
+    let (endpoint,profile)=crate::test_targets::lane(&lane);
+    let base=PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_REPLAY").unwrap()).join(&lane);
+    let output=base.join(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_RUN_NAME").unwrap());
     assert!(!output.exists(),"Preserve earlier run and recovery evidence");
     let credentials=crate::profiles::secure_read(endpoint,profile).unwrap();
     let mode=if credentials.api_key.as_ref().is_some_and(|s|!s.is_empty()){AuthMode::BasicApiKey}else{AuthMode::Session};
     let connection=Connection::new(crate::input::endpoint(endpoint).unwrap(),"TESTCO".into(),mode,credentials,OperatingSettings::default(),Budget::new(4).unwrap()).unwrap();
     let cancel=CancellationToken::new();let admitted=connection.connect(&cancel).await.unwrap();
-    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_C20_WASM").unwrap())).await.unwrap();
-    assert_eq!(plugin.category.id,"C20");
+    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_WASM").unwrap())).await.unwrap();
+    assert_eq!(plugin.category.id,"business-rules-and-mappings");
     let host=Host::with_roots(output.join("state"),output.join("plugins"),Some(output.join("coordination")));
     let mut journal=storage::new_journal(uuid::Uuid::new_v4().to_string());
-    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_C20_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
-    journal.plugin_settings.insert("C20".into(),json!({"itemsPerPage":std::env::var("HERBERT_C20_SIZE").ok().and_then(|s|s.parse::<u32>().ok()).unwrap_or(100)}));
+    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
+    journal.plugin_settings.insert("business-rules-and-mappings".into(),json!({"itemsPerPage":std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_SIZE").ok().and_then(|s|s.parse::<u32>().ok()).unwrap_or(100)}));
     let run=run(Storage::open(&output.join("collection"),false,journal).unwrap());
-    let result=host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_C20_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await;
+    let result=host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await;
     connection.logout(&cancel).await.unwrap();
     let storage=run.storage.lock().unwrap();storage.checkpoint().unwrap();
     let receipt=json!({"lane":lane,"result":result.as_ref().map(|ids|ids.len()).map_err(|e|e.clone()),"statistics":run.activity.statistics(),"artifacts":storage.journal.artifacts,"diagnostics":storage.journal.diagnostics});
     std::fs::write(output.join("result.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
     println!("{}",json!({"lane":lane,"targets":result.as_ref().map(|ids|ids.len()).unwrap_or(0),"artifacts":storage.journal.artifacts.len(),"diagnostics":storage.journal.diagnostics}));
     assert!(result.is_ok(),"{result:?}");
-    assert_eq!(storage.journal.artifacts.len(),std::env::var("HERBERT_C20_EXPECTED").ok().and_then(|s|s.parse().ok()).unwrap_or(5));
+    assert_eq!(storage.journal.artifacts.len(),std::env::var("HERBERT_BUSINESS_RULES_AND_MAPPINGS_EXPECTED").ok().and_then(|s|s.parse().ok()).unwrap_or(5));
     assert!(storage.journal.diagnostics.is_empty());
     for artifact in &storage.journal.artifacts {assert_eq!(artifact.acquisition,Completeness::Collected,"{artifact:?}");for file in &artifact.files {storage.verify(file).unwrap();}}
 }
 
 #[tokio::test]
-#[ignore="Explicit C21 lab-only host collection; isolated output and direct mode"]
-async fn c21_native_host_collection() {
-    let lane=std::env::var("HERBERT_C21_LANE").unwrap();
-    let (endpoint,profile)=match lane.as_str(){"2026.1"=>("https://kinetic-2026-1.lab.test:9448/","lab-2026-1"),"2025.2"=>("https://kinetic-2025-2.lab.test:9449/","lab-2025-2"),_=>panic!("Only owned lab targets are permitted")};
-    let base=PathBuf::from(std::env::var("HERBERT_C21_PROOF_ROOT").unwrap()).join(&lane);
-    let output=base.join(std::env::var("HERBERT_C21_RUN_NAME").unwrap_or_else(|_|"host-final".into()));
+#[ignore="Explicit Custom resources test-only host collection; isolated output and direct mode"]
+async fn custom_resources_native_host_collection() {
+    let lane=std::env::var("HERBERT_CUSTOM_RESOURCES_LANE").unwrap();
+    let (endpoint,profile)=crate::test_targets::lane(&lane);
+    let base=PathBuf::from(std::env::var("HERBERT_CUSTOM_RESOURCES_PROOF_ROOT").unwrap()).join(&lane);
+    let output=base.join(std::env::var("HERBERT_CUSTOM_RESOURCES_RUN_NAME").unwrap_or_else(|_|"host-final".into()));
     assert!(!output.exists(),"Preserve earlier run and recovery evidence");
     let credentials=crate::profiles::secure_read(endpoint,profile).unwrap();
     let mode=if credentials.api_key.as_ref().is_some_and(|s|!s.is_empty()){AuthMode::BasicApiKey}else{AuthMode::Session};
     let connection=Connection::new(crate::input::endpoint(endpoint).unwrap(),"TESTCO".into(),mode,credentials,OperatingSettings::default(),Budget::new(4).unwrap()).unwrap();
     let cancel=CancellationToken::new();let admitted=connection.connect(&cancel).await.unwrap();
-    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_C21_WASM").unwrap_or_else(|_|"C:/Tools/Workbench/workspace/build/hoover/wasm32-unknown-unknown/release/c21.wasm".into()))).await.unwrap();
-    assert_eq!(plugin.category.id,"C21");
+    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_CUSTOM_RESOURCES_WASM").unwrap_or_else(|_|"target/wasm32-unknown-unknown/release/custom-resources.wasm".into()))).await.unwrap();
+    assert_eq!(plugin.category.id,"custom-resources");
     let host=Host::with_roots(output.join("state"),output.join("plugins"),Some(output.join("coordination")));
     let mut journal=storage::new_journal(uuid::Uuid::new_v4().to_string());
-    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_C21_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
+    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_CUSTOM_RESOURCES_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
     let run=run(Storage::open(&output.join("collection"),false,journal).unwrap());
-    let result=host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_C21_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await;
+    let result=host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_CUSTOM_RESOURCES_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await;
     connection.logout(&cancel).await.unwrap();
     let storage=run.storage.lock().unwrap();storage.checkpoint().unwrap();
     let receipt=json!({"lane":lane,"result":result.as_ref().map(|ids|ids.len()).map_err(|e|e.clone()),"statistics":run.activity.statistics(),"artifacts":storage.journal.artifacts,"diagnostics":storage.journal.diagnostics});
     std::fs::write(output.join("result.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
     println!("{}",json!({"lane":lane,"targets":result.as_ref().map(|ids|ids.len()).unwrap_or(0),"artifacts":storage.journal.artifacts.len(),"diagnostics":storage.journal.diagnostics}));
     assert!(result.is_ok(),"{result:?}");
-    if let Ok(expected)=std::env::var("HERBERT_C21_EXPECTED"){assert_eq!(storage.journal.artifacts.len(),expected.parse::<usize>().unwrap());}
+    if let Ok(expected)=std::env::var("HERBERT_CUSTOM_RESOURCES_EXPECTED"){assert_eq!(storage.journal.artifacts.len(),expected.parse::<usize>().unwrap());}
     assert!(storage.journal.diagnostics.is_empty());
     for artifact in &storage.journal.artifacts {assert_eq!(artifact.acquisition,Completeness::Collected,"{artifact:?}");for file in &artifact.files {storage.verify(file).unwrap();}}
 }
 
 #[tokio::test]
-#[ignore="Explicit C24 lab-only host collection; isolated output and direct mode"]
-async fn c24_native_host_collection() {
-    let lane=std::env::var("HERBERT_C24_LANE").unwrap();
-    let (endpoint,profile)=match lane.as_str(){"2026.1"=>("https://kinetic-2026-1.lab.test:9448/","lab-2026-1"),"2025.2"=>("https://kinetic-2025-2.lab.test:9449/","lab-2025-2"),_=>panic!("Only owned lab targets are permitted")};
-    let base=PathBuf::from(std::env::var("HERBERT_C24_PROOF_ROOT").unwrap()).join(&lane);
-    let output=base.join(std::env::var("HERBERT_C24_RUN_NAME").unwrap_or_else(|_|"host-final".into()));
+#[ignore="Explicit Solutions and packages test-only host collection; isolated output and direct mode"]
+async fn solutions_and_packages_native_host_collection() {
+    let lane=std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_LANE").unwrap();
+    let (endpoint,profile)=crate::test_targets::lane(&lane);
+    let base=PathBuf::from(std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_PROOF_ROOT").unwrap()).join(&lane);
+    let output=base.join(std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_RUN_NAME").unwrap_or_else(|_|"host-final".into()));
     assert!(!output.exists(),"Preserve earlier run and recovery evidence");
     let credentials=crate::profiles::secure_read(endpoint,profile).unwrap();
     let mode=if credentials.api_key.as_ref().is_some_and(|s|!s.is_empty()){AuthMode::BasicApiKey}else{AuthMode::Session};
     let connection=Connection::new(crate::input::endpoint(endpoint).unwrap(),"TESTCO".into(),mode,credentials,OperatingSettings::default(),Budget::new(4).unwrap()).unwrap();
     let cancel=CancellationToken::new();let admitted=connection.connect(&cancel).await.unwrap();
-    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_C24_WASM").unwrap_or_else(|_|"C:/Tools/Workbench/workspace/build/hoover/wasm32-unknown-unknown/release/c24.wasm".into()))).await.unwrap();
-    assert_eq!(plugin.category.id,"C24");
+    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_WASM").unwrap_or_else(|_|"target/wasm32-unknown-unknown/release/solutions-and-packages.wasm".into()))).await.unwrap();
+    assert_eq!(plugin.category.id,"solutions-and-packages");
     let host=Host::with_roots(output.join("state"),output.join("plugins"),Some(output.join("coordination")));
     let mut journal=storage::new_journal(uuid::Uuid::new_v4().to_string());
-    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_C24_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
+    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
     let run=run(Storage::open(&output.join("collection"),false,journal).unwrap());
-    let result=host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_C24_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await;
+    let result=host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await;
     connection.logout(&cancel).await.unwrap();
     let storage=run.storage.lock().unwrap();storage.checkpoint().unwrap();
     let receipt=json!({"lane":lane,"result":result.as_ref().map(|ids|ids.len()).map_err(|e|e.clone()),"statistics":run.activity.statistics(),"artifacts":storage.journal.artifacts,"diagnostics":storage.journal.diagnostics});
     std::fs::write(output.join("result.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
     println!("{}",json!({"lane":lane,"targets":result.as_ref().map(|ids|ids.len()).unwrap_or(0),"artifacts":storage.journal.artifacts.len(),"diagnostics":storage.journal.diagnostics}));
     assert!(result.is_ok(),"{result:?}");
-    if let Ok(expected)=std::env::var("HERBERT_C24_EXPECTED"){assert_eq!(storage.journal.artifacts.len(),expected.parse::<usize>().unwrap());}
+    if let Ok(expected)=std::env::var("HERBERT_SOLUTIONS_AND_PACKAGES_EXPECTED"){assert_eq!(storage.journal.artifacts.len(),expected.parse::<usize>().unwrap());}
     assert!(storage.journal.diagnostics.is_empty());
     for artifact in &storage.journal.artifacts {assert_eq!(artifact.acquisition,Completeness::Collected,"{artifact:?}");for file in &artifact.files {storage.verify(file).unwrap();}}
 }
@@ -687,26 +687,26 @@ async fn c24_native_host_collection() {
 
 
 #[tokio::test]
-#[ignore="Explicit C22 lab-only host collection; isolated output and direct mode"]
-async fn c22_native_host_collection() {
-    let lane=std::env::var("HERBERT_C22_LANE").unwrap();
-    let (endpoint,profile)=match lane.as_str(){"2026.1"=>("https://kinetic-2026-1.lab.test:9448/","lab-2026-1"),"2025.2"=>("https://kinetic-2025-2.lab.test:9449/","lab-2025-2"),_=>panic!("Only owned lab targets are permitted")};
-    let base=PathBuf::from(std::env::var("HERBERT_C22_PROOF_ROOT").unwrap()).join(&lane);
-    let output=base.join(std::env::var("HERBERT_C22_RUN_NAME").unwrap_or_else(|_|"host-final".into()));
+#[ignore="Explicit Programs and extensions test-only host collection; isolated output and direct mode"]
+async fn programs_and_extensions_native_host_collection() {
+    let lane=std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_LANE").unwrap();
+    let (endpoint,profile)=crate::test_targets::lane(&lane);
+    let base=PathBuf::from(std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_PROOF_ROOT").unwrap()).join(&lane);
+    let output=base.join(std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_RUN_NAME").unwrap_or_else(|_|"host-final".into()));
     assert!(!output.exists(),"Preserve earlier run and recovery evidence");
     let credentials=crate::profiles::secure_read(endpoint,profile).unwrap();
     let mode=if credentials.api_key.as_ref().is_some_and(|s|!s.is_empty()){AuthMode::BasicApiKey}else{AuthMode::Session};
     let connection=Connection::new(crate::input::endpoint(endpoint).unwrap(),"TESTCO".into(),mode,credentials,OperatingSettings::default(),Budget::new(4).unwrap()).unwrap();
     let cancel=CancellationToken::new();let admitted=connection.connect(&cancel).await.unwrap();connection.qualification_http.lock().unwrap().clear();
-    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_C22_WASM").unwrap_or_else(|_|"C:/Tools/Workbench/workspace/build/hoover/wasm32-unknown-unknown/release/c22.wasm".into()))).await.unwrap();
-    assert_eq!(plugin.category.id,"C22");
+    let plugin=Plugin::load(&PathBuf::from(std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_WASM").unwrap_or_else(|_|"target/wasm32-unknown-unknown/release/programs-and-extensions.wasm".into()))).await.unwrap();
+    assert_eq!(plugin.category.id,"programs-and-extensions");
     let host=Host::with_roots(output.join("state"),output.join("plugins"),Some(output.join("coordination")));
     let mut journal=storage::new_journal(uuid::Uuid::new_v4().to_string());
-    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_C22_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
-    if let Ok(cursor)=std::env::var("HERBERT_C22_START_CURSOR"){journal.cursors.insert("C22".into(),cursor);}
+    journal.company="TESTCO".into();journal.endpoint=endpoint.into();journal.caller=admitted["caller"].as_str().unwrap().into();journal.temporary_access_enabled=false;journal.collection_method=if std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_MODE").as_deref()==Ok("assisted"){herbert_contract::CollectionMethod::ServerAssisted}else{herbert_contract::CollectionMethod::DirectOnly};
+    if let Ok(cursor)=std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_START_CURSOR"){journal.cursors.insert("programs-and-extensions".into(),cursor);}
     let run=run(Storage::open(&output.join("collection"),false,journal).unwrap());
     assert!(host.prepare_native_artifacts(&run,&connection,&[plugin.clone()]).await.is_empty());
-    let result=if let Ok(text)=std::env::var("HERBERT_C22_TARGET"){let identity:Identity=serde_json::from_str(&text).unwrap();host.acquire_targets(&run,&connection,&plugin,&[],vec![identity.clone()],Some(100),true).await.map(|_|vec![identity])}else{host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_C22_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await};
+    let result=if let Ok(text)=std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_TARGET"){let identity:Identity=serde_json::from_str(&text).unwrap();host.acquire_targets(&run,&connection,&plugin,&[],vec![identity.clone()],Some(100),true).await.map(|_|vec![identity])}else{host.discover_targets(&run,&connection,&plugin,&[],Some(std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_SIZE").ok().and_then(|s|s.parse().ok()).unwrap_or(100))).await};
     let cleanup=host.cleanup_native_artifacts(&run,&connection).await;assert!(cleanup.is_empty(),"{cleanup:?}");
     connection.logout(&cancel).await.unwrap();
     let final_statistics=run.activity.finish_statistics();
@@ -715,9 +715,9 @@ async fn c22_native_host_collection() {
     std::fs::write(output.join("result.json"),serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
     println!("{}",json!({"lane":lane,"targets":result.as_ref().map(|ids|ids.len()).unwrap_or(0),"artifacts":storage.journal.artifacts.len(),"diagnostics":storage.journal.diagnostics}));
     assert!(result.is_ok(),"{result:?}");
-    assert_eq!(storage.journal.artifacts.len(),std::env::var("HERBERT_C22_EXPECTED").ok().and_then(|v|v.parse().ok()).unwrap_or(7));
+    assert_eq!(storage.journal.artifacts.len(),std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_EXPECTED").ok().and_then(|v|v.parse().ok()).unwrap_or(7));
     assert!(storage.journal.diagnostics.is_empty());
-    for artifact in &storage.journal.artifacts {if std::env::var("HERBERT_C22_ALLOW_PARTIAL").is_err(){assert_eq!(artifact.acquisition,Completeness::Collected,"{artifact:?}");}for file in &artifact.files {storage.verify(file).unwrap();}}
+    for artifact in &storage.journal.artifacts {if std::env::var("HERBERT_PROGRAMS_AND_EXTENSIONS_ALLOW_PARTIAL").is_err(){assert_eq!(artifact.acquisition,Completeness::Collected,"{artifact:?}");}for file in &artifact.files {storage.verify(file).unwrap();}}
 }
 
 
@@ -750,11 +750,11 @@ async fn normal_backups_save_while_compiled_read_waits_and_survive_cancel(){
               (else (i64.const {})))))"#,esc(&a),esc(&b),packed(8192,a.len()),packed(16384,b.len()));
         let wasm=root.path().join("compiled-wait.wasm");std::fs::write(&wasm,wat::parse_str(wat).unwrap()).unwrap();let plugin=Plugin::load(&wasm).await.unwrap();
         let host=Host::with_roots(root.path().join("state"),root.path().join("plugins"),Some(root.path().join("coordination")));
-        let(connection,_server)=connection().await;let mut journal=storage::new_journal(format!("save-first-{operation}"));journal.company="C".into();journal.endpoint=connection.endpoint.to_string();journal.caller="fixture".into();journal.cursors.insert("C01".into(),"prior".into());journal.temporary_access_enabled=false;
+        let(connection,_server)=connection().await;let mut journal=storage::new_journal(format!("save-first-{operation}"));journal.company="C".into();journal.endpoint=connection.endpoint.to_string();journal.caller="fixture".into();journal.cursors.insert("ud-codes".into(),"prior".into());journal.temporary_access_enabled=false;
         let run=run(Storage::open(&root.path().join("output"),false,journal).unwrap());
-        let owner=Identity{category:"C01".into(),kind:"Fixture".into(),scope:Scope::Global,keys:BTreeMap::from([("ID".into(),"saved".into())])};
-        let gate=Arc::new(Mutex::new(()));host.plugin_request_gates.lock().await.insert("C01".into(),gate.clone());let held=gate.lock().await;
-        let request=GuestRequest{abi:1,operation:operation.into(),category:"C01".into(),company:"C".into(),identity:(operation=="acquire").then(||owner.clone()),cursor:None,page_size:None,state:json!({}),response:None,error:None};
+        let owner=Identity{category:"ud-codes".into(),kind:"Fixture".into(),scope:Scope::Global,keys:BTreeMap::from([("ID".into(),"saved".into())])};
+        let gate=Arc::new(Mutex::new(()));host.plugin_request_gates.lock().await.insert("ud-codes".into(),gate.clone());let held=gate.lock().await;
+        let request=GuestRequest{abi:1,operation:operation.into(),category:"ud-codes".into(),company:"C".into(),identity:(operation=="acquire").then(||owner.clone()),cursor:None,page_size:None,state:json!({}),response:None,error:None};
         let reply=GuestReply::ReadyRecords{records:vec![(owner.clone(),json!({"herbertDirectOutput":true,"herbertSources":{"files":[{"name":"Authored.cs","text":"preserved original"}]}}))],state:json!({"_progress":{"pendingCompiledRead":true}})};
         let drive=host.drive_with_reply(&plugin,request,&connection,&run,&run.cancel,Some(reply));
         let check=async{
@@ -763,7 +763,7 @@ async fn normal_backups_save_while_compiled_read_waits_and_survive_cancel(){
             run.cancel.cancel();drop(held);(saved,pending)
         };
         let(result,(saved,pending))=tokio::join!(drive,check);assert!(saved,"Normal backup waited for the compiled read ({operation})");assert_eq!(pending,1);assert!(result.is_err());assert_eq!(run.activity.statistics()["pendingCompiledPages"],0);
-        let store=run.storage.lock().unwrap();assert_eq!(store.journal.cursors["C01"],"prior");let artifact=store.journal.artifacts.iter().find(|a|a.identity==owner).unwrap();for file in &artifact.files{store.verify(file).unwrap();}assert!(artifact.files.iter().any(|f|f.path.ends_with("Authored.cs")));
+        let store=run.storage.lock().unwrap();assert_eq!(store.journal.cursors["ud-codes"],"prior");let artifact=store.journal.artifacts.iter().find(|a|a.identity==owner).unwrap();for file in &artifact.files{store.verify(file).unwrap();}assert!(artifact.files.iter().any(|f|f.path.ends_with("Authored.cs")));
     }
 }
 
@@ -771,24 +771,24 @@ async fn normal_backups_save_while_compiled_read_waits_and_survive_cancel(){
 async fn selected_ready_records_cannot_write_a_different_owner(){
  let root=tempfile::tempdir().unwrap();let plugin=guest(root.path(),true,false).await;let host=Host::with_roots(root.path().join("state"),root.path().join("plugins"),Some(root.path().join("coordination")));let(connection,_server)=connection().await;
  let mut journal=storage::new_journal("selected-ready-owner".into());journal.company="C".into();journal.endpoint=connection.endpoint.to_string();journal.caller="fixture".into();journal.temporary_access_enabled=false;let run=run(Storage::open(&root.path().join("output"),false,journal).unwrap());
- let owner=Identity{category:"C01".into(),kind:"Fixture".into(),scope:Scope::Global,keys:BTreeMap::from([("ID".into(),"selected".into())])};let mut other=owner.clone();other.keys.insert("ID".into(),"unselected".into());
- let request=GuestRequest{abi:1,operation:"acquire".into(),category:"C01".into(),company:"C".into(),identity:Some(owner),cursor:None,page_size:None,state:json!({}),response:None,error:None};
+ let owner=Identity{category:"ud-codes".into(),kind:"Fixture".into(),scope:Scope::Global,keys:BTreeMap::from([("ID".into(),"selected".into())])};let mut other=owner.clone();other.keys.insert("ID".into(),"unselected".into());
+ let request=GuestRequest{abi:1,operation:"acquire".into(),category:"ud-codes".into(),company:"C".into(),identity:Some(owner),cursor:None,page_size:None,state:json!({}),response:None,error:None};
  let reply=GuestReply::ReadyRecords{records:vec![(other,json!({"wrong":true}))],state:json!({})};let error=host.drive_with_reply(&plugin,request,&connection,&run,&run.cancel,Some(reply)).await.unwrap_err();assert_eq!(error.code,"PLUGIN_IDENTITY_DENIED");assert!(run.storage.lock().unwrap().journal.artifacts.is_empty());
 }
 
 #[tokio::test]
-#[ignore="Explicit final C08 WASM and retained native definition fixture; no ERP writes"]
+#[ignore="Explicit final Functions WASM and retained native definition fixture; no ERP writes"]
 async fn actual_functions_page_saves_identical_backups_during_blocked_compiled_capture(){
  let package=PathBuf::from(std::env::var("HERBERT_MANAGED_TEST_PACKAGE").unwrap());let data:Value=serde_json::from_slice(&std::fs::read(std::env::var("HERBERT_FUNCTION_TABLES").unwrap()).unwrap()).unwrap();let id=data["EfxLibrary"][0]["LibraryID"].as_str().unwrap();let version=data["EfxLibrary"][0]["EpicorVersion"].as_str().unwrap();
  let plugin=Plugin::load(&package.join("plugins/Functions/Functions.wasm")).await.unwrap();let mut inventories=vec![];
  for enabled in [false,true]{
-  let root=tempfile::tempdir().unwrap();let host=Host::with_roots(root.path().join("state"),package.join("plugins"),Some(root.path().join("coordination")));let(connection,_server)=connection().await;let mut journal=storage::new_journal(format!("actual-functions-save-first-{enabled}"));journal.company="C".into();journal.caller="fixture".into();journal.endpoint=connection.endpoint.to_string();journal.temporary_access_enabled=false;journal.collection_method=CollectionMethod::ServerAssisted;journal.plugin_settings.insert("C08".into(),json!({"downloadCompiledAssemblies":enabled,"decompileCompiledAssemblies":enabled}));journal.cursors.insert("C08".into(),"prior".into());let run=run(Storage::open(&root.path().join("output"),false,journal).unwrap());
-  let gate=Arc::new(Mutex::new(()));host.plugin_request_gates.lock().await.insert("C08".into(),gate.clone());let held=gate.lock().await;
-  let request=GuestRequest{abi:1,operation:"materialize".into(),category:"C08".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(2),state:json!({"phase":"libraries","ids":[id],"version":version,"system":"ERP","pageDataset":data,"nextCursor":"next"}),response:None,error:None};
+  let root=tempfile::tempdir().unwrap();let host=Host::with_roots(root.path().join("state"),package.join("plugins"),Some(root.path().join("coordination")));let(connection,_server)=connection().await;let mut journal=storage::new_journal(format!("actual-functions-save-first-{enabled}"));journal.company="C".into();journal.caller="fixture".into();journal.endpoint=connection.endpoint.to_string();journal.temporary_access_enabled=false;journal.collection_method=CollectionMethod::ServerAssisted;journal.plugin_settings.insert("functions".into(),json!({"downloadCompiledAssemblies":enabled,"decompileCompiledAssemblies":enabled}));journal.cursors.insert("functions".into(),"prior".into());let run=run(Storage::open(&root.path().join("output"),false,journal).unwrap());
+  let gate=Arc::new(Mutex::new(()));host.plugin_request_gates.lock().await.insert("functions".into(),gate.clone());let held=gate.lock().await;
+  let request=GuestRequest{abi:1,operation:"materialize".into(),category:"functions".into(),company:"C".into(),identity:None,cursor:None,page_size:Some(2),state:json!({"phase":"libraries","ids":[id],"version":version,"system":"ERP","pageDataset":data,"nextCursor":"next"}),response:None,error:None};
   let drive=host.drive(&plugin,request,&connection,&run,&run.cancel);
   let check=async{let saved=tokio::time::timeout(std::time::Duration::from_secs(10),async{loop{if !run.storage.lock().unwrap().journal.artifacts.is_empty(){break;}tokio::time::sleep(std::time::Duration::from_millis(1)).await;}}).await.is_ok();let pending=run.activity.statistics()["pendingCompiledPages"].clone();if enabled{run.cancel.cancel();}drop(held);(saved,pending)};
-  let(result,(saved,pending))=tokio::join!(drive,check);assert!(saved,"Actual C08 failed to save before compiled read");if enabled{assert!(result.is_err());assert_eq!(pending,1);}else{assert!(result.is_ok());}
-  let store=run.storage.lock().unwrap();assert_eq!(store.journal.cursors["C08"],"prior");let artifact=&store.journal.artifacts[0];let mut files=BTreeMap::new();for file in &artifact.files{store.verify(file).unwrap();files.insert(file.path.clone(),file.sha256.clone());}assert!(files.keys().any(|p|p.ends_with(".efxj")));assert!(files.keys().any(|p|p.ends_with(".efxb")));inventories.push(files);
+  let(result,(saved,pending))=tokio::join!(drive,check);assert!(saved,"Actual Functions failed to save before compiled read");if enabled{assert!(result.is_err());assert_eq!(pending,1);}else{assert!(result.is_ok());}
+  let store=run.storage.lock().unwrap();assert_eq!(store.journal.cursors["functions"],"prior");let artifact=&store.journal.artifacts[0];let mut files=BTreeMap::new();for file in &artifact.files{store.verify(file).unwrap();files.insert(file.path.clone(),file.sha256.clone());}assert!(files.keys().any(|p|p.ends_with(".efxj")));assert!(files.keys().any(|p|p.ends_with(".efxb")));inventories.push(files);
  }
  assert_eq!(inventories[0],inventories[1],"Enabling decompilation must not change normal backup bytes");
 }

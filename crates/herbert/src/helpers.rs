@@ -28,7 +28,7 @@ pub(crate) struct HelperTransfer {
 fn refused() -> Diagnostic {
     Diagnostic::new(
         "HELPER_CONTRACT_MISMATCH",
-        "The native helper identity, business-source governance, signature or exact source does not match the reviewed contract.",
+        "This plugin's server helper does not match the helper Herbert expects (its name, signature or source differs), so Herbert will not install it. Reinstall the plugin from this Herbert release.",
     )
 }
 pub(crate) fn verify(

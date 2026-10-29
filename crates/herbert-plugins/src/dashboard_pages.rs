@@ -47,7 +47,7 @@ fn identity(row: &Value) -> Result<Identity, Diagnostic> {
         );
     }
     Ok(Identity {
-        category: "C11".into(),
+        category: "classic-dashboards".into(),
         kind: "PersistedDashBdDef".into(),
         scope: if keys["Company"].is_empty() {
             Scope::Global
@@ -83,11 +83,10 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
     let phase = r.state["phase"].as_str().unwrap_or("initial").to_owned();
     if let Some(mut error) = r.error.take() {
         if matches!(phase.as_str(), "baq" | "binary") {
-            error.message = format!(
-                "Referenced BAQ {} could not be embedded: {}",
-                r.state["query"].as_str().unwrap_or(""),
-                error.message
-            );
+            let cause = format!("{}: {}", error.code, error.message);
+            error.context.insert("query".into(), json!(r.state["query"].as_str().unwrap_or("")));
+            error.context.insert("cause".into(), json!(cause));
+            error.message = "A BAQ used by this dashboard could not be included in the dashboard file. The dashboard was still saved; download the BAQ separately or make sure it exists in the target system before importing.".into();
             r.state["errors"].as_array_mut().unwrap().push(json!(error));
             return next_baq(r);
         }
@@ -100,11 +99,11 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 .as_deref()
                 .map(serde_json::from_str)
                 .transpose()
-                .map_err(|_| invalid("The dashboard cursor is invalid."))?
+                .map_err(|_| invalid("The dashboard saved position is invalid."))?
                 .unwrap_or(json!({"version":1,"branch":0}));
             if cursor["version"] != 1 {
                 return Err(invalid(
-                    "Restart dashboard discovery with the current cursor format.",
+                    "Restart dashboard discovery with the current saved position format.",
                 ));
             }
             let branch = cursor["branch"]
@@ -119,7 +118,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 String::new()
             };
             if let Some(id) = &r.identity {
-                if id.category != "C11"
+                if id.category != "classic-dashboards"
                     || id.kind != "PersistedDashBdDef"
                     || id.keys.len() != 5
                     || KEYS.iter().any(|k| !id.keys.contains_key(*k))
@@ -141,6 +140,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                 &company,
                 cursor["after"].clone(),
                 with_settings(json!({"phase":"inventory","branch":branch,"company":company,"after":cursor["after"],"_progress":{"request":"Finding dashboard variants","response":"Dashboard identities received; reading complete native definitions"}}), &r.state),
+                &prefix,
             ))
         }
         "inventory" => {
@@ -184,9 +184,9 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     .last()
                     .and_then(|v| v["SysRowID"].as_str())
                     .filter(|v| !v.is_empty())
-                    .ok_or_else(|| invalid("The dashboard page has no cursor."))?;
+                    .ok_or_else(|| invalid("The dashboard page has no saved position."))?;
                 if r.state["after"] == after {
-                    return Err(invalid("The dashboard cursor did not advance."));
+                    return Err(invalid("The dashboard saved position did not advance."));
                 }
                 Some(json!({"version":1,"branch":r.state["branch"],"after":after}).to_string())
             } else if r.state["branch"] == 0 {
@@ -229,10 +229,10 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             let response = r
                 .response
                 .as_ref()
-                .ok_or_else(|| invalid("The native dashboard response is missing."))?;
+                .ok_or_else(|| invalid("The Epicor dashboard response is missing."))?;
             if phase == "native" && response["parameters"]["morePages"] != false {
                 return Err(invalid(
-                    "The native dashboard response did not establish a complete requested page.",
+                    "The Epicor dashboard response did not establish a complete requested page.",
                 ));
             }
             let data = &response["returnObj"];
@@ -242,12 +242,12 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             for table in TABLES {
                 let rows = data[table]
                     .as_array()
-                    .ok_or_else(|| invalid("A native dashboard table is missing."))?;
+                    .ok_or_else(|| invalid("An Epicor dashboard table is missing."))?;
                 for row in rows {
                     let id = identity(row)?;
                     if !ids.contains(&id) || (phase == "exact" && json!(id) != r.state["exactId"]) {
                         return Err(invalid(
-                            "The native dashboard response contains an unrequested identity.",
+                            "The Epicor dashboard response contains an unrequested identity.",
                         ));
                     }
                     if table == "DashBdDef"
@@ -255,7 +255,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                             || !roots.insert(serde_json::to_string(&id).unwrap()))
                     {
                         return Err(invalid(
-                            "A native dashboard root is duplicated or is a system definition.",
+                            "An Epicor dashboard root is duplicated or is a system definition.",
                         ));
                     }
                     let array = r.state["data"]
@@ -324,7 +324,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
                     .as_ref()
                     .and_then(|v| v.pointer("/returnObj/nativeFile"))
                     .cloned()
-                    .ok_or_else(|| invalid("The BAQ export has no native file."))?,
+                    .ok_or_else(|| invalid("The BAQ export has no Epicor file."))?,
             )
             .map_err(|_| invalid("The BAQ file reference is invalid."))?;
             r.state["phase"] = json!("binary");
@@ -343,7 +343,7 @@ fn collect(mut r: GuestRequest) -> Result<GuestReply, Diagnostic> {
             r.state["packages"][query] = json!(bytes);
             next_baq(r)
         }
-        _ => Err(invalid("The dashboard checkpoint is invalid.")),
+        _ => Err(invalid("The dashboard saved progress is invalid.")),
     }
 }
 fn schema(data: &Value, id: &Identity) -> Result<String, Diagnostic> {
@@ -511,7 +511,7 @@ mod tests {
         GuestRequest {
             abi: PLUGIN_ABI,
             operation: "discover".into(),
-            category: "C11".into(),
+            category: "classic-dashboards".into(),
             company: "C".into(),
             identity: None,
             cursor: None,
@@ -752,6 +752,8 @@ mod tests {
             panic!()
         };
         assert!(!authoritative);
-        assert!(diagnostics[0].message.contains("MissingQuery"));
+        assert_eq!(diagnostics[0].context["query"], "MissingQuery");
+        assert_eq!(diagnostics[0].context["cause"], "NATIVE_REFUSED: The query export failed.");
+        assert!(diagnostics[0].message.starts_with("A BAQ used by this dashboard"));
     }
 }

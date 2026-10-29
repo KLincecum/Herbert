@@ -75,7 +75,7 @@ pub fn supported(category: &str) -> bool {
 }
 pub fn methods(category: &str) -> Vec<(String, String)> {
     // The declared bulk reader supplies Extended Properties without per-table BO reads.
-    if category == "C03" {
+    if category == "extended-properties" {
         return vec![];
     }
     let mut methods = BTreeSet::new();
@@ -87,20 +87,20 @@ pub fn methods(category: &str) -> Vec<(String, String)> {
             methods.insert((read.service.clone(), read.method.clone()));
         }
     }
-    if matches!(category, "C19" | "C13" | "C17") {
+    if matches!(category, "configurators" | "kinetic-personalizations" | "report-styles-and-layouts") {
         methods.insert(("Ice.Lib.FileStoreSvc".into(), "ReadAllBytes".into()));
     }
-    if category == "C16" {
+    if category == "report-definitions" {
         methods.insert(("Ice.BO.DynamicReportSvc".into(), "ExportToFile".into()));
     }
-    if category == "C19" {
+    if category == "configurators" {
         methods.insert((
             "Erp.BO.ConfiguratorDefSvc".into(),
             "ExportConfiguration".into(),
         ));
         methods.insert(("Erp.BO.ConfigurationDesignSvc".into(), "GetByID".into()));
     }
-    if matches!(category, "C04" | "C05" | "C06" | "C07") {
+    if matches!(category, "baqs-and-ubaqs" | "ubaqs" | "bpm-directives" | "data-directives") {
         methods.extend(crate::bpm_package::methods());
     }
     methods.into_iter().collect()
@@ -132,7 +132,7 @@ fn query_owned(spec: &Family, row: &Value) -> Result<bool, Diagnostic> {
     let updatable = row["Updatable"].as_bool().ok_or_else(|| {
         Diagnostic::new(
             "QUERY_TYPE_UNVERIFIED",
-            "The native query header omitted its boolean Updatable classification.",
+            "The Epicor query header omitted its boolean Updatable classification.",
         )
     })?;
     Ok(updatable == (spec.kind == "UBAQ"))
@@ -144,7 +144,7 @@ fn make_identity(spec: &Family, row: &Value, company: &str) -> Result<Identity, 
         let Some(value) = row.get(key).and_then(scalar) else {
             return Err(fail(
                 "IDENTITY_UNVERIFIED",
-                "A native row lacks a required composite-key field.",
+                "An Epicor row lacks a required composite-key field.",
             ));
         };
         keys.insert(key.clone(), value);
@@ -171,7 +171,7 @@ mod classic_scope;
 // Schema dictionary readers vary the case of native system and table keys.
 // Compare those keys without case changes to the saved identity or payload.
 fn root_identity_matches(actual: &Identity, expected: &Identity) -> bool {
-    if actual.category != "C02" || actual.kind != "UDTableSchema" {
+    if actual.category != "ud-schema" || actual.kind != "UDTableSchema" {
         return actual == expected;
     }
     actual.category == expected.category
@@ -205,7 +205,7 @@ fn validate_identity(spec: &Family, id: &Identity, company: &str) -> Result<(), 
     {
         return Err(fail(
             "SOURCE_MISMATCH",
-            "The native definition type does not belong to Classic customizations.",
+            "The Epicor definition type does not belong to Classic customizations.",
         ));
     }
     // A fixed native discovery source also constrains direct requests. Otherwise
@@ -236,7 +236,7 @@ fn validate_identity(spec: &Family, id: &Identity, company: &str) -> Result<(), 
     {
         return Err(fail(
             "INVALID_IDENTITY",
-            "Use the complete native key returned by discovery for this family.",
+            "Use the complete Epicor key returned by discovery for this family.",
         ));
     }
     match &id.scope {
@@ -257,7 +257,7 @@ fn validate_identity(spec: &Family, id: &Identity, company: &str) -> Result<(), 
     {
         return Err(fail(
             "SCOPE_MISMATCH",
-            "The native Company key is outside this run.",
+            "The Epicor Company key is outside this run.",
         ));
     }
     Ok(())
@@ -280,7 +280,7 @@ fn expand(value: &Value, request: &GuestRequest, page: u64) -> Result<Value, Gue
                 .ok_or_else(|| {
                     fail(
                         "INVALID_IDENTITY",
-                        "The request template requires a missing native key.",
+                        "The request template requires a missing Epicor key.",
                     )
                 })
         }
@@ -292,7 +292,7 @@ fn expand(value: &Value, request: &GuestRequest, page: u64) -> Result<Value, Gue
                 .and_then(|id| id.keys.get(key))
                 .and_then(|v| v.parse::<i64>().ok())
                 .map(|v| json!(v))
-                .ok_or_else(|| fail("INVALID_IDENTITY", "The native numeric key is invalid."))
+                .ok_or_else(|| fail("INVALID_IDENTITY", "The Epicor numeric key is invalid."))
         }
         Value::String(s) if s.starts_with("@row:") => request
             .state
@@ -302,12 +302,27 @@ fn expand(value: &Value, request: &GuestRequest, page: u64) -> Result<Value, Gue
             .ok_or_else(|| {
                 fail(
                     "CHILD_KEY_UNVERIFIED",
-                    "A supplemental read needs a missing native child field.",
+                    "A supplemental read needs a missing Epicor child field.",
                 )
             }),
-        Value::String(s) => Ok(json!(
-            s.replace("@companyLiteral", &request.company.replace('\'', "''"))
-        )),
+        Value::String(s) => {
+            let mut s = s.replace("@companyLiteral", &request.company.replace('\'', "''"));
+            // "@idPrefixLike(Field)": a broad server-side superset of the run's literal definitionIdPrefix
+            // (" AND Field LIKE 'stem%'", or nothing). The category keeps its exact local starts_with selection.
+            while let Some(at) = s.find("@idPrefixLike(") {
+                let Some(end) = s[at..].find(')').map(|e| at + e) else {
+                    return Err(fail("INVALID_DESCRIPTOR", "An ID prefix placeholder is not closed."));
+                };
+                let field = &s[at + 14..end];
+                if !crate::report_query::identifier(field) {
+                    return Err(fail("INVALID_DESCRIPTOR", "An ID prefix placeholder names an invalid field."));
+                }
+                let prefix = request.state.pointer("/_pluginSettings/definitionIdPrefix").and_then(Value::as_str).unwrap_or("");
+                let clause = crate::report_query::like_clause(field, prefix);
+                s.replace_range(at..=end, &clause);
+            }
+            Ok(json!(s))
+        }
         Value::Array(values) => values
             .iter()
             .map(|v| expand(v, request, page))
@@ -380,7 +395,7 @@ fn custom_schema_read(id: &Identity) -> Read {
 fn root_action(spec: &Family, request: &GuestRequest) -> GuestReply {
     let state = json!({"phase":"root"});
     let id = request.identity.as_ref().unwrap();
-    if matches!(spec.category.as_str(), "C14" | "C15") {
+    if matches!(spec.category.as_str(), "searches-and-navigation" | "menus-and-launch-definitions") {
         let predicate = spec
             .keys
             .iter()
@@ -404,12 +419,12 @@ fn root_action(spec: &Family, request: &GuestRequest) -> GuestReply {
         }
         return action(&read, request, 1, state);
     }
-    if ((crate::category_enabled("C25") && spec.category == "C25")
+    if ((crate::category_enabled("automation-and-integrations") && spec.category == "automation-and-integrations")
         && matches!(spec.kind.as_str(), "ProcessSet" | "MessageTemplate"))
-        || ((crate::category_enabled("C26") && spec.category == "C26")
+        || ((crate::category_enabled("access-and-assignments") && spec.category == "access-and-assignments")
             && spec.kind != "ColumnSecurity")
-        || (crate::category_enabled("C21") && spec.category == "C21")
-        || ((crate::category_enabled("C22") && spec.category == "C22")
+        || (crate::category_enabled("custom-resources") && spec.category == "custom-resources")
+        || ((crate::category_enabled("programs-and-extensions") && spec.category == "programs-and-extensions")
             && spec.kind != "ExtensionSet")
     {
         // Native GetRows filters the marked root before its body or children are read.
@@ -425,10 +440,10 @@ fn root_action(spec: &Family, request: &GuestRequest) -> GuestReply {
             json!(format!("{predicate} AND SystemFlag = false"));
         for child in &spec.children {
             read.arguments[format!("whereClause{child}")] = json!(if child == "ProcessTask"
-                || (crate::category_enabled("C26") && spec.category == "C26")
-                || ((crate::category_enabled("C21") && spec.category == "C21")
+                || (crate::category_enabled("access-and-assignments") && spec.category == "access-and-assignments")
+                || ((crate::category_enabled("custom-resources") && spec.category == "custom-resources")
                     && child == "ThemeResource")
-                || ((crate::category_enabled("C22") && spec.category == "C22")
+                || ((crate::category_enabled("programs-and-extensions") && spec.category == "programs-and-extensions")
                     && matches!(
                         child.as_str(),
                         "ZBODataSets" | "ZRelation" | "ZRelationField" | "ZSubDataSet"
@@ -440,13 +455,13 @@ fn root_action(spec: &Family, request: &GuestRequest) -> GuestReply {
         }
         return action(&read, request, 1, state);
     }
-    if crate::category_enabled("C16") && spec.category == "C16" {
+    if crate::category_enabled("report-definitions") && spec.category == "report-definitions" {
         if id.keys.values().any(String::is_empty)
             || !matches!(id.scope, Scope::Global | Scope::Company { .. })
         {
             return fail(
                 "INVALID_IDENTITY",
-                "A report definition requires nonempty native keys and a global or company scope.",
+                "A report definition requires nonempty Epicor keys and a global or company scope.",
             );
         }
         let company = match &id.scope {
@@ -509,7 +524,7 @@ fn root_action(spec: &Family, request: &GuestRequest) -> GuestReply {
         }
         return action(&read, request, 1, state);
     }
-    if (crate::category_enabled("C02") && spec.category == "C02")
+    if (crate::category_enabled("ud-schema") && spec.category == "ud-schema")
         && (crate::kind_enabled("UDTableSchema") && spec.kind == "UDTableSchema")
     {
         return action(&custom_schema_read(id), request, 1, state);
@@ -577,7 +592,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
         Err(_) => {
             return fail(
                 "INVALID_CURSOR",
-                "The category discovery cursor is invalid.",
+                "The category discovery saved position is invalid.",
             );
         }
     };
@@ -586,7 +601,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
     let Some(spec) = selected.get(index) else {
         return fail(
             "INVALID_CURSOR",
-            "The discovery cursor names an unavailable family.",
+            "The discovery saved position names an unavailable family.",
         );
     };
     if spec.kind == "MessageTemplate" {
@@ -610,7 +625,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
     if page == 0 || page > i32::MAX as u64 {
         return fail(
             "NATIVE_PAGING_RANGE",
-            "The native absolutePage contract requires a positive Int32 page.",
+            "Herbert could not continue this download from its saved progress (page position). Start the download again.",
         );
     }
     if request.response.is_none() && request.error.is_none() {
@@ -648,7 +663,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
             authoritative: false,
             diagnostics: vec![Diagnostic::new(
                 "INVENTORY_TABLE_MISSING",
-                "The native list response omitted its declared root table.",
+                "The Epicor list response omitted its declared root table.",
             )],
         };
     };
@@ -661,8 +676,8 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
     let mut identities = Vec::new();
     let mut diagnostics = Vec::new();
     let mut seen = BTreeSet::new();
-    if spec.category=="C19" && spec.inventory_definition && definitions.is_none() {
-        diagnostics.push(Diagnostic::new("CONFIGURATOR_NATIVE_PAGE_INVALID","The acquired configurator page could not associate its complete native child graph."));
+    if spec.category=="configurators" && spec.inventory_definition && definitions.is_none() {
+        diagnostics.push(Diagnostic::new("CONFIGURATOR_NATIVE_PAGE_INVALID","The downloaded configurator page could not associate its complete Epicor child record set."));
     }
     for (row_index, row) in rows.iter().enumerate() {
         if crate::system_artifacts::marked(row) {
@@ -687,7 +702,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
                 } else {
                     diagnostics.push(Diagnostic::new(
                         "DUPLICATE_NATIVE_IDENTITY",
-                        "Native discovery repeats an exact identity.",
+                        "Epicor discovery repeats an exact identity.",
                     ));
                 }
             }
@@ -703,7 +718,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
         Some(true) => Some(json!({"family":index,"page":page+1}).to_string()),
         Some(false) => next_family(),
         None => {
-            diagnostics.push(Diagnostic::new("PAGINATION_UNVERIFIED", "The native response omitted morePages; this branch cannot establish exhaustive discovery."));
+            diagnostics.push(Diagnostic::new("PAGINATION_UNVERIFIED", "The Epicor response omitted morePages; this branch cannot establish exhaustive discovery."));
             next_family()
         }
     };
@@ -723,7 +738,7 @@ fn inventory(request: GuestRequest, selected: Vec<Family>) -> GuestReply {
     }
 }
 pub fn handle(mut request: GuestRequest) -> GuestReply {
-    if request.category == "C19" && crate::configurator_pages::pending(&request) {
+    if request.category == "configurators" && crate::configurator_pages::pending(&request) {
         return crate::configurator_pages::resume(request);
     }
     let selected: Vec<_> = specs()
@@ -731,7 +746,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         .filter(|s| s.category == request.category)
         .collect();
     if request.operation == "discover" {
-        if request.category == "C19" {
+        if request.category == "configurators" {
             let reply = inventory(request.clone(), selected);
             let reply = crate::configurator_output::select_inventory(&request,reply);
             return crate::configurator_pages::begin(request, reply);
@@ -741,11 +756,11 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if request.operation != "acquire" {
         return fail(
             "UNSUPPORTED_OPERATION",
-            "The collector supports discovery and exact-identity acquisition.",
+            "The collector supports discovery and exact-identity download.",
         );
     }
     let Some(id) = request.identity.as_ref() else {
-        return fail("IDENTITY_REQUIRED", "Select an exact native identity.");
+        return fail("IDENTITY_REQUIRED", "Select an exact Epicor ID.");
     };
     let Some(spec) = selected.iter().find(|s| s.kind == id.kind) else {
         return fail(
@@ -771,7 +786,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     if matches!(spec.kind.as_str(), "BAQ" | "UBAQ") {
         return crate::query_download::acquire(request);
     }
-    if crate::category_enabled("C03") && spec.category == "C03" {
+    if crate::category_enabled("extended-properties") && spec.category == "extended-properties" {
         return crate::authored_schema::acquire(request);
     }
     if request.state.get("phase").is_none() && request.response.is_none() && request.error.is_none()
@@ -856,10 +871,10 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         }
         return finish(spec, request);
     }
-    if (crate::category_enabled("C04")
-        || crate::category_enabled("C05")
-        || crate::category_enabled("C06")
-        || crate::category_enabled("C07"))
+    if (crate::category_enabled("baqs-and-ubaqs")
+        || crate::category_enabled("ubaqs")
+        || crate::category_enabled("bpm-directives")
+        || crate::category_enabled("data-directives"))
         && phase.starts_with("bpm")
         && phase != "bpmComplete"
     {
@@ -882,7 +897,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         }
         return finish(spec, request);
     }
-    if crate::category_enabled("C02") && phase == "schemaCustomChildren" {
+    if crate::category_enabled("ud-schema") && phase == "schemaCustomChildren" {
         return crate::schema_children::complete(request);
     }
     if phase == "initial" || phase == "ubaqOwnerVerified" {
@@ -895,7 +910,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let Some(response) = request.response.as_ref() else {
             return fail(
                 "INVALID_NATIVE_RESPONSE",
-                "The native definition response is absent.",
+                "The Epicor definition response is absent.",
             );
         };
         if global_menu(spec, &request)
@@ -909,14 +924,14 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 "The exact global menu read did not establish a complete single-key result.",
             );
         }
-        if spec.category == "C02" && spec.kind == "UDTableSchema"
+        if spec.category == "ud-schema" && spec.kind == "UDTableSchema"
             && response.pointer("/parameters/morePages").and_then(Value::as_bool) != Some(false)
         {
             return fail("SCHEMA_READ_INCOMPLETE",
                 "The exact schema read did not confirm a complete result.");
         }
         let definition = native_body(response);
-        if (crate::category_enabled("C26") && spec.category == "C26")
+        if (crate::category_enabled("access-and-assignments") && spec.category == "access-and-assignments")
             && spec.kind != "ColumnSecurity"
             && response
                 .pointer("/parameters/morePages")
@@ -944,10 +959,10 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let Some(root) = definition.get(&spec.root).and_then(Value::as_array) else {
             return fail(
                 "ROOT_UNVERIFIED",
-                "The native response omitted its declared definition root.",
+                "The Epicor response omitted its declared definition root.",
             );
         };
-        if crate::category_enabled("C16") && spec.category == "C16" {
+        if crate::category_enabled("report-definitions") && spec.category == "report-definitions" {
             if response
                 .pointer("/parameters/morePages")
                 .and_then(Value::as_bool)
@@ -1003,7 +1018,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             );
         }
         if root.is_empty()
-            && (crate::category_enabled("C02") && spec.category == "C02")
+            && (crate::category_enabled("ud-schema") && spec.category == "ud-schema")
             && (crate::kind_enabled("UDTableSchema") && spec.kind == "UDTableSchema")
         {
             return crate::schema_children::start(request);
@@ -1016,7 +1031,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         {
             return fail(
                 "IDENTITY_MISMATCH",
-                "The returned native root does not match the complete requested identity.",
+                "The returned Epicor root does not match the complete requested identity.",
             );
         }
         if crate::system_artifacts::marked(&root[0]) {
@@ -1027,7 +1042,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             Ok(false) => {
                 return fail(
                     "QUERY_TYPE_MISMATCH",
-                    "The native Updatable classification belongs to the other query collection.",
+                    "The Epicor Updatable classification belongs to the other query collection.",
                 );
             }
             Err(diagnostic) => return GuestReply::Failure { diagnostic },
@@ -1043,7 +1058,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
             && request.state["extensionExportAllowed"] != true
         {
             queue.clear();
-            errors.push(Diagnostic::new("EXTENSION_EXPORT_MIXED_SYSTEM_SCOPE", "The native extension export includes system-marked schema content. Independently filtered custom definitions and table identities are retained."));
+            errors.push(Diagnostic::new("EXTENSION_EXPORT_MIXED_SYSTEM_SCOPE", "The Epicor extension export includes system-marked schema content. Independently filtered custom definitions and table identities are retained."));
         }
         errors.extend(crate::native_children::validate(
             &spec.service,
@@ -1076,7 +1091,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
         let Some(extra) = queue.get(index) else {
             return fail(
                 "INVALID_PLUGIN_STATE",
-                "A supplement checkpoint has an invalid index.",
+                "A supplement saved progress has an invalid index.",
             );
         };
         let mut state = request.state.clone();
@@ -1106,7 +1121,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
                 .unwrap()
                 .push(json!(Diagnostic::new(
                     "SUPPLEMENT_UNVERIFIED",
-                    "A supplement returned no native response."
+                    "A supplement returned no Epicor response."
                 )));
         }
         state["index"] = json!(index + 1);
@@ -1118,7 +1133,7 @@ pub fn handle(mut request: GuestRequest) -> GuestReply {
     }
     fail(
         "INVALID_PLUGIN_STATE",
-        "The native collector checkpoint is invalid.",
+        "The Epicor collector saved progress is invalid.",
     )
 }
 fn supplements(
@@ -1126,7 +1141,7 @@ fn supplements(
     definition: &Value,
     request: &GuestRequest,
 ) -> (Vec<Read>, Vec<Diagnostic>) {
-    if (crate::category_enabled("C02") && spec.category == "C02")
+    if (crate::category_enabled("ud-schema") && spec.category == "ud-schema")
         && (crate::kind_enabled("UDTableSchema") && spec.kind == "UDTableSchema")
     {
         // Companion tables have their own inventory entries.
@@ -1267,7 +1282,7 @@ fn finish(spec: &Family, mut request: GuestRequest) -> GuestReply {
     {
         diagnostics.push(Diagnostic::new(
             "CHILD_TABLES_MISSING",
-            "One or more declared child tables are absent from the native response.",
+            "One or more declared child tables are absent from the Epicor response.",
         ));
     }
     for gap in &spec.coverage {
@@ -1292,7 +1307,7 @@ fn finish(spec: &Family, mut request: GuestRequest) -> GuestReply {
         };
     }
     let mut definition = json!({"service":spec.service,"definition":request.state["definition"],"supplements":request.state["supplements"]});
-    if crate::category_enabled("C19") && spec.category == "C19" {
+    if crate::category_enabled("configurators") && spec.category == "configurators" {
         configurator_export::attach_sources(&mut definition);
         if spec.kind == "ConfiguratorLookup" {
             let id = request.identity.as_ref().unwrap();
@@ -1363,7 +1378,7 @@ mod completion_tests {
 
     #[test]
     fn wave1_exact_schema_requires_explicit_complete_paging() {
-        let spec=specs().into_iter().find(|s|s.category=="C02"&&s.kind=="UDTableSchema").unwrap();
+        let spec=specs().into_iter().find(|s|s.category=="ud-schema"&&s.kind=="UDTableSchema").unwrap();
         let r=request(&spec,json!({"SystemCode":"Ice","DataTableID":"UD_Test","SystemFlag":false}));
         for value in [json!(true),Value::Null,json!("false"),json!(0)] {
             let mut incomplete=r.clone();incomplete.response.as_mut().unwrap()["parameters"]["morePages"]=value;
@@ -1374,7 +1389,7 @@ mod completion_tests {
 
     #[test]
     fn custom_resources_filter_stock_discovery_and_theme_children() {
-        for spec in specs().into_iter().filter(|s| s.category == "C21") {
+        for spec in specs().into_iter().filter(|s| s.category == "custom-resources") {
             let clause = format!("whereClause{}", spec.root);
             assert_eq!(spec.list.method, "GetRows");
             assert!(spec.inventory_definition);
@@ -1435,7 +1450,7 @@ mod completion_tests {
     #[test]
     fn access_reads_filter_exact_keys_and_each_marked_child() {
         for spec in specs().into_iter().filter(|s| {
-            s.category == "C26" && !matches!(s.kind.as_str(), "ColumnSecurity" | "AccessScope")
+            s.category == "access-and-assignments" && !matches!(s.kind.as_str(), "ColumnSecurity" | "AccessScope")
         }) {
             assert_eq!(spec.list.method, "GetRows");
             assert_eq!(spec.list_table, spec.root);
@@ -1647,9 +1662,9 @@ mod completion_tests {
 mod custom_schema_tests {
     use super::*;
     #[test]
-    fn c02_native_schema_reads_filter_all_tables_and_escape_keys() {
+    fn ud_schema_native_schema_reads_filter_all_tables_and_escape_keys() {
         let id = Identity {
-            category: "C02".into(),
+            category: "ud-schema".into(),
             kind: "UDTableSchema".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([
@@ -1678,7 +1693,7 @@ mod custom_schema_tests {
         }
         assert_eq!(root.arguments["pageSize"], 1);
         assert!(
-            !methods("C02")
+            !methods("ud-schema")
                 .iter()
                 .any(|(service, method)| service == "Ice.BO.ZDataTableSvc" && method == "GetByID")
         );
@@ -1771,7 +1786,7 @@ mod schema_efficiency_tests {
     #[test]
     fn schema_case_is_accepted_but_other_keys_and_scopes_are_not() {
         let a = Identity {
-            category: "C02".into(),
+            category: "ud-schema".into(),
             kind: "UDTableSchema".into(),
             scope: Scope::Global,
             keys: BTreeMap::from([
@@ -1802,10 +1817,10 @@ mod schema_efficiency_tests {
         let r = GuestRequest {
             abi: PLUGIN_ABI,
             operation: "acquire".into(),
-            category: "C02".into(),
+            category: "ud-schema".into(),
             company: "C".into(),
             identity: Some(Identity {
-                category: "C02".into(),
+                category: "ud-schema".into(),
                 kind: "UDTableSchema".into(),
                 scope: Scope::Global,
                 keys: BTreeMap::from([
